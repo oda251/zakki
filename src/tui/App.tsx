@@ -1,5 +1,5 @@
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { analyzeAll } from "@/analysis/service.ts";
 import { TopicGrouper } from "@/chunk/grouper.ts";
 import { saveCorrection } from "@/conversion/corrections.ts";
@@ -137,16 +137,10 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
 
   /** 保存より粗い周期で走るバックグラウンド処理: 解析 → 埋め込み → エクスポート */
   const runBackgroundPass = useCallback(() => {
-    analyzeAll(db).match(
-      () => {},
-      (e) => setMessage(`解析: ${e.message}`),
-    );
+    analyzeAll(db).mapErr((e) => setMessage(`解析: ${e.message}`));
     const finish = () => {
       void exportCurrent()?.then((result) =>
-        result?.match(
-          () => {},
-          (e) => setMessage(`export: ${e.message}`),
-        ),
+        result?.mapErr((e) => setMessage(`export: ${e.message}`)),
       );
     };
     if (embedder === null) {
@@ -155,21 +149,15 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
     }
     void syncChunkEmbeddings(db, embedder)
       .then((synced) =>
-        synced.match(
-          () => {
-            loadVectors(db).match(
-              (vectors) => {
-                addSemanticLinks(db, vectors).match(
-                  () => {},
-                  (e) => setMessage(`関連付け: ${e.message}`),
-                );
-                refreshAmbient(vectors);
-              },
-              (e) => setMessage(`埋め込み: ${e.message}`),
-            );
-          },
-          (e) => setMessage(`埋め込み: ${e.message}`),
-        ),
+        synced
+          .andThen(() => loadVectors(db))
+          .match(
+            (vectors) => {
+              addSemanticLinks(db, vectors).mapErr((e) => setMessage(`関連付け: ${e.message}`));
+              refreshAmbient(vectors);
+            },
+            (e) => setMessage(`埋め込み: ${e.message}`),
+          ),
       )
       .finally(finish);
   }, [db, embedder, exportCurrent, refreshAmbient]);
@@ -337,33 +325,30 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
               {searchQuery === "" ? "ローマ字で入力すると絞り込まれます" : "該当なし"}
             </text>
           ) : (
-            [
-              ...bigramHits.map((hit) => (
+            <Fragment>
+              {bigramHits.map((hit) => (
                 <box key={hit.id} style={{ flexDirection: "column", marginBottom: 1 }}>
                   <text>
                     <span fg="#88aaff">{hit.date}</span> {hit.title}
                   </text>
                   <text style={{ fg: "#aaaaaa", wrapMode: "word" }}>{hit.content}</text>
                 </box>
-              )),
-              ...(extraSemantic.length > 0
-                ? [
-                    <text key="sem-head" style={{ fg: "#666666" }}>
-                      ── 意味が近いもの ──
-                    </text>,
-                    ...extraSemantic.map((hit) => (
-                      <box
-                        key={`sem-${hit.id}`}
-                        style={{ flexDirection: "column", marginBottom: 1 }}
-                      >
-                        <text>
-                          <span fg="#88aaff">{hit.date}</span> {hit.title}
-                        </text>
-                      </box>
-                    )),
-                  ]
-                : []),
-            ]
+              ))}
+              {extraSemantic.length > 0 && (
+                <Fragment>
+                  <text key="sem-head" style={{ fg: "#666666" }}>
+                    ── 意味が近いもの ──
+                  </text>
+                  {extraSemantic.map((hit) => (
+                    <box key={`sem-${hit.id}`} style={{ flexDirection: "column", marginBottom: 1 }}>
+                      <text>
+                        <span fg="#88aaff">{hit.date}</span> {hit.title}
+                      </text>
+                    </box>
+                  ))}
+                </Fragment>
+              )}
+            </Fragment>
           )}
         </scrollbox>
         <box style={{ height: 1 }}>

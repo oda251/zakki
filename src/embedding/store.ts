@@ -57,20 +57,22 @@ export async function syncChunkEmbeddings(
         if (vector === undefined) {
           return;
         }
+        const hash = contentHash(row.content);
+        const buf = vectorToBuffer(vector);
         tx.insert(embeddings)
           .values({
             chunkId: row.id,
-            contentHash: contentHash(row.content),
+            contentHash: hash,
             model: embedder.name,
-            vector: vectorToBuffer(vector),
+            vector: buf,
             updatedAt: now,
           })
           .onConflictDoUpdate({
             target: embeddings.chunkId,
             set: {
-              contentHash: contentHash(row.content),
+              contentHash: hash,
               model: embedder.name,
-              vector: vectorToBuffer(vector),
+              vector: buf,
               updatedAt: now,
             },
           })
