@@ -44,9 +44,11 @@ jobs:
           cp llama-cpp-bin/build/bin/lib*.so ./
 
       # --static-swift-stdlib は C++ interop と非互換（静的版 libswiftCxx が
-      # toolchain に存在しない）ため、動的リンクし Swift ランタイムを同梱する
+      # toolchain に存在しない）ため、動的リンクし Swift ランタイムを同梱する。
+      # -Xcxx -xobjective-c++（install_cli.sh 由来）は macOS 専用で、Linux では
+      # GNU ObjC ランタイム参照（__gnu_objc_personality_v0）を生むため付けない
       - name: Build anco (ZenzaiCPU)
-        run: swift build -c release -Xcxx -xobjective-c++ --traits ZenzaiCPU -Xswiftc -strict-concurrency=complete -Xlinker -L./
+        run: swift build -c release --traits ZenzaiCPU -Xswiftc -strict-concurrency=complete -Xlinker -L./
 
       - name: Package
         run: |
