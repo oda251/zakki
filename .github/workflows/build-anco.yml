@@ -57,15 +57,17 @@ jobs:
           cp .build/release/CliTool dist/anco
           cp -r .build/release/*.resources dist/
           cp lib*.so dist/
-          # Swift ランタイム等、システム標準（glibc 系）以外の依存 .so を同梱する
-          ldd .build/release/CliTool | awk '/=>/ {print $3}' | while read -r lib; do
+          # Swift ランタイム等、システム標準（glibc 系）以外の依存 .so を同梱する。
+          # llama.cpp の .so はこの時点で未解決（not found）だが上で同梱済み
+          ldd .build/release/CliTool | awk '/=> \// {print $3}' | while read -r lib; do
             case "$lib" in
               /lib/*|/usr/lib/x86_64-linux-gnu/*) ;;
-              *) cp -n "$lib" dist/ ;;
+              *) cp --update=none "$lib" dist/ ;;
             esac
           done
           # 同梱 .so をバイナリと同じディレクトリから解決できるようにする
-          patchelf --set-rpath '$ORIGIN' dist/anco
+          # （DT_RPATH は推移的に効くため、同梱ランタイム間の依存も解決される）
+          patchelf --force-rpath --set-rpath '$ORIGIN' dist/anco
           # 再配布物のライセンス文書
           cp LICENSE dist/LICENSE.AzooKeyKanaKanjiConverter
           cp Sources/KanaKanjiConverterModuleWithDefaultDictionary/azooKey_dictionary_storage/LICENSE dist/LICENSE.azooKey_dictionary_storage
