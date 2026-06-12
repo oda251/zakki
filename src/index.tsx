@@ -1,5 +1,8 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
+import { existsSync } from "node:fs";
+import { AncoEngine, defaultAncoPath } from "@/conversion/anco/engine.ts";
+import { identityEngine } from "@/conversion/engine.ts";
 import { createDb } from "@/db/client.ts";
 import { localDate } from "@/entry/autosave.ts";
 import { getOrCreateEntry } from "@/entry/repository.ts";
@@ -23,7 +26,12 @@ const entry = getOrCreateEntry(db, date).match(
   },
 );
 
+// anco 未導入（scripts/install-anco.sh 未実行）の環境では、かなのまま
+// 動作する identity エンジンにフォールバックする（docs/FEATURES.md §変換エンジン）
+const ancoPath = defaultAncoPath();
+const engine = existsSync(ancoPath) ? new AncoEngine(ancoPath) : identityEngine;
+
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(
-  <App db={db} date={date} initialRaw={entry.raw} vaultDir={defaultVaultDir()} />,
+  <App db={db} date={date} initialRaw={entry.raw} vaultDir={defaultVaultDir()} engine={engine} />,
 );
