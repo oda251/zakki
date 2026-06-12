@@ -92,11 +92,16 @@ export class AncoEngine implements KanaKanjiEngine {
   }
 
   private start(): Promise<void> {
-    this.proc = Bun.spawn([this.ancoPath, "session", "-n", "1", "--disable_prediction"], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    // stdbuf -oL は必須: anco の stdout は pipe 接続時に全面バッファリングされ、
+    // exit までバナーも候補も届かない（WSL2 + Bun.spawn 実測）。coreutils 前提（Linux）
+    this.proc = Bun.spawn(
+      ["stdbuf", "-oL", this.ancoPath, "session", "-n", "1", "--disable_prediction"],
+      {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+      },
+    );
     void this.proc.exited.then(() => {
       this.failPending(new Error("anco session exited"));
       this.proc = null;
