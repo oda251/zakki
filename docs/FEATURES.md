@@ -6,9 +6,9 @@
 
 採用: **[AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter) の公式 CLI `anco` を常駐外部プロセス化**（比較・深掘り根拠は `RESEARCH.md` §1）。
 
-| 段 | エンジン | 役割 |
-| --- | --- | --- |
-| 即時変換 | anco 内蔵 N-gram + 同梱辞書（MIT） | 打鍵に追従する変換。文節レベルの文脈考慮 |
+| 段       | エンジン                                                                                                                            | 役割                                                            |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 即時変換 | anco 内蔵 N-gram + 同梱辞書（MIT）                                                                                                  | 打鍵に追従する変換。文節レベルの文脈考慮                        |
 | 文脈校正 | 同プロセスで `--zenz` 有効化（[zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) GGUF 73.9MB、CC-BY-SA 4.0） | 左文脈（`:ctx`）・トピック（`--config_topic`）を渡した LLM 変換 |
 
 - 統合方式: `Bun.spawn('anco', ['session', '--zenz', ..., '--zenz_v3'])` → stdin にかなを 1 行ずつ書き、stdout の候補を読む（ライン指向プロトコル、`RESEARCH.md` §1 深掘り）。出力の ANSI エスケープは除去してパース
@@ -37,11 +37,11 @@
 
 採用候補（`RESEARCH.md` §2）:
 
-| 構成要素 | 採用候補 | 備考 |
-| --- | --- | --- |
-| ランタイム | [@huggingface/transformers](https://github.com/huggingface/transformers.js) v4 | ONNX ローカル実行。Apache-2.0。Bun での動作報告あり（要実機検証） |
-| モデル | [ruri-v3-30m](https://huggingface.co/cl-nagoya/ruri-v3-30m)（int8 ONNX 約37MB、256次元） | JMTEB 74.51 で有料 API（OpenAI text-embedding-3-large）超え。Apache-2.0。ONNX が非公式変換のため出力一致の検証必須。代替: multilingual-e5-small（公式 ONNX あり） |
-| ベクトル検索 | [sqlite-vec](https://alexgarcia.xyz/sqlite-vec/js.html) | `bun:sqlite` 公式サポート。brute-force で数万件規模は十分（384次元×10万件 75ms 以下） |
+| 構成要素     | 採用候補                                                                                 | 備考                                                                                                                                                              |
+| ------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ランタイム   | [@huggingface/transformers](https://github.com/huggingface/transformers.js) v4           | ONNX ローカル実行。Apache-2.0。Bun での動作報告あり（要実機検証）                                                                                                 |
+| モデル       | [ruri-v3-30m](https://huggingface.co/cl-nagoya/ruri-v3-30m)（int8 ONNX 約37MB、256次元） | JMTEB 74.51 で有料 API（OpenAI text-embedding-3-large）超え。Apache-2.0。ONNX が非公式変換のため出力一致の検証必須。代替: multilingual-e5-small（公式 ONNX あり） |
+| ベクトル検索 | [sqlite-vec](https://alexgarcia.xyz/sqlite-vec/js.html)                                  | `bun:sqlite` 公式サポート。brute-force で数万件規模は十分（384次元×10万件 75ms 以下）                                                                             |
 
 **embedding なしの代替（段階導入の初期形態）**: タグの共起 + キーワード（lindera-wasm で名詞抽出 → TF-IDF）による類似度。精度は落ちるが依存最小。まずこれで実装し、ローカル embedding は精度が不足したら導入する。
 
@@ -57,11 +57,11 @@
 
 導入は任意とし、**全機能が汎用 LLM なしで成立する設計**を維持する（zenz は変換特化 90M モデルであり、この「LLM」には含めない — 74MB・CPU で常用可能なコア部品として扱う）。
 
-| 用途 | LLM あり | LLM なしの代替 |
-| --- | --- | --- |
+| 用途                   | LLM あり                 | LLM なしの代替                                  |
+| ---------------------- | ------------------------ | ----------------------------------------------- |
 | チャンク境界・タイトル | 境界とタイトルを同時生成 | 決定的区切り + 先頭文・キーワードによるタイトル |
-| タグ正規化 | 類義判定 | embedding 近傍 or 編集距離 |
-| ダイジェスト | 要約文を生成 | チャンクタイトル + タグ頻度の一覧 |
+| タグ正規化             | 類義判定                 | embedding 近傍 or 編集距離                      |
+| ダイジェスト           | 要約文を生成             | チャンクタイトル + タグ頻度の一覧               |
 
 ## Obsidian エクスポート（確定機能）
 

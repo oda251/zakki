@@ -15,12 +15,12 @@
 
 ## 技術スタック（予定）
 
-| 領域 | 採用 |
-| --- | --- |
-| ランタイム | Bun + TypeScript |
-| TUI | [OpenTUI](https://github.com/sst/opentui) |
+| 領域         | 採用                                                                                                                                                           |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ランタイム   | Bun + TypeScript                                                                                                                                               |
+| TUI          | [OpenTUI](https://github.com/sst/opentui)                                                                                                                      |
 | かな漢字変換 | [AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter)（anco）+ [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) |
-| 形態素解析 | [lindera-wasm](https://github.com/lindera/lindera) |
-| DB | bun:sqlite（+ [sqlite-vec](https://github.com/asg017/sqlite-vec)） |
+| 形態素解析   | [lindera-wasm](https://github.com/lindera/lindera)                                                                                                             |
+| DB           | bun:sqlite（+ [sqlite-vec](https://github.com/asg017/sqlite-vec)）                                                                                             |
 
 選定根拠は [docs/RESEARCH.md](docs/RESEARCH.md) を参照。

@@ -1,0 +1,12 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: lint
+      glob: "*.{ts,tsx}"
+      run: bunx oxlint --type-check --type-aware {staged_files}
+    - name: fmt
+      glob: "*.{ts,tsx}"
+      run: bunx oxfmt --check {staged_files}
+    - name: test
+      glob: "*.{ts,tsx}"
+      run: bun test
