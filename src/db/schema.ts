@@ -36,5 +36,16 @@ export const chunks = sqliteTable(
   (t) => [uniqueIndex("chunks_entry_position").on(t.entryId, t.position)],
 );
 
+/**
+ * 手動修正（候補ローテーション）の学習記録（docs/FEATURES.md §ユーザー辞書の自動学習）。
+ * かな（変換単位）の完全一致で、以後の変換時に最優先候補として使う。
+ */
+export const corrections = sqliteTable("corrections", {
+  kana: text("kana").primaryKey(),
+  chosen: text("chosen").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export type Entry = typeof entries.$inferSelect;
 export type Chunk = typeof chunks.$inferSelect;
+export type Correction = typeof corrections.$inferSelect;

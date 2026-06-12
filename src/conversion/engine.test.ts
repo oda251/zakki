@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { identityEngine } from "./engine.ts";
 
 describe("identityEngine", () => {
-  test("かなをそのまま返す（anco 未統合時のフォールバック）", async () => {
+  test("かなをそのまま唯一の候補として返す（anco 未導入時のフォールバック）", async () => {
     const result = await identityEngine.convert("きょうははれ。");
-    expect(result._unsafeUnwrap()).toBe("きょうははれ。");
+    expect(result._unsafeUnwrap()).toEqual(["きょうははれ。"]);
   });
 
   test("close は何もしない", () => {

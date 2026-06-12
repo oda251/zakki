@@ -139,7 +139,7 @@
 ## 段階導入計画（依存の少ない順）
 
 1. ~~**Phase 1（完全オフライン・最小）**~~ **完了（2026-06-13）**: OpenTUI 入力 + ローマ字→かな（英単語パススルー含む）+ anco（N-gram、zenz なし）+ 自動保存 + 決定的チャンク化 + Obsidian 基本エクスポート。変換は句点・改行で完結したセグメント単位の非同期置換（`src/conversion/pipeline.ts`）で、raw が正本のため再起動時に再変換で復元する
-2. **Phase 2（+ zenz GGUF）**: `--zenz` 有効化による文脈校正変換。ユーザー辞書学習（リランキング）
+2. ~~**Phase 2（+ zenz GGUF）**~~ **完了（2026-06-13）**: `--zenz` 有効化による文脈校正変換（`scripts/install-zenz.sh` で GGUF 取得、未取得時は N-gram フォールバック）。Tab による直前変換単位の候補ローテーションと corrections テーブルへの学習（exact-match 最優先リランキング）。CPU 推論速度は warm 後 約0.1秒/文（WSL2 実測）。留意: trait は ZenzaiCPU でなく Zenzai を使う（ZenzaiCPU の split_mode=NONE は llama.cpp b4846 の main_gpu 検証と衝突しロード不能、`RESEARCH.md` §1）
 3. **Phase 3（+ lindera-wasm）**: キーワードタグ付け + タグ共起の関連付け + MiniSearch 全文検索
 4. **Phase 4（+ ローカル embedding）**: 話題転換検出 + セマンティック関連付け・検索 + アンビエント表示
 5. **Phase 5（+ 汎用ローカル LLM、任意）**: 要約ダイジェスト・タグ正規化の高度化
@@ -155,7 +155,7 @@
 ## 未確定事項（要判断・要検証）
 
 1. ~~新リポジトリの名称・公開設定~~ → zakki / public で確定（2026-06-12）
-2. ~~anco の実機検証~~ → 完了（2026-06-12〜13）。ローカル Swift ビルドは行わず GitHub Actions で自前ビルドし Release 配布（`RESEARCH.md` §1、`scripts/install-anco.sh` で導入）。WSL2 で `session` プロトコルの動作・パースを確認（変換 約0.05秒/件、`:ctx` の文脈考慮も確認）。留意: pipe 接続時は stdout が全面バッファされるため `stdbuf -oL` が必須（`src/conversion/anco/engine.ts`）。**CPU での zenz 推論速度のみ未検証**（Phase 2 で zenz GGUF 導入時に計測）
+2. ~~anco の実機検証~~ → 完了（2026-06-12〜13）。ローカル Swift ビルドは行わず GitHub Actions で自前ビルドし Release 配布（`RESEARCH.md` §1、`scripts/install-anco.sh` で導入）。WSL2 で `session` プロトコルの動作・パースを確認（変換 約0.05秒/件、`:ctx` の文脈考慮も確認）。留意: pipe 接続時は stdout が全面バッファされるため `stdbuf -oL` が必須（`src/conversion/anco/engine.ts`）。CPU での zenz 推論速度も計測済み: 初回 約1.05秒（モデルロード込み）、warm 後 約0.1秒/文（2026-06-13）
 3. anco のユーザー辞書・学習 API の有無: `session` に `--config_user_dictionary`（JSON）と `--enable_memory`（学習）があることをソースで確認（2026-06-13）。挙動は未検証
 4. OpenTUI v0.x の API 不安定性への追従方針（バージョン固定 + 定期更新）
 5. ruri-v3-30m 非公式 ONNX の出力一致検証（Phase 4 着手前）

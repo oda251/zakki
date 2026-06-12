@@ -6,10 +6,19 @@ import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/** 候補ローテーション（手動修正 UX）に使う n-best の数 */
+const CANDIDATE_COUNT = 5;
+
+function dataHome(): string {
+  return process.env["XDG_DATA_HOME"] ?? join(process.env["HOME"] ?? "", ".local", "share");
+}
+
 export function defaultAncoPath(): string {
-  const dataHome =
-    process.env["XDG_DATA_HOME"] ?? join(process.env["HOME"] ?? "", ".local", "share");
-  return join(dataHome, "zakki", "anco", "anco");
+  return join(dataHome(), "zakki", "anco", "anco");
+}
+
+export function defaultZenzPath(): string {
+  return join(dataHome(), "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf");
 }
 
 const toEngineError = (cause: unknown): EngineError => ({
@@ -36,16 +45,22 @@ interface PendingRequest {
  * 変換ごとに `:c` でコンポジションと文脈を破棄し、左文脈は `:ctx` で与え直す。
  */
 export class AncoEngine implements KanaKanjiEngine {
-  readonly name = "anco";
+  readonly name: string;
   private proc: Subprocess<"pipe", "pipe", "ignore"> | null = null;
   private ready: Promise<void> | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private pending: PendingRequest | null = null;
   private buffer = "";
 
-  constructor(private readonly ancoPath: string = defaultAncoPath()) {}
+  constructor(
+    private readonly ancoPath: string = defaultAncoPath(),
+    /** zenz GGUF のパス。指定すると文脈校正（Zenzai）が有効になる */
+    private readonly zenzPath?: string,
+  ) {
+    this.name = zenzPath === undefined ? "anco" : "anco+zenz";
+  }
 
-  convert(kana: string, leftContext?: string): ResultAsync<string, EngineError> {
+  convert(kana: string, leftContext?: string): ResultAsync<string[], EngineError> {
     if (kana.includes("\n")) {
       return errAsync(toEngineError(new Error("kana must be a single line")));
     }
@@ -69,7 +84,7 @@ export class AncoEngine implements KanaKanjiEngine {
     }
   }
 
-  private async request(kana: string, leftContext?: string): Promise<string> {
+  private async request(kana: string, leftContext?: string): Promise<string[]> {
     await this.ensureStarted();
     await this.send(":c");
     if (leftContext !== undefined && leftContext !== "") {
@@ -77,11 +92,10 @@ export class AncoEngine implements KanaKanjiEngine {
     }
     const lines = await this.send(kana);
     const { candidates } = parseCandidates(lines);
-    const best = candidates[0];
-    if (best === undefined) {
+    if (candidates.length === 0 || candidates[0] === undefined) {
       throw new Error(`anco returned no candidate for: ${kana}`);
     }
-    return best;
+    return candidates.filter((c): c is string => c !== undefined);
   }
 
   private ensureStarted(): Promise<void> {
@@ -94,14 +108,23 @@ export class AncoEngine implements KanaKanjiEngine {
   private start(): Promise<void> {
     // stdbuf -oL は必須: anco の stdout は pipe 接続時に全面バッファリングされ、
     // exit までバナーも候補も届かない（WSL2 + Bun.spawn 実測）。coreutils 前提（Linux）
-    this.proc = Bun.spawn(
-      ["stdbuf", "-oL", this.ancoPath, "session", "-n", "1", "--disable_prediction"],
-      {
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "ignore",
-      },
-    );
+    const args = [
+      "stdbuf",
+      "-oL",
+      this.ancoPath,
+      "session",
+      "-n",
+      String(CANDIDATE_COUNT),
+      "--disable_prediction",
+    ];
+    if (this.zenzPath !== undefined) {
+      args.push("--zenz", this.zenzPath, "--zenz_v3");
+    }
+    this.proc = Bun.spawn(args, {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
     void this.proc.exited.then(() => {
       this.failPending(new Error("anco session exited"));
       this.proc = null;

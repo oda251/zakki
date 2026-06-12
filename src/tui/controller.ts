@@ -8,7 +8,11 @@ export interface KeyLike {
   meta: boolean;
 }
 
-export type KeyAction = { type: "edit"; raw: string } | { type: "exit" } | { type: "none" };
+export type KeyAction =
+  | { type: "edit"; raw: string }
+  | { type: "rotate" }
+  | { type: "exit" }
+  | { type: "none" };
 
 /** C0 制御文字（0x00-0x1f）と DEL（0x7f）以外を印字可能とみなす */
 function isPrintable(ch: string): boolean {
@@ -34,6 +38,9 @@ export function applyKey(raw: string, key: KeyLike): KeyAction {
     case "return":
     case "enter":
       return { type: "edit", raw: `${raw}\n` };
+    // 直前の変換単位の候補ローテーション（1 キー手動修正、docs/FEATURES.md §変換の修正 UX）
+    case "tab":
+      return { type: "rotate" };
     case "space":
       return { type: "edit", raw: `${raw} ` };
     default:

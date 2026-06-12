@@ -1,7 +1,9 @@
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { saveCorrection } from "@/conversion/corrections.ts";
 import type { KanaKanjiEngine } from "@/conversion/engine.ts";
 import { ConversionPipeline } from "@/conversion/pipeline.ts";
+import { segmentKana } from "@/conversion/segment.ts";
 import type { Db } from "@/db/client.ts";
 import { persistEntry } from "@/entry/autosave.ts";
 import { exportEntry } from "@/export/obsidian.ts";
@@ -19,11 +21,13 @@ export interface AppProps {
   initialRaw: string;
   vaultDir: string;
   engine: KanaKanjiEngine;
+  /** 学習済みの手動修正（かな → 確定表記）。起動時に corrections テーブルから読む */
+  corrections: ReadonlyMap<string, string>;
 }
 
 type SaveState = "saved" | "dirty" | "error";
 
-export function App({ db, date, initialRaw, vaultDir, engine }: AppProps) {
+export function App({ db, date, initialRaw, vaultDir, engine, corrections }: AppProps) {
   const [raw, setRaw] = useState(initialRaw);
   // 変換解決のたびに増え、再描画と再保存（effect の依存）を駆動する
   const [conversionVersion, setConversionVersion] = useState(0);
@@ -42,9 +46,27 @@ export function App({ db, date, initialRaw, vaultDir, engine }: AppProps) {
         engine,
         () => setConversionVersion((v) => v + 1),
         (m) => setMessage(`変換エラー: ${m}`),
+        corrections,
       ),
-    [engine],
+    [engine, corrections],
   );
+
+  // Tab: 直前の変換単位の候補ローテーション。選択は corrections に学習する
+  const rotateLastSegment = useCallback(() => {
+    const kana = convertRomaji(bufferRef.current).converted;
+    const target = segmentKana(kana)
+      .filter((s) => s.complete && !s.separator)
+      .at(-1);
+    if (target === undefined) {
+      return;
+    }
+    pipeline.rotate(target.text, (chosen) => {
+      saveCorrection(db, target.text, chosen).match(
+        () => {},
+        (e) => setMessage(`学習エラー: ${e.message}`),
+      );
+    });
+  }, [db, pipeline]);
 
   const exit = useCallback(() => {
     // flush 保存（打鍵途中の n を確定）→ エクスポート → 端末復帰。
@@ -67,14 +89,22 @@ export function App({ db, date, initialRaw, vaultDir, engine }: AppProps) {
 
   useKeyboard((keyEvent) => {
     const action = applyKey(bufferRef.current, keyEvent);
-    if (action.type === "exit") {
-      exit();
-      return;
-    }
-    if (action.type === "edit") {
-      bufferRef.current = action.raw;
-      setRaw(action.raw);
-      setSaveState("dirty");
+    switch (action.type) {
+      case "exit":
+        exit();
+        return;
+      case "rotate":
+        rotateLastSegment();
+        return;
+      case "edit":
+        bufferRef.current = action.raw;
+        setRaw(action.raw);
+        setSaveState("dirty");
+        return;
+      case "none":
+        return;
+      default:
+        return;
     }
   });
 
