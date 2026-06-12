@@ -67,12 +67,7 @@ export function analyzeAll(db: Db): Result<AnalysisSummary, DbError> {
       tx.delete(links).where(eq(links.origin, "auto")).run();
       for (const link of linkCandidates) {
         tx.insert(links)
-          .values({
-            fromChunkId: link.fromChunkId,
-            toChunkId: link.toChunkId,
-            score: link.score,
-            origin: "auto",
-          })
+          .values({ ...link, origin: "auto" })
           .onConflictDoNothing()
           .run();
       }

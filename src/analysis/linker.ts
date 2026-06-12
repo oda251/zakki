@@ -27,18 +27,12 @@ export function computeLinks(
     for (let j = i + 1; j < sets.length; j++) {
       const a = sets[i];
       const b = sets[j];
-      if (a === undefined || b === undefined) {
-        continue;
-      }
+      if (a === undefined || b === undefined) continue;
       let shared = 0;
       for (const noun of a.set) {
-        if (b.set.has(noun)) {
-          shared += 1;
-        }
+        if (b.set.has(noun)) shared += 1;
       }
-      if (shared < MIN_SHARED_NOUNS) {
-        continue;
-      }
+      if (shared < MIN_SHARED_NOUNS) continue;
       const union = a.set.size + b.set.size - shared;
       const score = shared / union;
       if (score >= MIN_SCORE) {
