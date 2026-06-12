@@ -18,8 +18,8 @@ export interface TextGenerator {
   generate(prompt: string): ResultAsync<string, LlmError>;
 }
 
-export const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
-export const DEFAULT_OLLAMA_MODEL = "qwen3:4b";
+const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_MODEL = "qwen3:4b";
 
 const toLlmError = (cause: unknown): LlmError => ({
   type: "llm-error",

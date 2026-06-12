@@ -35,7 +35,7 @@ export function deterministicDigest(input: DigestInput): string {
   return lines.join("\n");
 }
 
-/** LLM 要約付きダイジェスト。LLM なし・失敗時は決定的ダイジェストのみ */
+/** LLM 要約付きダイジェスト。LLM なし・チャンクなし・失敗時は決定的ダイジェストのみ */
 export async function generateDigest(
   input: DigestInput,
   llm: TextGenerator | null,
