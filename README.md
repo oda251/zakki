@@ -24,6 +24,13 @@ bun start
 
 句点・改行の一次区切りに加え、ローカル embedding（ruri-v3-30m、初回起動時に約37MB を自動取得）による話題転換検出で隣接文が同一チャンクにまとまる。入力中は関連する過去チャンクが右ペインに自動表示される。`ZAKKI_NO_EMBEDDING=1` で embedding 系機能を無効化できる。
 
+```sh
+bun run digest          # 当日のふりかえりを vault へ書き出し（--week で直近7日）
+bun run tags            # タグの統合提案（--apply で適用）
+```
+
+どちらも Ollama（qwen3 系）が起動していれば LLM で強化される（要約文・類義判定）。なければ決定的な集計・編集距離 + embedding のみで動く。
+
 ## ドキュメント
 
 - [構想・アーキテクチャ](docs/CONCEPT.md)

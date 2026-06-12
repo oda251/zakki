@@ -142,7 +142,7 @@
 2. ~~**Phase 2（+ zenz GGUF）**~~ **完了（2026-06-13）**: `--zenz` 有効化による文脈校正変換（`scripts/install-zenz.sh` で GGUF 取得、未取得時は N-gram フォールバック）。Tab による直前変換単位の候補ローテーションと corrections テーブルへの学習（exact-match 最優先リランキング）。CPU 推論速度は warm 後 約0.1秒/文（WSL2 実測）。留意: trait は ZenzaiCPU でなく Zenzai を使う（ZenzaiCPU の split_mode=NONE は llama.cpp b4846 の main_gpu 検証と衝突しロード不能、`RESEARCH.md` §1）
 3. ~~**Phase 3（+ lindera-wasm）**~~ **完了（2026-06-13）**: lindera-wasm（Bun 動作確認済み）名詞抽出 + TF-IDF タグ付け、キーワード共有（Jaccard）関連付け、MiniSearch 全文検索（Ctrl+F、文字バイグラム + 読みカタカナ索引でローマ字クエリが漢字本文に当たる）。タグは frontmatter、関連は `[[リンク]]` として Obsidian エクスポートに反映
 4. ~~**Phase 4（+ ローカル embedding）**~~ **完了（2026-06-13）**: ruri-v3-30m 非公式 ONNX（q8、初回 embed 時に遅延ダウンロード約37MB）。話題転換検出による二次チャンク区切り（隣接類似度 < 0.85 を境界、E2E で結合動作確認）、セマンティック関連付け（類似度 ≥ 0.88）、セマンティック検索（クエリは変換エンジンで漢字に開いてから埋め込む。かな文の埋め込みは弱いため）、入力中チャンクの関連アンビエント表示。近傍探索は総当たりコサイン（sqlite-vec 不使用、`RESEARCH.md` §2 の代替案）。`ZAKKI_NO_EMBEDDING=1` で無効化可
-5. **Phase 5（+ 汎用ローカル LLM、任意）**: 要約ダイジェスト・タグ正規化の高度化
+5. ~~**Phase 5（+ 汎用ローカル LLM、任意）**~~ **完了（2026-06-13）**: `bun run digest [日付|--week]`（チャンクタイトル + タグ頻度の決定的集計を vault の digests/ へ書き出し。Ollama + qwen3 系が起動していれば要約文を付加、失敗時はフォールバック）と `bun run tags [--apply]`（編集距離 + タグ名 embedding 類似による統合提案。LLM がいれば embedding 由来の提案を類義判定でフィルタ）。全機能が LLM なしで成立する設計を維持。Ollama 経路は実機未検証（未導入のため。フェイクサーバでの単体テストは常設）
 
 ## 決定済み事項
 
