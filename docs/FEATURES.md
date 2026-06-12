@@ -1,0 +1,152 @@
+# zakki — 機能候補と実現方式
+
+`CONCEPT.md` のプリンシパル「考えを入力する以外の操作を可能な限り省く」と制約「運用コストゼロ・極力ローカル完結」を前提に、コア機能の実現方式と追加機能候補をまとめる。技術候補の調査根拠は `RESEARCH.md`（2026-06-12 調査）。
+
+## 変換エンジン（かな漢字変換）
+
+採用: **[AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter) の公式 CLI `anco` を常駐外部プロセス化**（比較・深掘り根拠は `RESEARCH.md` §1）。
+
+| 段 | エンジン | 役割 |
+| --- | --- | --- |
+| 即時変換 | anco 内蔵 N-gram + 同梱辞書（MIT） | 打鍵に追従する変換。文節レベルの文脈考慮 |
+| 文脈校正 | 同プロセスで `--zenz` 有効化（[zenz-v3.1-small](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) GGUF 73.9MB、CC-BY-SA 4.0） | 左文脈（`:ctx`）・トピック（`--config_topic`）を渡した LLM 変換 |
+
+- 統合方式: `Bun.spawn('anco', ['session', '--zenz', ..., '--zenz_v3'])` → stdin にかなを 1 行ずつ書き、stdout の候補を読む（ライン指向プロトコル、`RESEARCH.md` §1 深掘り）。出力の ANSI エスケープは除去してパース
+- ビルド: Swift 6.1 + `swift build -c release --traits ZenzaiCPU`（CPU 専用）。llama.cpp はプレビルド `.so` を利用。Ubuntu 24.04 CI 実績あり
+- フォールバック: zenz GGUF 未取得時は N-gram のみで動作（完全オフライン成立）
+- ローマ字→かなは TS 自作（決定的テーブル変換。[cwskk](https://github.com/rokoucha/cwskk)（MIT）等から流用可能）
+- 不採用 / 代替:
+  - Google 日本語変換 CGI API: 公式廃止宣言 + 規約リスク
+  - SKK 辞書引き自作: anco 採用で不要（SKK-JISYO の GPL 問題も消滅）
+  - zenz プロンプト自前実装: anco が公式統合済みのため不要
+  - Mozc（`apt install emacs-mozc-bin` で導入可、DX 最良）: zenz 系の精度・速度が不足した場合の代替
+
+### 変換の修正 UX
+
+- 入力中は修正させない。誤変換は放置可能とし、校正段（zenz）が文脈で自動回収する
+- 手動修正は「直前の文節に対する 1 キー（候補ローテーション）」のみ提供。候補は anco の n-best（`--config_n_best`）をそのまま使う
+- raw（かな）を保持しているため、後からエンジンを替えて一括再変換できる
+
+### ユーザー辞書の自動学習
+
+- 手動修正された変換（かな→確定表記）を DB に記録し、以後の候補ランキングで最優先する
+- anco 側の学習・ユーザー辞書 API の有無は未確認（未検証）。なければアプリ側のリランキングで実現する
+
+## embedding（チャンク化・関連付け・検索の基盤）
+
+採用候補（`RESEARCH.md` §2）:
+
+| 構成要素 | 採用候補 | 備考 |
+| --- | --- | --- |
+| ランタイム | [@huggingface/transformers](https://github.com/huggingface/transformers.js) v4 | ONNX ローカル実行。Apache-2.0。Bun での動作報告あり（要実機検証） |
+| モデル | [ruri-v3-30m](https://huggingface.co/cl-nagoya/ruri-v3-30m)（int8 ONNX 約37MB、256次元） | JMTEB 74.51 で有料 API（OpenAI text-embedding-3-large）超え。Apache-2.0。ONNX が非公式変換のため出力一致の検証必須。代替: multilingual-e5-small（公式 ONNX あり） |
+| ベクトル検索 | [sqlite-vec](https://alexgarcia.xyz/sqlite-vec/js.html) | `bun:sqlite` 公式サポート。brute-force で数万件規模は十分（384次元×10万件 75ms 以下） |
+
+**embedding なしの代替（段階導入の初期形態）**: タグの共起 + キーワード（lindera-wasm で名詞抽出 → TF-IDF）による類似度。精度は落ちるが依存最小。まずこれで実装し、ローカル embedding は精度が不足したら導入する。
+
+## 形態素解析・全文検索
+
+- 形態素解析: [lindera-wasm](https://github.com/lindera/lindera)（`lindera-wasm-nodejs-ipadic`、MIT、IPAdic 同梱 約13MB、メンテ活発）。kuromoji.js はメンテ 8 年停止のため不採用（`RESEARCH.md` §3）
+- 全文検索: [MiniSearch](https://github.com/lucaong/minisearch)（MIT、in-memory）+ lindera-wasm カスタムトークナイザ
+  - 代替: bun:sqlite FTS5。ただし trigram は日本語 2 文字以下がヒットせず、macOS で FTS5 破損バグ報告あり（`RESEARCH.md` §3）。依存削減を優先する場合のみ
+
+## ローカル LLM（任意コンポーネント）
+
+ランタイムは [Ollama](https://github.com/ollama/ollama-js)（REST、最小摩擦）または [node-llama-cpp](https://node-llama-cpp.withcat.ai/)（Bun 公式サポート、プロセス内実行）。モデルは Qwen3-4B（Q4 約2.5GB、Nejumi sub-10B 2位）等（`RESEARCH.md` §5）。
+
+導入は任意とし、**全機能が汎用 LLM なしで成立する設計**を維持する（zenz は変換特化 90M モデルであり、この「LLM」には含めない — 74MB・CPU で常用可能なコア部品として扱う）。
+
+| 用途 | LLM あり | LLM なしの代替 |
+| --- | --- | --- |
+| チャンク境界・タイトル | 境界とタイトルを同時生成 | 決定的区切り + 先頭文・キーワードによるタイトル |
+| タグ正規化 | 類義判定 | embedding 近傍 or 編集距離 |
+| ダイジェスト | 要約文を生成 | チャンクタイトル + タグ頻度の一覧 |
+
+## 追加機能の候補
+
+プリンシパル適合度順。すべて無料・ローカル制約内で実現可能なもの。
+
+### 入力に資する機能（優先度高）
+
+1. **関連メモのアンビエント表示**
+   - 入力中のチャンクに類似する過去チャンクをサイドペインへ自動表示。操作ゼロで過去の思考が引き出される
+   - 実現: チャンク確定ごとにローカル類似度計算（§embedding） → ペイン更新。OpenTUI の Flexbox レイアウトで分割
+2. **ゼロフリクション起動**
+   - 起動即・当日エントリの末尾で入力モード。前回終了位置の復元
+   - 実現: 起動時に DB から当日 entry をロード。なければ作成。設定・引数なしで動く
+3. **入力プレースホルダ（書き出しの支援）**
+   - 空エントリ時に前日の未完チャンクのタイトルを薄く表示
+   - 実現: 前日 chunks の末尾参照（決定的）。ローカル LLM があれば問いかけ文生成に拡張可
+
+### 整理・想起系
+
+4. **デイリー / ウィークリーダイジェスト**
+   - 1 日・1 週間の振り返りを自動生成
+   - 実現: 基本はチャンクタイトル + タグ頻度の集計（決定的・無料）。ローカル LLM があれば要約文生成に拡張可
+5. **再浮上（resurfacing）**
+   - 「1 年前の今日」や、現在の関心と再接続した過去チャンクを起動時に 1 件提示
+   - 実現: 日付一致 + ローカル類似度のスコアリング。表示のみで操作不要
+6. **タグのオントロジー整理**
+   - 自動タグの統廃合（表記揺れ・類義語）を定期バッチで提案
+   - 実現: 編集距離 + ローカル embedding のクラスタリング。NDC 等の既存分類体系（`~/.references/taxonomy/ndc.md`）をタグの正規化辞書として使う案もある
+
+### 検索・閲覧
+
+7. **インクリメンタル全文検索**
+   - 1 キーで検索ペインを開き、打鍵ごとに絞り込み
+   - 実現: MiniSearch + lindera-wasm（§形態素解析・全文検索）
+8. **セマンティック検索**
+   - キーワード一致しない「あのとき考えてたこと」を探す
+   - 実現: クエリをローカル embedding 化して近傍検索。§embedding の導入後に追加
+9. **タイムライン / グラフビュー**
+   - v1 の 3 ビュー概念の TUI 版。閲覧専用で入力フローから分離
+   - 実現: OpenTUI でのリスト描画。グラフは隣接チャンクのテキスト表現（ツリー展開）に簡略化
+
+### 基盤・運用
+
+10. **Markdown / Obsidian エクスポート**
+    - チャンクを `[[リンク]]` 付き Markdown として vault へ書き出し、既存の Obsidian 運用（`~/obsidian-vault`）と接続
+    - 実現: chunks / links / tags からの決定的変換。一方向同期（v2 が source of truth）
+11. **解析キューの永続化**
+    - 校正・タグ付け等のバックグラウンド処理を DB 上のキューで管理し、クラッシュ・中断後に再開
+    - 実現: CONCEPT.md のパイプライン構成の自然な帰結。完全ローカルのためネットワーク断の考慮は不要になった
+12. **音声入力**
+    - 将来候補。whisper.cpp 等のローカル STT（無料・未検証）。変換パイプラインのローマ字段を音声認識結果に差し替えるだけで載る構造にしておく
+13. **端末間同期**
+    - 将来候補。SQLite ファイルの git 管理等、無料手段に限定（未検証）
+
+## 採用しない方向
+
+### プリンシパルとの不適合
+
+- フォルダ階層・手動分類 UI: 整理操作を要求するため不採用
+- リッチな WYSIWYG / プレビュー: 入力以外の関心を増やすため不採用
+- マルチユーザー・共有: v2 はシングルユーザー・ローカルに限定
+
+### コスト・制約との不適合
+
+- クラウド LLM / クラウド embedding API: 有料のため不採用
+- Google 日本語変換 CGI API: 無料だが廃止宣言済み + 規約リスクのため不採用（`RESEARCH.md` §1）
+- 有料 SaaS への同期: 不採用
+
+## 段階導入計画（依存の少ない順）
+
+1. **Phase 1（完全オフライン・最小）**: OpenTUI 入力 + ローマ字→かな + anco（N-gram、zenz なし）+ 自動保存 + 決定的チャンク化
+2. **Phase 2（+ zenz GGUF）**: `--zenz` 有効化による文脈校正変換。ユーザー辞書学習（リランキング）
+3. **Phase 3（+ lindera-wasm）**: キーワードタグ付け + タグ共起の関連付け + MiniSearch 全文検索
+4. **Phase 4（+ ローカル embedding）**: 話題転換検出 + セマンティック関連付け・検索 + アンビエント表示
+5. **Phase 5（+ 汎用ローカル LLM、任意）**: 要約ダイジェスト・タグ正規化の高度化
+
+## 決定済み事項
+
+- 完全無料・極力ローカル完結（2026-06-12）
+- v2 は**別プロジェクトとして新規リポジトリで開始**。garden リポジトリは v1 のまま残す（2026-06-12）
+- 変換エンジンは anco（AzooKeyKanaKanjiConverter）+ zenz。実装コストより精度・DX を優先（2026-06-12）
+
+## 未確定事項（要判断・要検証）
+
+1. 新リポジトリの名称・公開設定
+2. anco の実機検証: WSL2 での Swift 6.1 ビルド、CPU での zenz 推論速度、`session` 出力のパース（Phase 1 着手時に最初に行う）
+3. anco のユーザー辞書・学習 API の有無（未検証）
+4. OpenTUI v0.x の API 不安定性への追従方針（バージョン固定 + 定期更新）
+5. ruri-v3-30m 非公式 ONNX の出力一致検証（Phase 4 着手前）
