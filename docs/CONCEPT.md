@@ -34,6 +34,7 @@ v1（[garden](https://github.com/oda251/garden): ノードグラフ ドキュメ
   - Ink / OpenTUI とも IME 変換中表示は未対応だが、v2 はローマ字直接入力で IME を使わないため影響なし
 - ランタイムは Bun、ローカル DB は `bun:sqlite`（`~/.references/stack/tech-stack-ts.md` の技術選定に従う）
 - ローカルファースト。データはローカル SQLite に保持し、外部送信（変換・タグ付け等の API 利用）は機能単位で制御可能にする
+- データは Obsidian vault（`~/obsidian-vault`）へ Markdown として**一方向エクスポート**できる（2026-06-12 確定）。SQLite が source of truth であり、vault 側の編集は取り込まない（`FEATURES.md` §Obsidian エクスポート）
 
 ## コア機能
 
@@ -64,6 +65,13 @@ flowchart LR
 経緯: 当初候補の Google 日本語変換 CGI API は公式廃止宣言 + 規約リスクで不採用。SKK 辞書引き自作案は anco の採用により不要（SKK-JISYO の GPL 問題も消滅）。Mozc（apt で導入可・品質高）は zenz 系の精度が不足した場合の代替（`RESEARCH.md` §1）。
 
 ローマ字→ひらがなは決定的なテーブル変換であり外部依存不要（ヘボン式・訓令式の揺れの吸収を含む）。
+
+英単語の扱い（2026-06-12 確定）:
+
+- 大文字で始まる単語は英単語として扱い、かな変換を行わない
+- 英単語はスペースまたは記号（句読点・改行等）まで継続する
+- 英単語直後のスペース 1 個は「区切り」として消費し、出力に残さない（`Claude ga` → `Claudeが`）
+- 英単語の直後にスペースを残したい場合（英単語の連続等）はスペース 2 個を打ち、1 個に縮約する（`Claude  Code` → `Claude Code`）
 
 ### 2. 自動チャンク化
 
