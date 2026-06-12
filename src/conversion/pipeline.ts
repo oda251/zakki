@@ -123,13 +123,14 @@ export class ConversionPipeline {
     if (this.inflight.has(kana)) {
       return;
     }
-    if ((this.attempts.get(kana) ?? 0) >= MAX_ATTEMPTS) {
+    const attempts = this.attempts.get(kana) ?? 0;
+    if (attempts >= MAX_ATTEMPTS) {
       // リトライ上限。かなのまま確定させ、無限再投入を防ぐ
       this.cache.set(kana, { candidates: [kana], index: 0 });
       return;
     }
     this.inflight.add(kana);
-    this.attempts.set(kana, (this.attempts.get(kana) ?? 0) + 1);
+    this.attempts.set(kana, attempts + 1);
     void this.engine.convert(kana, leftContext === "" ? undefined : leftContext).match(
       (candidates) => {
         this.inflight.delete(kana);

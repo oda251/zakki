@@ -204,6 +204,5 @@ export class AncoEngine implements KanaKanjiEngine {
 
 /** :ctx は 1 行コマンドのため、複数行文脈は最終行だけを渡す */
 function lastLine(text: string): string {
-  const lines = text.split("\n");
-  return lines[lines.length - 1] ?? "";
+  return text.split("\n").at(-1) ?? "";
 }

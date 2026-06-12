@@ -1,7 +1,8 @@
 import type { Result } from "neverthrow";
 import { chunkText } from "@/chunk/chunker.ts";
 import type { Db } from "@/db/client.ts";
-import type { RepoError, SavedEntry } from "./repository.ts";
+import type { DbError } from "@/db/error.ts";
+import type { SavedEntry } from "./repository.ts";
 import { saveSnapshot } from "./repository.ts";
 
 /** ローカルタイムゾーンの YYYY-MM-DD */
@@ -19,6 +20,6 @@ export function localDate(d: Date = new Date()): string {
 export function persistEntry(
   db: Db,
   input: { date: string; raw: string; converted: string },
-): Result<SavedEntry, RepoError> {
+): Result<SavedEntry, DbError> {
   return saveSnapshot(db, { ...input, chunks: chunkText(input.converted) });
 }

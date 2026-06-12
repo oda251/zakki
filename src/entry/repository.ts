@@ -1,14 +1,10 @@
 import { and, asc, eq, gte } from "drizzle-orm";
-import { Result } from "neverthrow";
+import type { Result } from "neverthrow";
 import type { Db } from "@/db/client.ts";
+import type { DbError } from "@/db/error.ts";
+import { tryDb } from "@/db/error.ts";
 import type { Chunk, Entry } from "@/db/schema.ts";
 import { chunks, entries } from "@/db/schema.ts";
-
-export interface RepoError {
-  readonly type: "db-error";
-  readonly message: string;
-  readonly cause: unknown;
-}
 
 export interface ChunkInput {
   title: string;
@@ -28,21 +24,11 @@ export interface SavedEntry {
   chunks: Chunk[];
 }
 
-const toRepoError = (cause: unknown): RepoError => ({
-  type: "db-error",
-  message: cause instanceof Error ? cause.message : String(cause),
-  cause,
-});
-
-function tryDb<T>(fn: () => T): Result<T, RepoError> {
-  return Result.fromThrowable(fn, toRepoError)();
-}
-
 export function getOrCreateEntry(
   db: Db,
   date: string,
   now: string = new Date().toISOString(),
-): Result<Entry, RepoError> {
+): Result<Entry, DbError> {
   return tryDb(() => {
     const existing = db.select().from(entries).where(eq(entries.date, date)).get();
     if (existing !== undefined) {
@@ -61,7 +47,7 @@ export function saveSnapshot(
   db: Db,
   snapshot: EntrySnapshot,
   now: string = new Date().toISOString(),
-): Result<SavedEntry, RepoError> {
+): Result<SavedEntry, DbError> {
   return tryDb(() =>
     db.transaction((tx) => {
       const entry = tx
@@ -108,7 +94,7 @@ export function saveSnapshot(
   );
 }
 
-export function getEntryWithChunks(db: Db, date: string): Result<SavedEntry | null, RepoError> {
+export function getEntryWithChunks(db: Db, date: string): Result<SavedEntry | null, DbError> {
   return tryDb(() => {
     const entry = db.select().from(entries).where(eq(entries.date, date)).get();
     if (entry === undefined) {

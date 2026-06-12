@@ -103,8 +103,6 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections }: App
         return;
       case "none":
         return;
-      default:
-        return;
     }
   });
 
@@ -138,7 +136,7 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections }: App
   }, [db, date, raw, vaultDir, pipeline, conversionVersion]);
 
   const { converted: kanaText, pending } = convertRomaji(raw);
-  const applied = pipeline.apply(kanaText);
+  const applied = useMemo(() => pipeline.apply(kanaText), [kanaText, conversionVersion, pipeline]);
   const status =
     saveState === "saved" ? "保存済み" : saveState === "dirty" ? "…" : `エラー: ${message}`;
   const convertingNote = applied.converting > 0 ? ` ｜ 変換中 ${applied.converting}` : "";

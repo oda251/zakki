@@ -76,6 +76,6 @@ export function snapshotFromRaw(
   raw: string,
   options: { flush?: boolean } = {},
 ): { date: string; raw: string; converted: string } {
-  const { converted } = convertRomaji(raw, { flush: options.flush ?? false });
+  const { converted } = convertRomaji(raw, { flush: options.flush });
   return { date, raw, converted };
 }
