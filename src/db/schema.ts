@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
  * 1 セッション（日付単位）の生入力ログ（docs/CONCEPT.md データモデル素案）。
@@ -83,6 +83,22 @@ export const links = sqliteTable(
   },
   (t) => [uniqueIndex("links_pair").on(t.fromChunkId, t.toChunkId)],
 );
+
+/**
+ * chunk の埋め込みベクトル（docs/CONCEPT.md データモデル素案）。
+ * Float32Array を BLOB で保持し、近傍探索は総当たりコサイン
+ * （数万件規模で十分。`RESEARCH.md` §2 の代替案を採用し sqlite-vec は不使用）。
+ */
+export const embeddings = sqliteTable("embeddings", {
+  chunkId: integer("chunk_id")
+    .primaryKey()
+    .references(() => chunks.id, { onDelete: "cascade" }),
+  /** content のハッシュ。変化検知して再計算する */
+  contentHash: text("content_hash").notNull(),
+  model: text("model").notNull(),
+  vector: blob("vector", { mode: "buffer" }).notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
 
 export type Entry = typeof entries.$inferSelect;
 export type Chunk = typeof chunks.$inferSelect;

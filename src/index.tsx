@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { AncoEngine, defaultAncoPath, defaultZenzPath } from "@/conversion/anco/engine.ts";
 import { loadCorrections } from "@/conversion/corrections.ts";
 import { identityEngine } from "@/conversion/engine.ts";
+import { createRuriEmbedder } from "@/embedding/embedder.ts";
 import { createDb } from "@/db/client.ts";
 import { localDate } from "@/entry/autosave.ts";
 import { getOrCreateEntry } from "@/entry/repository.ts";
@@ -38,6 +39,10 @@ const engine = existsSync(ancoPath)
 
 const corrections = loadCorrections(db).unwrapOr(new Map());
 
+// embedding は遅延ロード（初回 embed 時にモデル取得）のため起動をブロックしない。
+// ZAKKI_NO_EMBEDDING=1 で無効化できる（完全決定的動作）
+const embedder = process.env["ZAKKI_NO_EMBEDDING"] === "1" ? null : createRuriEmbedder();
+
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(
   <App
@@ -47,5 +52,6 @@ createRoot(renderer).render(
     vaultDir={defaultVaultDir()}
     engine={engine}
     corrections={corrections}
+    embedder={embedder}
   />,
 );

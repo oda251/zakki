@@ -141,7 +141,7 @@
 1. ~~**Phase 1（完全オフライン・最小）**~~ **完了（2026-06-13）**: OpenTUI 入力 + ローマ字→かな（英単語パススルー含む）+ anco（N-gram、zenz なし）+ 自動保存 + 決定的チャンク化 + Obsidian 基本エクスポート。変換は句点・改行で完結したセグメント単位の非同期置換（`src/conversion/pipeline.ts`）で、raw が正本のため再起動時に再変換で復元する
 2. ~~**Phase 2（+ zenz GGUF）**~~ **完了（2026-06-13）**: `--zenz` 有効化による文脈校正変換（`scripts/install-zenz.sh` で GGUF 取得、未取得時は N-gram フォールバック）。Tab による直前変換単位の候補ローテーションと corrections テーブルへの学習（exact-match 最優先リランキング）。CPU 推論速度は warm 後 約0.1秒/文（WSL2 実測）。留意: trait は ZenzaiCPU でなく Zenzai を使う（ZenzaiCPU の split_mode=NONE は llama.cpp b4846 の main_gpu 検証と衝突しロード不能、`RESEARCH.md` §1）
 3. ~~**Phase 3（+ lindera-wasm）**~~ **完了（2026-06-13）**: lindera-wasm（Bun 動作確認済み）名詞抽出 + TF-IDF タグ付け、キーワード共有（Jaccard）関連付け、MiniSearch 全文検索（Ctrl+F、文字バイグラム + 読みカタカナ索引でローマ字クエリが漢字本文に当たる）。タグは frontmatter、関連は `[[リンク]]` として Obsidian エクスポートに反映
-4. **Phase 4（+ ローカル embedding）**: 話題転換検出 + セマンティック関連付け・検索 + アンビエント表示
+4. ~~**Phase 4（+ ローカル embedding）**~~ **完了（2026-06-13）**: ruri-v3-30m 非公式 ONNX（q8、初回 embed 時に遅延ダウンロード約37MB）。話題転換検出による二次チャンク区切り（隣接類似度 < 0.85 を境界、E2E で結合動作確認）、セマンティック関連付け（類似度 ≥ 0.88）、セマンティック検索（クエリは変換エンジンで漢字に開いてから埋め込む。かな文の埋め込みは弱いため）、入力中チャンクの関連アンビエント表示。近傍探索は総当たりコサイン（sqlite-vec 不使用、`RESEARCH.md` §2 の代替案）。`ZAKKI_NO_EMBEDDING=1` で無効化可
 5. **Phase 5（+ 汎用ローカル LLM、任意）**: 要約ダイジェスト・タグ正規化の高度化
 
 ## 決定済み事項
@@ -158,4 +158,4 @@
 2. ~~anco の実機検証~~ → 完了（2026-06-12〜13）。ローカル Swift ビルドは行わず GitHub Actions で自前ビルドし Release 配布（`RESEARCH.md` §1、`scripts/install-anco.sh` で導入）。WSL2 で `session` プロトコルの動作・パースを確認（変換 約0.05秒/件、`:ctx` の文脈考慮も確認）。留意: pipe 接続時は stdout が全面バッファされるため `stdbuf -oL` が必須（`src/conversion/anco/engine.ts`）。CPU での zenz 推論速度も計測済み: 初回 約1.05秒（モデルロード込み）、warm 後 約0.1秒/文（2026-06-13）
 3. anco のユーザー辞書・学習 API の有無: `session` に `--config_user_dictionary`（JSON）と `--enable_memory`（学習）があることをソースで確認（2026-06-13）。挙動は未検証
 4. OpenTUI v0.x の API 不安定性への追従方針（バージョン固定 + 定期更新）
-5. ruri-v3-30m 非公式 ONNX の出力一致検証（Phase 4 着手前）
+5. ~~ruri-v3-30m 非公式 ONNX の出力一致検証~~ → 完了（2026-06-13）。q8 ≒ fp32（言い換え 0.935/0.936）、モデルカードの参照類似度 0.954 を再現（0.956）。回帰テストを `src/embedding/embedder.integration.test.ts` に常設。留意: 全ひらがな文の埋め込みは漢字表記より大きく劣化する（実測）
