@@ -13,6 +13,7 @@
     "typescript/consistent-type-imports": "error",
     "typescript/switch-exhaustiveness-check": "error",
     "no-unused-vars": "error",
+    "no-underscore-dangle": ["warn", { "allow": ["_unsafeUnwrap", "_unsafeUnwrapErr"] }],
     "no-restricted-imports": [
       "error",
       {
