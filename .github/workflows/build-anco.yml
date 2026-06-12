@@ -1,0 +1,92 @@
+# anco（AzooKeyKanaKanjiConverter の CLI）の Linux x64 バイナリを自前ビルドして
+# Release に添付する。upstream はプレビルドバイナリを配布していないため
+# （全リリースで assets なし）、本リポジトリの CI でビルドする。
+# 構成は upstream の .github/workflows/swift.yml（ubuntu-24.04 + Swift 6.1 +
+# プレビルド llama.cpp .so）に ZenzaiCPU trait と静的 Swift stdlib を加えたもの。
+name: build-anco
+
+on:
+  workflow_dispatch:
+    inputs:
+      anco_ref:
+        description: "AzooKeyKanaKanjiConverter の git ref"
+        default: "v0.11.2"
+        required: true
+      llama_tag:
+        description: "fkunn1326/llama.cpp のプレビルド release tag"
+        default: "b4846"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Setup Swift 6.1
+        uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.1-release
+          tag: 6.1-RELEASE
+
+      - name: Checkout AzooKeyKanaKanjiConverter
+        uses: actions/checkout@v6
+        with:
+          repository: azooKey/AzooKeyKanaKanjiConverter
+          ref: ${{ inputs.anco_ref }}
+          submodules: true
+
+      - name: Download prebuilt llama.cpp
+        run: |
+          wget -q -O llama-cpp-bin.zip "https://github.com/fkunn1326/llama.cpp/releases/download/${{ inputs.llama_tag }}/llama-${{ inputs.llama_tag }}-bin-ubuntu-x64.zip"
+          unzip -q llama-cpp-bin.zip -d llama-cpp-bin
+          cp llama-cpp-bin/build/bin/lib*.so ./
+
+      - name: Build anco (ZenzaiCPU)
+        run: swift build -c release -Xcxx -xobjective-c++ --traits ZenzaiCPU -Xswiftc -strict-concurrency=complete -Xlinker -L./ --static-swift-stdlib
+
+      - name: Package
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq patchelf
+          mkdir -p dist
+          cp .build/release/CliTool dist/anco
+          cp -r .build/release/*.resources dist/
+          cp lib*.so dist/
+          # 同梱 .so をバイナリと同じディレクトリから解決できるようにする
+          patchelf --set-rpath '$ORIGIN' dist/anco
+          # 再配布物のライセンス文書
+          cp LICENSE dist/LICENSE.AzooKeyKanaKanjiConverter
+          cp Sources/KanaKanjiConverterModuleWithDefaultDictionary/azooKey_dictionary_storage/LICENSE dist/LICENSE.azooKey_dictionary_storage
+          curl -sL -o dist/LICENSE.llama.cpp "https://raw.githubusercontent.com/ggml-org/llama.cpp/master/LICENSE"
+          {
+            echo "anco (AzooKeyKanaKanjiConverter CLI) Linux x64 build"
+            echo
+            echo "- engine: https://github.com/azooKey/AzooKeyKanaKanjiConverter @ ${{ inputs.anco_ref }} (MIT)"
+            echo "- dictionary: azooKey_dictionary_storage submodule (Apache-2.0)"
+            echo "- emoji dictionary: azooKey_emoji_dictionary_storage submodule (no LICENSE file; generated from Unicode data)"
+            echo "- llama.cpp: prebuilt .so from https://github.com/fkunn1326/llama.cpp @ ${{ inputs.llama_tag }} (MIT)"
+            echo "- Swift stdlib: statically linked (Apache-2.0 with Runtime Library Exception)"
+            echo "- zenz model is NOT included (CC-BY-SA 4.0; download separately)"
+            echo "- built on ubuntu-24.04 (glibc 2.39), Swift 6.1, traits: ZenzaiCPU"
+          } > dist/PROVENANCE.txt
+
+      - name: Verify portability and smoke test
+        run: |
+          file dist/anco
+          if ldd dist/anco | grep -i 'libswift'; then
+            echo "::error::Swift runtime is dynamically linked; binary is not portable"
+            exit 1
+          fi
+          ./dist/anco にほんごにゅうりょく -n 3 --disable_prediction
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf "anco-${{ inputs.anco_ref }}-linux-x64.tar.gz" -C dist .
+          gh release create "anco-${{ inputs.anco_ref }}" \
+            --repo "${{ github.repository }}" \
+            --title "anco ${{ inputs.anco_ref }} (linux-x64)" \
+            --notes-file dist/PROVENANCE.txt \
+            "anco-${{ inputs.anco_ref }}-linux-x64.tar.gz"

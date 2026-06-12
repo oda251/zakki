@@ -36,7 +36,8 @@
 - **Linux 公式サポート**: CI が ubuntu-24.04 + Swift 6.1 でビルド・テストを常時実行。llama.cpp はプレビルド `.so`（fkunn1326/llama.cpp のリリース）をダウンロード。CPU 専用ビルドは `--traits ZenzaiCPU`
 - **外部プロセス IF**: `anco session` が stdin/stdout のライン指向プロトコル（1 行 1 コマンド: ひらがな入力 → 候補出力、`:n` 次ページ、`:3` 候補選択、`:ctx 前文` で左文脈設定、`:q` 終了）。TS からは `Bun.spawn` + stdin 書き込み / stdout 読み取りで統合できる
 - **Zenzai 統合済み**: `--zenz <gguf path> --zenz_v3` フラグで有効化。`--config_topic`（トピック指定）、`--config_n_best` あり。zenz なしでも内蔵 N-gram エンジンで動作（自然なフォールバック）
-- **ライセンス**: エンジン本体 MIT。辞書（azooKey_dictionary_storage サブモジュール）も MIT → SKK-JISYO の GPL 問題が消滅
+- **ライセンス**: エンジン本体 MIT。辞書（azooKey_dictionary_storage サブモジュール）は **Apache-2.0**（2026-06-13 に LICENSE ファイルで確認。当初の MIT という記載は誤り）→ いずれにせよ SKK-JISYO の GPL 問題は消滅。絵文字辞書サブモジュール（azooKey_emoji_dictionary_storage）のみ LICENSE ファイルなし（Unicode データからの生成物）
+- **プレビルドバイナリは配布されていない**（2026-06-13 確認: 全リリースで assets なし、CI artifacts なし）。fcitx5-hazkey が同エンジン + 辞書同梱の Linux バイナリを GitHub Releases で配布する先行例あり → zakki では自リポジトリの GitHub Actions（ubuntu-24.04 = ローカル WSL2 と同一環境・glibc 2.39）でビルドして Release に添付する方式を採用（`.github/workflows/build-anco.yml`）。バイナリ名は `CliTool`（公式 `install_cli.sh` がこれを `anco` として配置する）。ポータビリティのため `--static-swift-stdlib` を付与
 - 留意点: `anco session` の出力に ANSI エスケープが含まれるためパース時に除去が必要。CPU での Zenzai 推論速度は未計測（未検証）。WSL2 固有の問題は未検証
 
 zenz モデルのバリアント（GGUF 公式配布の確認結果）:
