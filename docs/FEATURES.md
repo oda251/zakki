@@ -154,8 +154,8 @@
 
 ## 未確定事項（要判断・要検証）
 
-1. 新リポジトリの名称・公開設定
-2. anco の実機検証: WSL2 での Swift 6.1 ビルド、CPU での zenz 推論速度、`session` 出力のパース（Phase 1 着手時に最初に行う）
-3. anco のユーザー辞書・学習 API の有無（未検証）
+1. ~~新リポジトリの名称・公開設定~~ → zakki / public で確定（2026-06-12）
+2. ~~anco の実機検証~~ → 完了（2026-06-12〜13）。ローカル Swift ビルドは行わず GitHub Actions で自前ビルドし Release 配布（`RESEARCH.md` §1、`scripts/install-anco.sh` で導入）。WSL2 で `session` プロトコルの動作・パースを確認（変換 約0.05秒/件、`:ctx` の文脈考慮も確認）。留意: pipe 接続時は stdout が全面バッファされるため `stdbuf -oL` が必須（`src/conversion/anco/engine.ts`）。**CPU での zenz 推論速度のみ未検証**（Phase 2 で zenz GGUF 導入時に計測）
+3. anco のユーザー辞書・学習 API の有無: `session` に `--config_user_dictionary`（JSON）と `--enable_memory`（学習）があることをソースで確認（2026-06-13）。挙動は未検証
 4. OpenTUI v0.x の API 不安定性への追従方針（バージョン固定 + 定期更新）
 5. ruri-v3-30m 非公式 ONNX の出力一致検証（Phase 4 着手前）
