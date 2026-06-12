@@ -12,6 +12,10 @@ export interface ExportError {
 export interface ExportChunk {
   position: number;
   content: string;
+  /** 自動付与タグ（frontmatter に出力） */
+  tags?: string[];
+  /** 関連チャンクのノート名（[[リンク]] として出力） */
+  related?: string[];
 }
 
 export interface ExportSummary {
@@ -87,19 +91,25 @@ async function doExport({ vaultDir, date, chunks }: ExportEntryInput): Promise<E
   return summary;
 }
 
+/** Obsidian 上のノート名（拡張子なし）。[[リンク]] のターゲットにも使う */
+export function noteName(date: string, position: number): string {
+  return `${date}-${String(position).padStart(3, "0")}`;
+}
+
 function fileName(date: string, position: number): string {
-  return `${date}-${String(position).padStart(3, "0")}.md`;
+  return `${noteName(date, position)}.md`;
 }
 
 function renderChunk(date: string, chunk: ExportChunk): string {
-  return [
-    "---",
-    `date: ${date}`,
-    `position: ${chunk.position}`,
-    SOURCE_MARKER,
-    "---",
-    "",
-    chunk.content,
-    "",
-  ].join("\n");
+  const lines = ["---", `date: ${date}`, `position: ${chunk.position}`];
+  const tags = chunk.tags ?? [];
+  if (tags.length > 0) {
+    lines.push("tags:", ...tags.map((t) => `  - ${t}`));
+  }
+  lines.push(SOURCE_MARKER, "---", "", chunk.content, "");
+  const related = chunk.related ?? [];
+  if (related.length > 0) {
+    lines.push("", "## 関連", "", ...related.map((name) => `- [[${name}]]`), "");
+  }
+  return lines.join("\n");
 }

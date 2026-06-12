@@ -11,8 +11,11 @@ export interface KeyLike {
 export type KeyAction =
   | { type: "edit"; raw: string }
   | { type: "rotate" }
+  | { type: "open-search" }
   | { type: "exit" }
   | { type: "none" };
+
+export type SearchAction = { type: "edit"; query: string } | { type: "close" } | { type: "none" };
 
 /** C0 制御文字（0x00-0x1f）と DEL（0x7f）以外を印字可能とみなす */
 function isPrintable(ch: string): boolean {
@@ -28,6 +31,10 @@ function isPrintable(ch: string): boolean {
 export function applyKey(raw: string, key: KeyLike): KeyAction {
   if (key.ctrl && (key.name === "c" || key.name === "d")) {
     return { type: "exit" };
+  }
+  // Ctrl+F: インクリメンタル全文検索ペイン（docs/FEATURES.md 候補7）
+  if (key.ctrl && key.name === "f") {
+    return { type: "open-search" };
   }
   if (key.ctrl || key.meta) {
     return { type: "none" };
@@ -58,6 +65,29 @@ export interface DisplayState {
   converted: string;
   /** 打鍵途中のローマ字（薄く表示する） */
   pending: string;
+}
+
+/** 検索モードのキー解釈。クエリはローマ字のまま保持し、表示・照合時にかなへ変換する */
+export function applySearchKey(query: string, key: KeyLike): SearchAction {
+  if (key.name === "escape" || (key.ctrl && (key.name === "f" || key.name === "c"))) {
+    return { type: "close" };
+  }
+  if (key.ctrl || key.meta) {
+    return { type: "none" };
+  }
+  switch (key.name) {
+    case "backspace":
+      return query === "" ? { type: "none" } : { type: "edit", query: query.slice(0, -1) };
+    case "space":
+      return { type: "edit", query: `${query} ` };
+    default:
+      break;
+  }
+  const ch = key.sequence;
+  if (ch.length === 1 && isPrintable(ch)) {
+    return { type: "edit", query: query + ch };
+  }
+  return { type: "none" };
 }
 
 /** raw から画面表示を導出する。raw が source of truth（再計算で常に一致） */

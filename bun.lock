@@ -8,6 +8,8 @@
         "@opentui/core": "^0.4.1",
         "@opentui/react": "^0.4.1",
         "drizzle-orm": "^0.45.2",
+        "lindera-wasm-nodejs-ipadic": "^2.0.0",
+        "minisearch": "^7.2.0",
         "neverthrow": "^8.2.0",
         "react": "^19.2.7",
       },
@@ -246,7 +248,11 @@
 
     "lefthook-windows-x64": ["lefthook-windows-x64@2.1.9", "", { "os": "win32", "cpu": "x64" }, "sha512-2qlUtkJHZ3MyUxgV5XTEmcrIoNZA07iwaquoswAcqv/1MeBFXlD+O+koFRfrzWng2O5WYEbpJnd8tvaYnV8fTA=="],
 
+    "lindera-wasm-nodejs-ipadic": ["lindera-wasm-nodejs-ipadic@2.0.0", "", {}, "sha512-ocuJn9MUA7v5wuXRSADgzLu2Hn2//GmAYHARXSkTbMOCk3bv4Rh1L39XjjJ05286HL0YWfpPo67XrxLMJ/zIhQ=="],
+
     "marked": ["marked@17.0.1", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-boeBdiS0ghpWcSwoNm/jJBwdpFaMnZWRzjA6SkUMYb40SVaN1x7mmfGKp0jvexGcx+7y2La5zRZsYFZI6Qpypg=="],
+
+    "minisearch": ["minisearch@7.2.0", "", {}, "sha512-dqT2XBYUOZOiC5t2HRnwADjhNS2cecp9u+TJRiJ1Qp/f5qjkeT5APcGPjHw+bz89Ms8Jp+cG4AlE+QZ/QnDglg=="],
 
     "neverthrow": ["neverthrow@8.2.0", "", { "optionalDependencies": { "@rollup/rollup-linux-x64-gnu": "^4.24.0" } }, "sha512-kOCT/1MCPAxY5iUV3wytNFUMUolzuwd/VF/1KCx7kf6CutrOsTie+84zTGTpgQycjvfLdBBdvBvFLqFD2c0wkQ=="],
 

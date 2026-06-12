@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
  * 1 セッション（日付単位）の生入力ログ（docs/CONCEPT.md データモデル素案）。
@@ -46,6 +46,46 @@ export const corrections = sqliteTable("corrections", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/** 自動付与されるタグ（docs/CONCEPT.md §3）。名前で一意 */
+export const tags = sqliteTable("tags", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const chunkTags = sqliteTable(
+  "chunk_tags",
+  {
+    chunkId: integer("chunk_id")
+      .notNull()
+      .references(() => chunks.id, { onDelete: "cascade" }),
+    tagId: integer("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    /** TF-IDF スコア（付与根拠の記録） */
+    score: real("score").notNull(),
+  },
+  (t) => [uniqueIndex("chunk_tags_pair").on(t.chunkId, t.tagId)],
+);
+
+/** chunk 間の関連（docs/CONCEPT.md データモデル素案）。双方向とみなし from < to で正規化 */
+export const links = sqliteTable(
+  "links",
+  {
+    fromChunkId: integer("from_chunk_id")
+      .notNull()
+      .references(() => chunks.id, { onDelete: "cascade" }),
+    toChunkId: integer("to_chunk_id")
+      .notNull()
+      .references(() => chunks.id, { onDelete: "cascade" }),
+    score: real("score").notNull(),
+    origin: text("origin", { enum: ["auto", "manual"] }).notNull(),
+  },
+  (t) => [uniqueIndex("links_pair").on(t.fromChunkId, t.toChunkId)],
+);
+
 export type Entry = typeof entries.$inferSelect;
 export type Chunk = typeof chunks.$inferSelect;
 export type Correction = typeof corrections.$inferSelect;
+export type Tag = typeof tags.$inferSelect;
+export type Link = typeof links.$inferSelect;
