@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
     "target": "ESNext",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
     "module": "Preserve",
     "moduleDetection": "force",
     "moduleResolution": "bundler",

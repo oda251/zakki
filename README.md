@@ -7,6 +7,17 @@
 - 完全無料・ローカル完結で稼働する
 - データは Obsidian vault へ Markdown として一方向エクスポートできる（SQLite が source of truth）
 
+## 使い方
+
+```sh
+bun install
+bun start
+```
+
+起動すると当日エントリの末尾から即入力できる（設定・引数なし）。ローマ字を打つだけでかなに変換され、自動保存・チャンク化・Obsidian vault（`~/obsidian-vault/zakki/`）へのエクスポートが行われる。終了は Ctrl+C。
+
+現状はかな変換まで（漢字変換エンジン anco は未統合。`docs/FEATURES.md` 未確定事項参照）。
+
 ## ドキュメント
 
 - [構想・アーキテクチャ](docs/CONCEPT.md)
