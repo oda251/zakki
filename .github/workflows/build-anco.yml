@@ -65,9 +65,13 @@ jobs:
               *) cp --update=none "$lib" dist/ ;;
             esac
           done
-          # 同梱 .so をバイナリと同じディレクトリから解決できるようにする
-          # （DT_RPATH は推移的に効くため、同梱ランタイム間の依存も解決される）
+          # 同梱 .so をバイナリと同じディレクトリから解決できるようにする。
+          # 実行ファイルの rpath だけでは libllama.so → libggml.so 等の
+          # 間接依存が cwd 依存になる（WSL2 実測）ため、全 .so にも付与する
           patchelf --force-rpath --set-rpath '$ORIGIN' dist/anco
+          for so in dist/*.so; do
+            patchelf --force-rpath --set-rpath '$ORIGIN' "$so"
+          done
           # 再配布物のライセンス文書
           cp LICENSE dist/LICENSE.AzooKeyKanaKanjiConverter
           cp Sources/KanaKanjiConverterModuleWithDefaultDictionary/azooKey_dictionary_storage/LICENSE dist/LICENSE.azooKey_dictionary_storage
@@ -99,8 +103,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tar -czf "anco-${{ inputs.anco_ref }}-linux-x64.tar.gz" -C dist .
-          gh release create "anco-${{ inputs.anco_ref }}" \
-            --repo "${{ github.repository }}" \
-            --title "anco ${{ inputs.anco_ref }} (linux-x64)" \
-            --notes-file dist/PROVENANCE.txt \
-            "anco-${{ inputs.anco_ref }}-linux-x64.tar.gz"
+          tag="anco-${{ inputs.anco_ref }}"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$tag" --repo "${{ github.repository }}" --clobber \
+              "anco-${{ inputs.anco_ref }}-linux-x64.tar.gz"
+          else
+            gh release create "$tag" \
+              --repo "${{ github.repository }}" \
+              --title "anco ${{ inputs.anco_ref }} (linux-x64)" \
+              --notes-file dist/PROVENANCE.txt \
+              "anco-${{ inputs.anco_ref }}-linux-x64.tar.gz"
+          fi
