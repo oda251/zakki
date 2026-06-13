@@ -13,7 +13,7 @@ import { createDb } from "@/db/client.ts";
 import { localDate } from "@/entry/autosave.ts";
 import { listChunksWithDate, listTagsByChunk } from "@/entry/queries.ts";
 import { defaultVaultDir } from "@/export/obsidian.ts";
-import { detectOllama } from "@/llm/client.ts";
+import { detectLlm } from "@/llm/client.ts";
 
 const args = process.argv.slice(2);
 const week = args.includes("--week");
@@ -42,7 +42,7 @@ for (const chunk of chunks) {
   }
 }
 
-const llm = await detectOllama();
+const llm = await detectLlm();
 const digest = await generateDigest({ period, chunks, tagCounts }, llm);
 
 const file = join(defaultVaultDir(), "digests", `${week ? `week-${endDate}` : endDate}.md`);

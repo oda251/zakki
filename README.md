@@ -29,7 +29,7 @@ bun run digest          # 当日のふりかえりを vault へ書き出し（--
 bun run tags            # タグの統合提案（--apply で適用）
 ```
 
-どちらも Ollama（qwen3 系）が起動していれば LLM で強化される（要約文・類義判定）。なければ決定的な集計・編集距離 + embedding のみで動く。
+どちらも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.cpp server 等）が起動していれば強化される（要約文・類義判定）。未指定時は LM Studio → Ollama の順に自動検出し、`ZAKKI_LLM_BASE_URL` / `ZAKKI_LLM_MODEL` で明示指定もできる。LLM がなければ決定的な集計・編集距離 + embedding のみで動く。
 
 ## ドキュメント
 

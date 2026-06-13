@@ -14,7 +14,7 @@ import {
 import { createDb } from "@/db/client.ts";
 import { cosine, createRuriEmbedder } from "@/embedding/embedder.ts";
 import { listTagsByChunk } from "@/entry/queries.ts";
-import { detectOllama } from "@/llm/client.ts";
+import { detectLlm } from "@/llm/client.ts";
 
 const apply = process.argv.includes("--apply");
 const db = createDb();
@@ -48,7 +48,7 @@ if (process.env["ZAKKI_NO_EMBEDDING"] !== "1") {
 }
 
 let proposals = proposeTagMerges(tagCounts, similarity);
-const llm = await detectOllama();
+const llm = await detectLlm();
 if (llm !== null) {
   proposals = await filterProposalsWithLlm(proposals, llm);
 }

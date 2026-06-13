@@ -120,7 +120,9 @@ Mozc の DX 再評価: `sudo apt install emacs-mozc-bin` のみで `mozc_emacs_h
 | LLM-jp-3.1-1.8B-instruct4   | 未検証          | MT-Bench JA 6.30                       | Apache-2.0                      |
 | zenz-v3.1-small（変換特化） | 74MB (Q5_K_M)   | §1 参照                                | CC-BY-SA 4.0                    |
 
-用途別推奨: 変換校正 = zenz（特化・軽量）、要約・タグ正規化 = Qwen3-4B + Ollama。
+用途別推奨: 変換校正 = zenz（特化・軽量）、要約・タグ正規化 = Qwen3-4B 等のローカル LLM。
+
+実装方針（2026-06-13 確定）: LLM クライアントは特定ランタイムの独自 REST ではなく **OpenAI 互換 API（`/v1/chat/completions` + `/v1/models`）** を喋る。これにより LM Studio（:1234、[公式ドキュメント](https://lmstudio.ai/docs/app/api/endpoints/openai)）・Ollama（:11434、[OpenAI 互換ドキュメント](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx)）・llama.cpp server・LiteLLM 等を無改修で差し替えられる。LiteLLM（Python の OpenAI 互換ゲートウェイ）は zakki に組み込まず、使いたい場合は前段に立てる構成にできる（本体は Bun/TS・依存追加なしを維持）。
 
 ## 調査を受けた選定変更（FEATURES.md 反映済み）
 
