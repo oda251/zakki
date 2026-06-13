@@ -2,6 +2,7 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { existsSync } from "node:fs";
 import { AncoEngine, defaultAncoPath, defaultZenzPath } from "@/conversion/anco/engine.ts";
+import { loadConversionCache } from "@/conversion/cache.ts";
 import { loadCorrections } from "@/conversion/corrections.ts";
 import { identityEngine } from "@/conversion/engine.ts";
 import { createRuriEmbedder } from "@/embedding/embedder.ts";
@@ -38,6 +39,8 @@ const engine = existsSync(ancoPath)
   : identityEngine;
 
 const corrections = loadCorrections(db).unwrapOr(new Map());
+// 永続化済みの自動変換キャッシュをシードし、毎起動の全文再変換を避ける
+const conversionCache = loadConversionCache(db).unwrapOr(new Map());
 
 // embedding は遅延ロード（初回 embed 時にモデル取得）のため起動をブロックしない。
 // ZAKKI_NO_EMBEDDING=1 で無効化できる（完全決定的動作）
@@ -52,6 +55,7 @@ createRoot(renderer).render(
     vaultDir={defaultVaultDir()}
     engine={engine}
     corrections={corrections}
+    conversionCache={conversionCache}
     embedder={embedder}
   />,
 );

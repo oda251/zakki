@@ -46,6 +46,17 @@ export const corrections = sqliteTable("corrections", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/**
+ * かなセグメント → 確定変換 のキャッシュ（docs/CONCEPT.md §1 への追補）。
+ * エンジンの自動変換結果を永続化し、起動時に ConversionPipeline へ流し込む。
+ * これにより毎起動の全文再変換を避ける。corrections（手動修正）が優先される。
+ */
+export const conversionCache = sqliteTable("conversion_cache", {
+  kana: text("kana").primaryKey(),
+  converted: text("converted").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 /** 自動付与されるタグ（docs/CONCEPT.md §3）。名前で一意 */
 export const tags = sqliteTable("tags", {
   id: integer("id").primaryKey({ autoIncrement: true }),

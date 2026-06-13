@@ -1,9 +1,13 @@
-import { useKeyboard, useRenderer } from "@opentui/react";
+import { decodePasteBytes } from "@opentui/core";
+import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { analyzeAll } from "@/analysis/service.ts";
+import { countChunks, displayTail } from "@/chunk/chunker.ts";
 import { TopicGrouper } from "@/chunk/grouper.ts";
+import { saveConversion } from "@/conversion/cache.ts";
 import { saveCorrection } from "@/conversion/corrections.ts";
 import type { KanaKanjiEngine } from "@/conversion/engine.ts";
+import { PASTE_CLOSE, PASTE_OPEN, wrapPaste } from "@/conversion/paste.ts";
 import { ConversionPipeline } from "@/conversion/pipeline.ts";
 import { segmentKana } from "@/conversion/segment.ts";
 import type { Db } from "@/db/client.ts";
@@ -26,6 +30,8 @@ const SAVE_DEBOUNCE_MS = 300;
 const ANALYZE_EXPORT_DEBOUNCE_MS = 2000;
 const SEARCH_RESULT_LIMIT = 8;
 const AMBIENT_LIMIT = 3;
+/** 折りたたみ時に表示する末尾チャンク数（最新の確定チャンク＋入力中チャンク） */
+const MIN_VISIBLE_CHUNKS = 2;
 
 export interface AppProps {
   db: Db;
@@ -35,6 +41,8 @@ export interface AppProps {
   engine: KanaKanjiEngine;
   /** 学習済みの手動修正（かな → 確定表記）。起動時に corrections テーブルから読む */
   corrections: ReadonlyMap<string, string>;
+  /** 永続化済みの自動変換キャッシュ。起動時の全文再変換を避けるためシードする */
+  conversionCache: ReadonlyMap<string, string>;
   /** ローカル embedding。null なら話題検出・セマンティック機能は無効（決定的動作のみ） */
   embedder: Embedder | null;
 }
@@ -46,13 +54,26 @@ interface AmbientItem {
   title: string;
 }
 
-export function App({ db, date, initialRaw, vaultDir, engine, corrections, embedder }: AppProps) {
+export function App({
+  db,
+  date,
+  initialRaw,
+  vaultDir,
+  engine,
+  corrections,
+  conversionCache,
+  embedder,
+}: AppProps) {
   const [raw, setRaw] = useState(initialRaw);
   // 変換・グルーピング解決のたびに増え、再描画と再保存（effect の依存）を駆動する
   const [conversionVersion, setConversionVersion] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [chunkCount, setChunkCount] = useState(0);
   const [message, setMessage] = useState("");
+  // 折りたたみ表示: 既定は最新＋入力中チャンクのみ。上下キーで 1 チャンクずつめくる
+  const [visibleChunks, setVisibleChunks] = useState(MIN_VISIBLE_CHUNKS);
+  // 表示数クランプ用の総チャンク数（描画時に更新し、キーハンドラから参照する）
+  const totalChunksRef = useRef(MIN_VISIBLE_CHUNKS);
   const [mode, setMode] = useState<"write" | "search">("write");
   const [searchQuery, setSearchQuery] = useState("");
   const [semanticHits, setSemanticHits] = useState<ChunkWithDate[]>([]);
@@ -68,8 +89,16 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
   const bump = useCallback(() => setConversionVersion((v) => v + 1), []);
 
   const pipeline = useMemo(
-    () => new ConversionPipeline(engine, bump, (m) => setMessage(`変換エラー: ${m}`), corrections),
-    [engine, corrections, bump],
+    () =>
+      new ConversionPipeline(engine, bump, (m) => setMessage(`変換エラー: ${m}`), {
+        corrections,
+        cache: conversionCache,
+        // 確定した変換を永続化し、次回起動時にシードして全文再変換を避ける
+        onConverted: (kana, conv) => {
+          saveConversion(db, kana, conv).mapErr((e) => setMessage(`変換保存: ${e.message}`));
+        },
+      }),
+    [engine, corrections, conversionCache, db, bump],
   );
 
   const grouper = useMemo(
@@ -224,14 +253,40 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
         );
         setMode("search");
         return;
+      case "reveal-older":
+        // 1 つ上のチャンクを追加表示（総数を超えない）
+        setVisibleChunks((n) => Math.min(n + 1, totalChunksRef.current));
+        return;
+      case "reveal-newer":
+        // 1 つ畳む（最新＋入力中の 2 つを下限とする）
+        setVisibleChunks((n) => Math.max(MIN_VISIBLE_CHUNKS, n - 1));
+        return;
+      case "collapse":
+        setVisibleChunks(MIN_VISIBLE_CHUNKS);
+        return;
       case "edit":
         bufferRef.current = action.raw;
         setRaw(action.raw);
         setSaveState("dirty");
+        // 打鍵したら折りたたみ表示（末尾）へ復帰する
+        setVisibleChunks(MIN_VISIBLE_CHUNKS);
         return;
       case "none":
         return;
     }
+  });
+
+  // ペースト: 変換せずそのまま 1 チャンクに固める（内部の句点・改行で分割しない）
+  usePaste((event) => {
+    const wrapped = wrapPaste(decodePasteBytes(event.bytes));
+    if (wrapped.length <= PASTE_OPEN.length + PASTE_CLOSE.length) {
+      return;
+    }
+    const next = bufferRef.current + wrapped;
+    bufferRef.current = next;
+    setRaw(next);
+    setSaveState("dirty");
+    setVisibleChunks(MIN_VISIBLE_CHUNKS);
   });
 
   useEffect(() => {
@@ -295,6 +350,15 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
 
   const { converted: kanaText, pending } = convertRomaji(raw);
   const applied = useMemo(() => pipeline.apply(kanaText), [kanaText, conversionVersion, pipeline]);
+  // 既定は最新＋入力中チャンクのみ。上下キーでめくった visibleChunks 分だけ表示する
+  const totalChunks = useMemo(() => countChunks(applied.text), [applied.text]);
+  totalChunksRef.current = totalChunks;
+  const shownChunks = Math.min(visibleChunks, totalChunks);
+  const shownText = useMemo(
+    () => displayTail(applied.text, shownChunks),
+    [shownChunks, applied.text],
+  );
+  const hiddenChunks = totalChunks - shownChunks;
   const status =
     saveState === "saved" ? "保存済み" : saveState === "dirty" ? "…" : `エラー: ${message}`;
   const convertingNote = applied.converting > 0 ? ` ｜ 変換中 ${applied.converting}` : "";
@@ -319,7 +383,7 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
             <span fg="#aaaaaa">▌</span>
           </text>
         </box>
-        <scrollbox style={{ flexGrow: 1 }} focused>
+        <scrollbox style={{ flexGrow: 1 }} focused contentOptions={{ paddingRight: 1 }}>
           {bigramHits.length === 0 && extraSemantic.length === 0 ? (
             <text style={{ fg: "#888888" }}>
               {searchQuery === "" ? "ローマ字で入力すると絞り込まれます" : "該当なし"}
@@ -361,9 +425,19 @@ export function App({ db, date, initialRaw, vaultDir, engine, corrections, embed
   return (
     <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
       <box style={{ flexDirection: "row", flexGrow: 1 }}>
-        <scrollbox style={{ flexGrow: 1 }} stickyScroll stickyStart="bottom" focused>
+        <scrollbox
+          style={{ flexGrow: 1 }}
+          stickyScroll
+          stickyStart="bottom"
+          focused
+          // スクロールバーが本文右端の文字に被らないよう、本文側に 1 桁の余白を確保する
+          contentOptions={{ paddingRight: 1 }}
+        >
+          {hiddenChunks > 0 && (
+            <text style={{ fg: "#555555" }}>… ↑ で履歴（あと {hiddenChunks}） ──</text>
+          )}
           <text style={{ wrapMode: "word" }}>
-            {applied.text}
+            {shownText}
             <span fg="#777777">{pending}</span>
             <span fg="#aaaaaa">▌</span>
           </text>

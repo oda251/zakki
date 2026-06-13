@@ -21,10 +21,21 @@ describe("applyKey", () => {
     });
   });
 
-  test("backspace は末尾 1 文字を削除し、空なら何もしない", () => {
+  test("backspace は確定かなをかな単位で、打鍵途中ローマ字は 1 文字で削る", () => {
+    // 確定かな か(=ka) はローマ字スパンごと削除
     expect(applyKey("ka", key({ name: "backspace" }))).toEqual({
       type: "edit",
-      raw: "k",
+      raw: "",
+    });
+    // 拗音 きゃ(=kya) も 1 単位
+    expect(applyKey("kya", key({ name: "backspace" }))).toEqual({
+      type: "edit",
+      raw: "",
+    });
+    // 打鍵途中ローマ字（pending）は 1 文字だけ
+    expect(applyKey("kak", key({ name: "backspace" }))).toEqual({
+      type: "edit",
+      raw: "ka",
     });
     expect(applyKey("", key({ name: "backspace" }))).toEqual({ type: "none" });
   });
@@ -49,8 +60,14 @@ describe("applyKey", () => {
     });
   });
 
+  test("上下キーで履歴を 1 チャンクずつめくり、Esc で折りたたみへ戻す", () => {
+    expect(applyKey("a", key({ name: "up", sequence: "[A" }))).toEqual({ type: "reveal-older" });
+    expect(applyKey("a", key({ name: "down", sequence: "[B" }))).toEqual({ type: "reveal-newer" });
+    expect(applyKey("a", key({ name: "escape" }))).toEqual({ type: "collapse" });
+  });
+
   test("その他の修飾キー・制御シーケンスは無視する", () => {
-    expect(applyKey("a", key({ name: "up", sequence: "[A" }))).toEqual({
+    expect(applyKey("a", key({ name: "f1", sequence: "OP" }))).toEqual({
       type: "none",
     });
     expect(applyKey("a", key({ name: "s", sequence: "s", meta: true }))).toEqual({ type: "none" });

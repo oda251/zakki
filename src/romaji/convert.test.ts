@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { convertRomaji } from "./convert.ts";
+import { PASTE_CLOSE, PASTE_OPEN, wrapPaste } from "@/conversion/paste.ts";
+import { convertRomaji, deleteLastUnit } from "./convert.ts";
 
 function converted(input: string, flush = false): string {
   return convertRomaji(input, { flush }).converted;
@@ -147,5 +148,42 @@ describe("記号の写像", () => {
   test("かな以外の直後では写像しない", () => {
     expect(converted("3.14")).toBe("3.14");
     expect(converted("2026-06")).toBe("2026-06");
+  });
+});
+
+describe("ペースト領域はそのまま通す", () => {
+  test("マーカーで囲まれた領域は変換せず素通しする（内部の句点も保持）", () => {
+    const input = `ka${wrapPaste("Cat。neko")}`;
+    expect(convertRomaji(input).converted).toBe(`か${PASTE_OPEN}Cat。neko${PASTE_CLOSE}`);
+  });
+});
+
+describe("deleteLastUnit（かな単位 backspace）", () => {
+  test("確定かなはローマ字スパンごと削る", () => {
+    expect(deleteLastUnit("ka")).toBe("");
+    expect(deleteLastUnit("kaki")).toBe("ka");
+    expect(deleteLastUnit("kya")).toBe(""); // 拗音も 1 単位
+    expect(deleteLastUnit("kakkya")).toBe("kak"); // 直前は促音 っ が残る
+  });
+
+  test("打鍵途中ローマ字（pending）は 1 文字だけ削る", () => {
+    expect(deleteLastUnit("kak")).toBe("ka");
+    expect(deleteLastUnit("ky")).toBe("k");
+  });
+
+  test("全角句読点（写像済み）も 1 単位として削る", () => {
+    expect(deleteLastUnit("soudesu.")).toBe("soudesu");
+  });
+
+  test("英単語は 1 文字ずつ削る", () => {
+    expect(deleteLastUnit("Claude")).toBe("Claud");
+  });
+
+  test("ペースト塊は 1 単位としてまとめて削る", () => {
+    expect(deleteLastUnit(`ka${wrapPaste("neko。inu")}`)).toBe("ka");
+  });
+
+  test("空文字列は空のまま", () => {
+    expect(deleteLastUnit("")).toBe("");
   });
 });

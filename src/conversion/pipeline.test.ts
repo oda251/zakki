@@ -59,6 +59,51 @@ describe("ConversionPipeline", () => {
     expect(requests.map((r) => r.kana)).toEqual(["いちぎょうめ"]);
   });
 
+  test("永続キャッシュをシードするとエンジンを呼ばず即返す（全文再変換の回避）", () => {
+    const { engine, requests } = deferredEngine();
+    const pipeline = new ConversionPipeline(
+      engine,
+      () => {},
+      () => {},
+      {
+        cache: new Map([["はれ。", "晴れ。"]]),
+      },
+    );
+    expect(pipeline.apply("はれ。")).toEqual({ text: "晴れ。", converting: 0 });
+    expect(requests).toHaveLength(0);
+  });
+
+  test("corrections はキャッシュより優先される", () => {
+    const { engine } = deferredEngine();
+    const pipeline = new ConversionPipeline(
+      engine,
+      () => {},
+      () => {},
+      {
+        cache: new Map([["はれ。", "晴れ。"]]),
+        corrections: new Map([["はれ。", "貼れ。"]]),
+      },
+    );
+    expect(pipeline.apply("はれ。").text).toBe("貼れ。");
+  });
+
+  test("エンジン変換が確定すると onConverted に最良候補を渡す（永続化用）", async () => {
+    const { engine, resolve } = deferredEngine();
+    const saved: [string, string][] = [];
+    const pipeline = new ConversionPipeline(
+      engine,
+      () => {},
+      () => {},
+      {
+        onConverted: (kana, conv) => saved.push([kana, conv]),
+      },
+    );
+    pipeline.apply("はれ。");
+    resolve("はれ。", ["晴れ。", "貼れ。"]);
+    await tick();
+    expect(saved).toEqual([["はれ。", "晴れ。"]]);
+  });
+
   test("文脈として直前セグメントの変換結果を渡す", async () => {
     const { engine, resolve, requests } = deferredEngine();
     const pipeline = new ConversionPipeline(engine, () => {});
@@ -114,7 +159,7 @@ describe("ConversionPipeline", () => {
       engine,
       () => {},
       () => {},
-      new Map([["はれ。", "貼れ。"]]),
+      { corrections: new Map([["はれ。", "貼れ。"]]) },
     );
 
     // 変換リクエストなしで学習値が使われる

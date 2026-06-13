@@ -17,6 +17,15 @@ interface CacheEntry {
   index: number;
 }
 
+export interface PipelineOptions {
+  /** 学習済み手動修正（かな → 確定表記）。最優先候補として固定する */
+  corrections?: ReadonlyMap<string, string>;
+  /** 永続化済みの自動変換キャッシュ。起動時シード（corrections に劣後） */
+  cache?: ReadonlyMap<string, string>;
+  /** エンジン変換が確定するたびに呼ぶ（永続化用）。最良候補を渡す */
+  onConverted?: (kana: string, converted: string) => void;
+}
+
 /**
  * 非同期かな漢字変換パイプライン（docs/CONCEPT.md §1）。
  *
@@ -38,13 +47,20 @@ export class ConversionPipeline {
   private readonly attempts = new Map<string, number>();
   private readonly inflight = new Set<string>();
 
+  private readonly onConverted: (kana: string, converted: string) => void;
+
   constructor(
     private readonly engine: KanaKanjiEngine,
     private readonly onUpdate: () => void,
     private readonly onError: (message: string) => void = () => {},
-    overrides: ReadonlyMap<string, string> = new Map(),
+    options: PipelineOptions = {},
   ) {
-    for (const [kana, chosen] of overrides) {
+    this.onConverted = options.onConverted ?? (() => {});
+    // キャッシュ → corrections の順にシードし、corrections を最優先にする
+    for (const [kana, converted] of options.cache ?? []) {
+      this.cache.set(kana, { candidates: [converted], index: 0 });
+    }
+    for (const [kana, chosen] of options.corrections ?? []) {
       this.cache.set(kana, { candidates: [chosen], index: 0 });
     }
   }
@@ -134,8 +150,10 @@ export class ConversionPipeline {
     void this.engine.convert(kana, leftContext === "" ? undefined : leftContext).match(
       (candidates) => {
         this.inflight.delete(kana);
-        if (candidates.length > 0) {
+        const best = candidates[0];
+        if (best !== undefined) {
           this.cache.set(kana, { candidates, index: 0 });
+          this.onConverted(kana, best);
         }
         this.onUpdate();
       },

@@ -1,4 +1,4 @@
-import { convertRomaji } from "@/romaji/convert.ts";
+import { convertRomaji, deleteLastUnit } from "@/romaji/convert.ts";
 
 /** useKeyboard の KeyEvent から必要な部分だけを切り出した形 */
 export interface KeyLike {
@@ -12,6 +12,9 @@ export type KeyAction =
   | { type: "edit"; raw: string }
   | { type: "rotate" }
   | { type: "open-search" }
+  | { type: "reveal-older" }
+  | { type: "reveal-newer" }
+  | { type: "collapse" }
   | { type: "exit" }
   | { type: "none" };
 
@@ -41,7 +44,8 @@ export function applyKey(raw: string, key: KeyLike): KeyAction {
   }
   switch (key.name) {
     case "backspace":
-      return raw === "" ? { type: "none" } : { type: "edit", raw: raw.slice(0, -1) };
+      // かな変換済みはかな単位、打鍵途中ローマ字は 1 文字ずつ削る（仕様）
+      return raw === "" ? { type: "none" } : { type: "edit", raw: deleteLastUnit(raw) };
     case "return":
     case "enter":
       return { type: "edit", raw: `${raw}\n` };
@@ -50,6 +54,15 @@ export function applyKey(raw: string, key: KeyLike): KeyAction {
       return { type: "rotate" };
     case "space":
       return { type: "edit", raw: `${raw} ` };
+    // 折りたたみ表示の履歴めくり（既定は最新＋入力中チャンク。1 回で 1 チャンクずつ）
+    case "up":
+    case "pageup":
+      return { type: "reveal-older" };
+    case "down":
+    case "pagedown":
+      return { type: "reveal-newer" };
+    case "escape":
+      return { type: "collapse" };
     default:
       break;
   }
