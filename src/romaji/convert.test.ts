@@ -55,11 +55,14 @@ describe("促音・撥音", () => {
   test("n + 子音は ん", () => {
     expect(converted("kanji")).toBe("かんじ");
     expect(converted("zenbu")).toBe("ぜんぶ");
-    expect(converted("konnichiwa")).toBe("こんにちわ");
+    expect(converted("denwa")).toBe("でんわ");
   });
 
-  test("n + n は ん + な行（onna → おんな）", () => {
-    expect(converted("onna")).toBe("おんな");
+  test("nn は後続によらず常に ん（ん＋母音は二重 n で出す）", () => {
+    expect(converted("onna")).toBe("おんあ");
+    expect(converted("rennai")).toBe("れんあい");
+    // ん の後に な行を続けるには n を重ねる
+    expect(converted("onnna")).toBe("おんな");
   });
 
   test("nn は ん 1 つに畳む（宙ぶらりんな n を残さない）", () => {
@@ -68,11 +71,13 @@ describe("促音・撥音", () => {
     // nn + 子音: んん にならない
     expect(converted("nnka")).toBe("んか");
     expect(converted("nnda")).toBe("んだ");
-    // nn + 母音: 第2の n は な行（んな）
-    expect(converted("nna")).toBe("んな");
-    // 末尾が nn の語: 宙ぶらりんな n なし、続けて母音を打つと な行に解決
+    // nn + 母音: ん + 母音（な行にしない）
+    expect(converted("nna")).toBe("んあ");
+    // nnn + 母音: ん + な行
+    expect(converted("nnna")).toBe("んな");
+    // 末尾が nn の語
     expect(converted("konn")).toBe("こん");
-    expect(converted("konni")).toBe("こんに");
+    expect(converted("konni")).toBe("こんい");
   });
 
   test("n' は ん", () => {

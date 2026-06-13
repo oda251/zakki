@@ -31,7 +31,6 @@ const PUNCT_MAP: ReadonlyMap<string, string> = new Map([
 ]);
 
 const HIRAGANA_OR_CHOON = /[ぁ-ゖー]/;
-const VOWEL_OR_Y = /[aiueoy]/;
 
 /** 入力を消費して生成した 1 表示単位。削除（かな単位 backspace）の境界に使う */
 type UnitKind = "kana" | "english" | "passthrough" | "paste";
@@ -109,21 +108,12 @@ function scan(input: string, flush: boolean): ScanResult {
         continue;
       }
       if (next === "n") {
-        // nn の後続で分岐する:
-        // - 母音/y が続く → 第1の n だけ ん、第2の n は な行・拗音の頭
-        //   （onna → おんな、konnichi → こんに、nna → んな）
-        // - 子音・記号・入力末尾 → nn 全体を 1 つの ん に畳む
-        //   （nn → ん、nnka → んか。宙ぶらりんな n を残さない）
-        const after = input.charAt(i + 2);
-        if (after === "" || !VOWEL_OR_Y.test(after)) {
-          out += "ん";
-          units.push({ start, kind: "kana" });
-          i += 2;
-          continue;
-        }
+        // nn は後続によらず常に 1 つの ん（nn → ん、nna → んあ、nnka → んか）。
+        // ん＋な行は n を重ねて打つ（nnna → んな）。ん＋母音もこれで自然に出る
+        // （rennai → れんあい）。打ち分けの流儀として nn=ん を採用する。
         out += "ん";
         units.push({ start, kind: "kana" });
-        i += 1;
+        i += 2;
         continue;
       }
       // n + 子音 / 記号など単語外 → ん（1 文字消費）
