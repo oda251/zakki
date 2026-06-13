@@ -5,8 +5,8 @@ import { chunkText, displayTail, makeTitle } from "./chunker.ts";
 describe("chunkText", () => {
   test("改行で分割する", () => {
     expect(chunkText("きょうははれ\nさんぽした")).toEqual([
-      { title: "きょうははれ", content: "きょうははれ" },
-      { title: "さんぽした", content: "さんぽした" },
+      { content: "きょうははれ" },
+      { content: "さんぽした" },
     ]);
   });
 
@@ -43,9 +43,9 @@ describe("chunkText", () => {
     const input = `まえ。${wrapPaste("いち。に。\nさん")}あと`;
     const drafts = chunkText(input);
     expect(drafts).toEqual([
-      { title: "まえ。", content: "まえ。" },
-      { title: "いち。", content: "いち。に。\nさん", atomic: true },
-      { title: "あと", content: "あと" },
+      { content: "まえ。" },
+      { content: "いち。に。\nさん", atomic: true },
+      { content: "あと" },
     ]);
   });
 });

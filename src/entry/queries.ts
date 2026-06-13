@@ -11,7 +11,6 @@ export interface ChunkWithDate {
   id: number;
   entryId: number;
   position: number;
-  title: string;
   content: string;
   date: string;
 }
@@ -23,7 +22,6 @@ export function listChunksWithDate(db: Db): Result<ChunkWithDate[], DbError> {
         id: chunks.id,
         entryId: chunks.entryId,
         position: chunks.position,
-        title: chunks.title,
         content: chunks.content,
         date: entries.date,
       })

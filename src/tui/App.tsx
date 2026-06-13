@@ -1,8 +1,8 @@
 import { decodePasteBytes } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
-import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment, type ReactNode } from "react";
 import { analyzeAll } from "@/analysis/service.ts";
-import { countChunks, displayTail } from "@/chunk/chunker.ts";
+import { countChunks, displayTail, makeTitle } from "@/chunk/chunker.ts";
 import { TopicGrouper } from "@/chunk/grouper.ts";
 import { fmtPolarity, moodColor, scoreSentiment } from "@/analysis/sentiment.ts";
 import { saveConversion } from "@/conversion/cache.ts";
@@ -30,11 +30,13 @@ const SAVE_DEBOUNCE_MS = 300;
 /** 解析（タグ・関連・埋め込み）と vault への反映は保存より粗くてよい */
 const ANALYZE_EXPORT_DEBOUNCE_MS = 2000;
 const SEARCH_RESULT_LIMIT = 8;
-const AMBIENT_LIMIT = 3;
+const AMBIENT_LIMIT = 5;
 /** 折りたたみ時に表示する末尾チャンク数（最新の確定チャンク＋入力中チャンク） */
 const MIN_VISIBLE_CHUNKS = 2;
-/** 関連（アンビエント）パネルの幅 */
+/** 関連（アンビエント）パネルの幅（詳細を開いても固定） */
 const AMBIENT_PANEL_WIDTH = 30;
+/** 関連を展開したとき、当該チャンクの前後に何件ずつ並べるか */
+const CONTEXT_RADIUS = 1;
 
 export interface AppProps {
   db: Db;
@@ -52,9 +54,41 @@ export interface AppProps {
 
 type SaveState = "saved" | "dirty" | "error";
 
+/**
+ * メイン入力ペイン・検索結果・関連の詳細ペインで共有する読み取り用スクロール面。
+ * scrollbox の設定（右余白・末尾スティック・フォーカス）を一元化し、本文や
+ * カーソルなどの中身は children に委ねる。詳細ペインは「メイン入力ペインの
+ * 入力できない版」として、これを focused なしで使う（マウスホイールでスクロール）。
+ */
+function ReadingPane({
+  focused = false,
+  stickyBottom = false,
+  children,
+}: {
+  focused?: boolean;
+  stickyBottom?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <scrollbox
+      // minHeight:0 で flex 親内でも内容に膨らまず、はみ出さずスクロールできる
+      style={{ flexGrow: 1, minHeight: 0 }}
+      focused={focused}
+      stickyScroll={stickyBottom}
+      stickyStart={stickyBottom ? "bottom" : undefined}
+      // スクロールバーが本文右端の文字に被らないよう、本文側に 1 桁の余白を確保する
+      contentOptions={{ paddingRight: 1 }}
+    >
+      {children}
+    </scrollbox>
+  );
+}
+
 interface AmbientItem {
+  chunkId: number;
   date: string;
-  title: string;
+  /** タイトルは描画時に makeTitle で導出する（派生値は保持しない） */
+  content: string;
 }
 
 export function App({
@@ -83,6 +117,10 @@ export function App({
   const [searchQuery, setSearchQuery] = useState("");
   const [semanticHits, setSemanticHits] = useState<ChunkWithDate[]>([]);
   const [ambient, setAmbient] = useState<AmbientItem[]>([]);
+  // 関連項目をクリックすると、その投稿の前後を右パネル内に展開する（null で一覧表示）
+  const [expandedChunkId, setExpandedChunkId] = useState<number | null>(null);
+  // 前後チャンクを引くための、日付・position 順に整列した全チャンク（解析時に更新）
+  const [allChunks, setAllChunks] = useState<ChunkWithDate[]>([]);
   const searchIndexRef = useRef<SearchIndex | null>(null);
   const searchChunksRef = useRef<Map<number, ChunkWithDate>>(new Map());
   const renderer = useRenderer();
@@ -147,6 +185,8 @@ export function App({
     (vectors: ReadonlyMap<number, Float32Array>) => {
       listChunksWithDate(db).match(
         (all) => {
+          // 前後チャンクの展開に使うため、整列済みの全チャンクを保持する
+          setAllChunks(all);
           const todays = all.filter((c) => c.date === date);
           const last = todays.at(-1);
           const lastVector = last === undefined ? undefined : vectors.get(last.id);
@@ -159,7 +199,9 @@ export function App({
             .slice(0, AMBIENT_LIMIT)
             .flatMap((n) => {
               const chunk = byId.get(n.chunkId);
-              return chunk === undefined ? [] : [{ date: chunk.date, title: chunk.title }];
+              return chunk === undefined
+                ? []
+                : [{ chunkId: chunk.id, date: chunk.date, content: chunk.content }];
             });
           setAmbient(items);
         },
@@ -268,6 +310,7 @@ export function App({
         return;
       case "collapse":
         setVisibleChunks(MIN_VISIBLE_CHUNKS);
+        setExpandedChunkId(null);
         return;
       case "edit":
         bufferRef.current = action.raw;
@@ -356,7 +399,7 @@ export function App({
     return () => clearTimeout(timer);
   }, [mode, searchQuery, embedder, engine, db]);
 
-  const { converted: kanaText, pending } = convertRomaji(raw);
+  const { converted: kanaText, pending } = useMemo(() => convertRomaji(raw), [raw]);
   const applied = useMemo(() => pipeline.apply(kanaText), [kanaText, conversionVersion, pipeline]);
   // 既定は最新＋入力中チャンクのみ。上下キーでめくった visibleChunks 分だけ表示する
   const totalChunks = useMemo(() => countChunks(applied.text), [applied.text]);
@@ -367,6 +410,17 @@ export function App({
     [shownChunks, applied.text],
   );
   const hiddenChunks = totalChunks - shownChunks;
+  // 詳細ペインに出す「当該チャンク＋前後」（日付・position 順の隣接）。選択を通常色、前後を薄く描く
+  const contextChunks = useMemo(() => {
+    if (expandedChunkId === null) {
+      return [];
+    }
+    const i = allChunks.findIndex((c) => c.id === expandedChunkId);
+    if (i === -1) {
+      return [];
+    }
+    return allChunks.slice(Math.max(0, i - CONTEXT_RADIUS), i + CONTEXT_RADIUS + 1);
+  }, [expandedChunkId, allChunks]);
   const status =
     saveState === "saved" ? "保存済み" : saveState === "dirty" ? "…" : `エラー: ${message}`;
   const convertingNote = applied.converting > 0 ? ` ｜ 変換中 ${applied.converting}` : "";
@@ -377,9 +431,9 @@ export function App({
     }
     return searchChunks(searchIndexRef.current, searchQuery).slice(0, SEARCH_RESULT_LIMIT);
   }, [mode, searchQuery]);
+  const queryDisplay = useMemo(() => convertRomaji(searchQuery), [searchQuery]);
 
   if (mode === "search") {
-    const queryDisplay = convertRomaji(searchQuery);
     const seen = new Set(bigramHits.map((h) => h.id));
     const extraSemantic = semanticHits.filter((h) => !seen.has(h.id)).slice(0, 4);
     return (
@@ -391,7 +445,7 @@ export function App({
             <span fg="#aaaaaa">▌</span>
           </text>
         </box>
-        <scrollbox style={{ flexGrow: 1 }} focused contentOptions={{ paddingRight: 1 }}>
+        <ReadingPane focused>
           {bigramHits.length === 0 && extraSemantic.length === 0 ? (
             <text style={{ fg: "#888888" }}>
               {searchQuery === "" ? "ローマ字で入力すると絞り込まれます" : "該当なし"}
@@ -400,9 +454,7 @@ export function App({
             <Fragment>
               {bigramHits.map((hit) => (
                 <box key={hit.id} style={{ flexDirection: "column", marginBottom: 1 }}>
-                  <text>
-                    <span fg="#88aaff">{hit.date}</span> {hit.title}
-                  </text>
+                  <text style={{ fg: "#88aaff" }}>{hit.date}</text>
                   <text style={{ fg: "#aaaaaa", wrapMode: "word" }}>{hit.content}</text>
                 </box>
               ))}
@@ -414,7 +466,7 @@ export function App({
                   {extraSemantic.map((hit) => (
                     <box key={`sem-${hit.id}`} style={{ flexDirection: "column", marginBottom: 1 }}>
                       <text>
-                        <span fg="#88aaff">{hit.date}</span> {hit.title}
+                        <span fg="#88aaff">{hit.date}</span> {makeTitle(hit.content)}
                       </text>
                     </box>
                   ))}
@@ -422,7 +474,7 @@ export function App({
               )}
             </Fragment>
           )}
-        </scrollbox>
+        </ReadingPane>
         <box style={{ height: 1 }}>
           <text style={{ fg: "#888888" }}>Esc で戻る</text>
         </box>
@@ -433,14 +485,7 @@ export function App({
   return (
     <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
       <box style={{ flexDirection: "row", flexGrow: 1 }}>
-        <scrollbox
-          style={{ flexGrow: 1 }}
-          stickyScroll
-          stickyStart="bottom"
-          focused
-          // スクロールバーが本文右端の文字に被らないよう、本文側に 1 桁の余白を確保する
-          contentOptions={{ paddingRight: 1 }}
-        >
+        <ReadingPane focused stickyBottom>
           {hiddenChunks > 0 && (
             <text style={{ fg: "#555555" }}>… ↑ で履歴（あと {hiddenChunks}） ──</text>
           )}
@@ -449,16 +494,52 @@ export function App({
             <span fg="#777777">{pending}</span>
             <span fg="#aaaaaa">▌</span>
           </text>
-        </scrollbox>
+        </ReadingPane>
         {ambient.length > 0 && (
-          <box style={{ width: AMBIENT_PANEL_WIDTH, flexDirection: "column", paddingLeft: 1 }}>
-            <text style={{ fg: "#666666" }}>── 関連 ──</text>
-            {ambient.map((item, i) => (
-              // 日本語は空白なしのため char 折り返し（word だと折り返せず崩れる）
-              <text key={i} style={{ fg: "#aaaaaa", wrapMode: "char" }}>
-                <span fg="#88aaff">{item.date}</span> {item.title}
-              </text>
-            ))}
+          <box
+            style={{
+              width: AMBIENT_PANEL_WIDTH,
+              flexDirection: "column",
+              paddingLeft: 1,
+              // 詳細ペインの scrollbox が高さで膨らんで一覧へはみ出すのを防ぐ
+              minHeight: 0,
+            }}
+          >
+            {/* 関連（一覧）: クリックで下の詳細ペインにその投稿＋前後を読み込む。
+                一覧全体を flexShrink:0 にして、詳細を開いても各行が縮んで潰れないようにする */}
+            <box style={{ flexShrink: 0, flexDirection: "column" }}>
+              <text style={{ fg: "#666666" }}>── 関連 ──</text>
+              {ambient.map((item) => {
+                const active = item.chunkId === expandedChunkId;
+                return (
+                  // 日本語は空白なしのため char 折り返し（word だと折り返せず崩れる）
+                  <box key={item.chunkId} onMouseDown={() => setExpandedChunkId(item.chunkId)}>
+                    <text style={{ fg: active ? "#ffffff" : "#aaaaaa", wrapMode: "char" }}>
+                      <span fg="#88aaff">{item.date}</span> {makeTitle(item.content)}
+                    </text>
+                  </box>
+                );
+              })}
+            </box>
+            {expandedChunkId !== null && (
+              // 詳細: メイン入力ペインの読み取り専用版（ReadingPane を共有）。
+              // 当該チャンク＋前後を 1 続きのテキストで見せる（マウスホイールでスクロール）
+              <box style={{ flexDirection: "column", flexGrow: 1, minHeight: 0, marginTop: 1 }}>
+                <box style={{ flexShrink: 0 }} onMouseDown={() => setExpandedChunkId(null)}>
+                  <text style={{ fg: "#666666" }}>── 詳細（Esc で閉じる） ──</text>
+                </box>
+                <ReadingPane>
+                  <text style={{ wrapMode: "word" }}>
+                    {contextChunks.map((c, idx) => (
+                      // 選択チャンクは通常色、前後は薄く。前のチャンクとは改行で区切る
+                      <span key={c.id} fg={c.id === expandedChunkId ? "#cccccc" : "#666666"}>
+                        {idx > 0 ? `\n${c.content}` : c.content}
+                      </span>
+                    ))}
+                  </text>
+                </ReadingPane>
+              </box>
+            )}
           </box>
         )}
       </box>

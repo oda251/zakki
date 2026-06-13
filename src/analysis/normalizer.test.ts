@@ -83,10 +83,7 @@ describe("applyTagMerges", () => {
       date: "2026-06-13",
       raw: "",
       converted: "",
-      chunks: [
-        { title: "a", content: "変換辞書と学習辞書の話。" },
-        { title: "b", content: "変換器の辞書の続き。" },
-      ],
+      chunks: [{ content: "変換辞書と学習辞書の話。" }, { content: "変換器の辞書の続き。" }],
     })._unsafeUnwrap();
     analyzeAll(db)._unsafeUnwrap();
 

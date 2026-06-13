@@ -27,7 +27,7 @@ function seed(contents: string[]): void {
     date: "2026-06-13",
     raw: "",
     converted: contents.join(""),
-    chunks: contents.map((content) => ({ title: content, content })),
+    chunks: contents.map((content) => ({ content })),
   })._unsafeUnwrap();
 }
 

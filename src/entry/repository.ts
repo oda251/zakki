@@ -7,7 +7,6 @@ import type { Chunk, Entry } from "@/db/schema.ts";
 import { chunks, entries } from "@/db/schema.ts";
 
 export interface ChunkInput {
-  title: string;
   content: string;
 }
 
@@ -72,14 +71,13 @@ export function saveSnapshot(
           .values({
             entryId: entry.id,
             position,
-            title: chunk.title,
             content: chunk.content,
             createdAt: now,
             updatedAt: now,
           })
           .onConflictDoUpdate({
             target: [chunks.entryId, chunks.position],
-            set: { title: chunk.title, content: chunk.content, updatedAt: now },
+            set: { content: chunk.content, updatedAt: now },
           })
           .returning()
           .get(),

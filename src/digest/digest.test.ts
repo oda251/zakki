@@ -6,8 +6,8 @@ import { deterministicDigest, generateDigest } from "./digest.ts";
 const input = {
   period: "2026-06-13",
   chunks: [
-    { date: "2026-06-13", title: "変換の実装", content: "変換の実装をした。" },
-    { date: "2026-06-13", title: "散歩", content: "散歩した。" },
+    { date: "2026-06-13", content: "変換の実装をした。" },
+    { date: "2026-06-13", content: "散歩した。" },
   ],
   tagCounts: new Map([
     ["変換", 2],
@@ -21,7 +21,7 @@ describe("deterministicDigest", () => {
     expect(digest).toContain("# ふりかえり 2026-06-13");
     expect(digest).toContain("チャンク数: 2");
     expect(digest).toContain("変換（2）、散歩（1）");
-    expect(digest).toContain("- 2026-06-13 変換の実装");
+    expect(digest).toContain("- 2026-06-13 変換の実装をした。");
   });
 
   test("気分（ネガポジ平均）の行を含む", () => {

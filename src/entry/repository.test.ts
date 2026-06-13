@@ -24,10 +24,7 @@ describe("saveSnapshot", () => {
       date: "2026-06-12",
       raw: "kyouhahare.sanposhita.",
       converted: "きょうははれ。さんぽした。",
-      chunks: [
-        { title: "きょうははれ。", content: "きょうははれ。" },
-        { title: "さんぽした。", content: "さんぽした。" },
-      ],
+      chunks: [{ content: "きょうははれ。" }, { content: "さんぽした。" }],
     })._unsafeUnwrap();
 
     expect(saved.entry.converted).toBe("きょうははれ。さんぽした。");
@@ -40,18 +37,14 @@ describe("saveSnapshot", () => {
       date,
       raw: "a",
       converted: "あ",
-      chunks: [
-        { title: "一", content: "一" },
-        { title: "二", content: "二" },
-        { title: "三", content: "三" },
-      ],
+      chunks: [{ content: "一" }, { content: "二" }, { content: "三" }],
     })._unsafeUnwrap();
 
     const second = saveSnapshot(db, {
       date,
       raw: "b",
       converted: "い",
-      chunks: [{ title: "改", content: "改" }],
+      chunks: [{ content: "改" }],
     })._unsafeUnwrap();
 
     expect(second.chunks).toHaveLength(1);

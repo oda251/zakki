@@ -1,6 +1,6 @@
 import type { Result } from "neverthrow";
 import type { ChunkDraft } from "@/chunk/chunker.ts";
-import { chunkText, makeTitle } from "@/chunk/chunker.ts";
+import { chunkText } from "@/chunk/chunker.ts";
 import type { TopicGrouper } from "@/chunk/grouper.ts";
 import type { Db } from "@/db/client.ts";
 import type { DbError } from "@/db/error.ts";
@@ -51,8 +51,7 @@ function groupCompleted(completed: ChunkDraft[], grouper: TopicGrouper): ChunkDr
       return;
     }
     for (const group of grouper.group(run)) {
-      const content = group.join("");
-      result.push({ title: makeTitle(content), content });
+      result.push({ content: group.join("") });
     }
     run = [];
   };

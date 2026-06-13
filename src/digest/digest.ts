@@ -1,4 +1,5 @@
 import { fmtPolarity, moodLabel, moodOf, scoreSentiment } from "@/analysis/sentiment.ts";
+import { makeTitle } from "@/chunk/chunker.ts";
 import type { TextGenerator } from "@/llm/client.ts";
 
 /**
@@ -10,7 +11,7 @@ import type { TextGenerator } from "@/llm/client.ts";
 export interface DigestInput {
   /** 見出しに使う期間表記（例: "2026-06-13" や "2026-06-07 〜 2026-06-13"） */
   period: string;
-  chunks: { date: string; title: string; content: string }[];
+  chunks: { date: string; content: string }[];
   /** タグ名 → 出現チャンク数 */
   tagCounts: ReadonlyMap<string, number>;
 }
@@ -48,7 +49,7 @@ export function deterministicDigest(input: DigestInput): string {
 
   lines.push("", "## 書いたこと", "");
   for (const chunk of input.chunks) {
-    lines.push(`- ${chunk.date} ${chunk.title}`);
+    lines.push(`- ${chunk.date} ${makeTitle(chunk.content)}`);
   }
   lines.push("");
   return lines.join("\n");

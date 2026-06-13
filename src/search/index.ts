@@ -14,7 +14,6 @@ import { convertRomaji } from "@/romaji/convert.ts";
 
 export interface SearchHit {
   id: number;
-  title: string;
   content: string;
   date: string;
   position: number;
@@ -45,8 +44,8 @@ function bigrams(text: string): string[] {
 
 export function buildIndex(chunks: ChunkWithDate[]): SearchIndex {
   const index = new MiniSearch<SearchDoc>({
-    fields: ["title", "content", "reading"],
-    storeFields: ["title", "content", "date", "position"],
+    fields: ["content", "reading"],
+    storeFields: ["content", "date", "position"],
     tokenize: bigrams,
     searchOptions: {
       combineWith: "AND",
@@ -64,7 +63,6 @@ export function searchChunks(index: SearchIndex, query: string): SearchHit[] {
   }
   return index.search(toKatakana(kana)).map((r) => ({
     id: Number(r.id),
-    title: String(r["title"]),
     content: String(r["content"]),
     date: String(r["date"]),
     position: Number(r["position"]),

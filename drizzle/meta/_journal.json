@@ -43,6 +43,13 @@
       "when": 1781365286206,
       "tag": "0005_chunk_polarity",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1781371185032,
+      "tag": "0006_drop_chunk_title",
+      "breakpoints": true
     }
   ]
 }

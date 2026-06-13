@@ -28,7 +28,7 @@ export const chunks = sqliteTable(
       .references(() => entries.id, { onDelete: "cascade" }),
     /** entry 内での出現順（0 始まり） */
     position: integer("position").notNull(),
-    title: text("title").notNull(),
+    /** タイトルは content からの純粋な派生（makeTitle）なので保持しない */
     content: text("content").notNull(),
     /** ネガポジ極性 [-1,+1]（解析パスで算出・永続化）。未解析は null */
     polarity: real("polarity"),

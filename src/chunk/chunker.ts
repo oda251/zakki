@@ -1,7 +1,6 @@
 import { PASTE_CLOSE, PASTE_OPEN, stripPasteMarkers } from "@/conversion/paste.ts";
 
 export interface ChunkDraft {
-  title: string;
   content: string;
   /** ペースト由来など、句点・話題検出で分割／結合してはならない確定チャンク */
   atomic?: boolean;
@@ -77,14 +76,14 @@ export function chunkText(text: string): ChunkDraft[] {
     if (span.paste) {
       const content = stripPasteMarkers(span.text).trim();
       if (content !== "") {
-        drafts.push({ title: makeTitle(content), content, atomic: true });
+        drafts.push({ content, atomic: true });
       }
       continue;
     }
     for (const sentence of span.text.split(SENTENCE_BOUNDARY)) {
       const content = sentence.trim();
       if (content !== "") {
-        drafts.push({ title: makeTitle(content), content });
+        drafts.push({ content });
       }
     }
   }

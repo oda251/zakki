@@ -11,7 +11,7 @@ function seed(date: string, contents: string[]): void {
     date,
     raw: "",
     converted: contents.join(""),
-    chunks: contents.map((content) => ({ title: content, content })),
+    chunks: contents.map((content) => ({ content })),
   })._unsafeUnwrap();
 }
 
