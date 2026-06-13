@@ -4,6 +4,7 @@ import type { Db } from "@/db/client.ts";
 import type { DbError } from "@/db/error.ts";
 import { tryDb } from "@/db/error.ts";
 import { chunks, embeddings } from "@/db/schema.ts";
+import { errorMessage } from "@/util/error.ts";
 import type { Embedder } from "./embedder.ts";
 import { bufferToVector, vectorToBuffer } from "./embedder.ts";
 
@@ -42,11 +43,7 @@ export async function syncChunkEmbeddings(
   try {
     vectors = await embedder.embed(stale.value.map((r) => r.content));
   } catch (cause) {
-    return err({
-      type: "db-error",
-      message: cause instanceof Error ? cause.message : String(cause),
-      cause,
-    });
+    return err({ type: "db-error", message: errorMessage(cause), cause });
   }
 
   const now = new Date().toISOString();

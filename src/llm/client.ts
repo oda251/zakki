@@ -1,5 +1,6 @@
 import { ResultAsync } from "neverthrow";
 import * as v from "valibot";
+import { errorMessage } from "@/util/error.ts";
 
 /**
  * 汎用ローカル LLM（docs/FEATURES.md §ローカル LLM）。導入は任意であり、
@@ -26,7 +27,7 @@ const KNOWN_BASE_URLS = ["http://127.0.0.1:1234/v1", "http://127.0.0.1:11434/v1"
 
 const toLlmError = (cause: unknown): LlmError => ({
   type: "llm-error",
-  message: cause instanceof Error ? cause.message : String(cause),
+  message: errorMessage(cause),
   cause,
 });
 

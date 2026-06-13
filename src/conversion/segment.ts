@@ -1,4 +1,4 @@
-import { PASTE_CLOSE, PASTE_OPEN } from "./paste.ts";
+import { PASTE_OPEN, pasteBlockEnd } from "./paste.ts";
 
 /**
  * かなストリームの変換単位への分割。
@@ -35,8 +35,7 @@ export function segmentKana(kana: string): KanaSegment[] {
     const ch = kana.charAt(i);
 
     if (ch === PASTE_OPEN) {
-      const close = kana.indexOf(PASTE_CLOSE, i);
-      const end = close === -1 ? kana.length : close + 1;
+      const end = pasteBlockEnd(kana, i);
       flushCurrent(true);
       // ペースト領域はそのまま通す（変換しない＝separator 扱い）
       segments.push({ text: kana.slice(i, end), complete: true, separator: true });

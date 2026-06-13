@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { wrapPaste } from "@/conversion/paste.ts";
-import { chunkText, displayTail, makeTitle } from "./chunker.ts";
+import { chunkText, makeTitle } from "./chunker.ts";
 
 describe("chunkText", () => {
   test("改行で分割する", () => {
@@ -39,29 +39,14 @@ describe("chunkText", () => {
     expect(chunkText(input)).toEqual(chunkText(input));
   });
 
-  test("ペースト領域は内部の句点・改行で分割せず 1 つの atomic チャンクにする", () => {
+  test("ペースト領域は内部の句点・改行で分割せず 1 チャンクにする", () => {
     const input = `まえ。${wrapPaste("いち。に。\nさん")}あと`;
     const drafts = chunkText(input);
     expect(drafts).toEqual([
       { content: "まえ。" },
-      { content: "いち。に。\nさん", atomic: true },
+      { content: "いち。に。\nさん" },
       { content: "あと" },
     ]);
-  });
-});
-
-describe("displayTail", () => {
-  test("末尾 count チャンク分だけ返す（折りたたみ表示）", () => {
-    expect(displayTail("いち。に。さん。よん", 2)).toBe("さん。よん");
-  });
-
-  test("ペースト領域は 1 チャンクとして数え、マーカーは除去する", () => {
-    const text = `いち。${wrapPaste("はりつけ。ぶん")}にゅうりょくちゅう`;
-    expect(displayTail(text, 2)).toBe("はりつけ。ぶんにゅうりょくちゅう");
-  });
-
-  test("チャンク数が count 以下なら全文を返す", () => {
-    expect(displayTail("いち。に", 5)).toBe("いち。に");
   });
 });
 

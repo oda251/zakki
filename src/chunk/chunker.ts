@@ -1,9 +1,7 @@
-import { PASTE_CLOSE, PASTE_OPEN, stripPasteMarkers } from "@/conversion/paste.ts";
+import { PASTE_OPEN, pasteBlockEnd, stripPasteMarkers } from "@/conversion/paste.ts";
 
 export interface ChunkDraft {
   content: string;
-  /** ペースト由来など、句点・話題検出で分割／結合してはならない確定チャンク */
-  atomic?: boolean;
 }
 
 const TITLE_MAX_LENGTH = 40;
@@ -40,8 +38,7 @@ function splitChunkSpans(text: string): Span[] {
     const ch = text.charAt(i);
 
     if (ch === PASTE_OPEN) {
-      const close = text.indexOf(PASTE_CLOSE, i);
-      const end = close === -1 ? text.length : close + 1;
+      const end = pasteBlockEnd(text, i);
       flush();
       spans.push({ text: text.slice(i, end), paste: true });
       i = end;
@@ -66,9 +63,8 @@ function splitChunkSpans(text: string): Span[] {
 }
 
 /**
- * 変換済みテキストをチャンク（意味単位の素案）へ決定的に分割する。
- * ペースト領域は内部に句点・改行があっても 1 つの atomic チャンクになる。
- * 二次区切り（話題転換検出）は src/entry/autosave.ts で本関数の結果を入力にとる。
+ * 変換済みテキストをチャンク（意味単位）へ決定的に分割する（句点・改行の一次区切り）。
+ * ペースト／凍結リテラル領域は内部に句点・改行があっても 1 チャンクとして通す。
  */
 export function chunkText(text: string): ChunkDraft[] {
   const drafts: ChunkDraft[] = [];
@@ -76,7 +72,7 @@ export function chunkText(text: string): ChunkDraft[] {
     if (span.paste) {
       const content = stripPasteMarkers(span.text).trim();
       if (content !== "") {
-        drafts.push({ content, atomic: true });
+        drafts.push({ content });
       }
       continue;
     }
@@ -88,21 +84,6 @@ export function chunkText(text: string): ChunkDraft[] {
     }
   }
   return drafts;
-}
-
-/**
- * 表示用に末尾 count チャンク分のテキストを返す（折りたたみ表示, App）。
- * ペースト領域は 1 チャンクとして数え、マーカーは除去する。
- */
-export function displayTail(text: string, count: number): string {
-  const spans = splitChunkSpans(text);
-  const tail = count <= 0 ? spans : spans.slice(-count);
-  return stripPasteMarkers(tail.map((s) => s.text).join(""));
-}
-
-/** 折りたたみ表示でめくれるチャンク（スパン）総数。表示数のクランプに使う */
-export function countChunks(text: string): number {
-  return splitChunkSpans(text).length;
 }
 
 /**

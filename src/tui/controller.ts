@@ -1,4 +1,4 @@
-import { convertRomaji, deleteLastUnit } from "@/romaji/convert.ts";
+import { deleteLastUnit } from "@/romaji/convert.ts";
 
 /** useKeyboard の KeyEvent から必要な部分だけを切り出した形 */
 export interface KeyLike {
@@ -73,13 +73,6 @@ export function applyKey(raw: string, key: KeyLike): KeyAction {
   return { type: "none" };
 }
 
-export interface DisplayState {
-  /** 確定済みのかな交じりテキスト */
-  converted: string;
-  /** 打鍵途中のローマ字（薄く表示する） */
-  pending: string;
-}
-
 /** 検索モードのキー解釈。クエリはローマ字のまま保持し、表示・照合時にかなへ変換する */
 export function applySearchKey(query: string, key: KeyLike): SearchAction {
   if (key.name === "escape" || (key.ctrl && (key.name === "f" || key.name === "c"))) {
@@ -101,24 +94,4 @@ export function applySearchKey(query: string, key: KeyLike): SearchAction {
     return { type: "edit", query: query + ch };
   }
   return { type: "none" };
-}
-
-/** raw から画面表示を導出する。raw が source of truth（再計算で常に一致） */
-export function deriveDisplay(raw: string): DisplayState {
-  const { converted, pending } = convertRomaji(raw);
-  return { converted, pending };
-}
-
-/**
- * 永続化用スナップショットを raw から導出する。
- * flush は終了時のみ true（打鍵途中の n を ん として確定させる）。
- * 自動保存中は false にして、未確定ローマ字を converted に混ぜない。
- */
-export function snapshotFromRaw(
-  date: string,
-  raw: string,
-  options: { flush?: boolean } = {},
-): { date: string; raw: string; converted: string } {
-  const { converted } = convertRomaji(raw, { flush: options.flush });
-  return { date, raw, converted };
 }

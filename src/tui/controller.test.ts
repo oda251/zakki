@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { KeyLike } from "./controller.ts";
-import { applyKey, deriveDisplay, snapshotFromRaw } from "./controller.ts";
+import { applyKey } from "./controller.ts";
 
 function key(partial: Partial<KeyLike> & { name: string }): KeyLike {
   return { sequence: "", ctrl: false, meta: false, ...partial };
@@ -71,32 +71,5 @@ describe("applyKey", () => {
       type: "none",
     });
     expect(applyKey("a", key({ name: "s", sequence: "s", meta: true }))).toEqual({ type: "none" });
-  });
-});
-
-describe("deriveDisplay", () => {
-  test("converted と pending を分離して返す", () => {
-    expect(deriveDisplay("kyouhaClaude tohanashita.sorekarak")).toEqual({
-      converted: "きょうはClaudeとはなした。それから",
-      pending: "k",
-    });
-  });
-});
-
-describe("snapshotFromRaw", () => {
-  test("自動保存時は pending を converted に混ぜない", () => {
-    expect(snapshotFromRaw("2026-06-12", "hon")).toEqual({
-      date: "2026-06-12",
-      raw: "hon",
-      converted: "ほ",
-    });
-  });
-
-  test("終了時は flush して確定する", () => {
-    expect(snapshotFromRaw("2026-06-12", "hon", { flush: true })).toEqual({
-      date: "2026-06-12",
-      raw: "hon",
-      converted: "ほん",
-    });
   });
 });

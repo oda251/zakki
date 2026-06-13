@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { xdgDataHome } from "@/util/paths.ts";
 import * as schema from "./schema.ts";
 
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -11,8 +11,7 @@ export type Db = ReturnType<typeof drizzle<typeof schema>>;
 const MIGRATIONS_FOLDER = join(import.meta.dir, "..", "..", "drizzle");
 
 export function defaultDbPath(): string {
-  const dataHome = process.env["XDG_DATA_HOME"] ?? join(homedir(), ".local", "share");
-  return join(dataHome, "zakki", "zakki.sqlite");
+  return join(xdgDataHome(), "zakki", "zakki.sqlite");
 }
 
 /**

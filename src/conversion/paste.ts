@@ -17,6 +17,15 @@ export function stripPasteMarkers(text: string): string {
   return text.replaceAll(PASTE_OPEN, "").replaceAll(PASTE_CLOSE, "");
 }
 
+/**
+ * PASTE_OPEN のある位置 open から、対応する PASTE_CLOSE の次の位置（領域末尾, 排他）を返す。
+ * 閉じが無ければ末尾まで。raw/かなを走査する各所（変換・チャンク化・分解）で共有する。
+ */
+export function pasteBlockEnd(text: string, open: number): number {
+  const close = text.indexOf(PASTE_CLOSE, open);
+  return close === -1 ? text.length : close + 1;
+}
+
 /** マーカー・CR・その他 C0 制御文字を除去する（改行・タブは温存） */
 function sanitizePaste(text: string): string {
   let out = "";

@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
+import { errorMessage } from "@/util/error.ts";
 
 export interface ExportError {
   readonly type: "export-error";
@@ -39,7 +40,7 @@ const SOURCE_MARKER = "source: zakki";
 
 const toExportError = (cause: unknown): ExportError => ({
   type: "export-error",
-  message: cause instanceof Error ? cause.message : String(cause),
+  message: errorMessage(cause),
   cause,
 });
 

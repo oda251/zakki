@@ -2,6 +2,8 @@ import type { Subprocess } from "bun";
 import { join } from "node:path";
 import { errAsync, ResultAsync } from "neverthrow";
 import type { EngineError, KanaKanjiEngine } from "@/conversion/engine.ts";
+import { errorMessage } from "@/util/error.ts";
+import { xdgDataHome } from "@/util/paths.ts";
 import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -9,21 +11,17 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** 候補ローテーション（手動修正 UX）に使う n-best の数 */
 const CANDIDATE_COUNT = 5;
 
-function dataHome(): string {
-  return process.env["XDG_DATA_HOME"] ?? join(process.env["HOME"] ?? "", ".local", "share");
-}
-
 export function defaultAncoPath(): string {
-  return join(dataHome(), "zakki", "anco", "anco");
+  return join(xdgDataHome(), "zakki", "anco", "anco");
 }
 
 export function defaultZenzPath(): string {
-  return join(dataHome(), "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf");
+  return join(xdgDataHome(), "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf");
 }
 
 const toEngineError = (cause: unknown): EngineError => ({
   type: "engine-error",
-  message: cause instanceof Error ? cause.message : String(cause),
+  message: errorMessage(cause),
   cause,
 });
 

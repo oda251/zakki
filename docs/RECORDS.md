@@ -20,38 +20,45 @@
 
 ## 決定
 
-**記録単位（チャンク）は「変換後テキスト」を正本として DB に持つ。**
+**確定したチャンクは「変換後テキスト」を凍結記録とする。**
 末尾の入力中チャンクだけがライブ（raw＋変換パイプライン）で、それ以外は確定＝
 凍結された変換後テキストとする。
 
+### 実装: 凍結リテラルを raw に埋め込む（採用）
+
+`raw` を引き続き正本としつつ、確定したチャンクは raw 内に**凍結リテラル**
+（ペースト機構の PUA マーカー `PASTE_OPEN…PASTE_CLOSE`, `src/conversion/paste.ts`）
+として埋め込む。リテラルは `convertRomaji` / `segmentKana` / `chunkText` /
+`deleteLastUnit` の各段で「変換せず素通し」されるため確定後は再変換されない
+（＝誤変換の手動修正がそのまま固定される）。既存の変換・チャンク化・永続化・
+起動ロードがそのまま動き、専用の committed/tail 分離やスキーマ変更・移行を要しない。
+当初案（committed[] と tail raw の分離）より変更が小さく安全なため採用する。
+凍結ロジックは `src/entry/records.ts`。
+
 ### データモデル
 
-- エントリ = チャンクの並び。**末尾チャンク以外は確定**＝ `chunks.content`（変換後）が
-  正本。確定チャンクは raw / かな を持たない。
-- **末尾チャンクのみライブ**: tail raw（ローマ字）を保持し、`convertRomaji` ＋
-  `ConversionPipeline` ＋ Tab 候補で変換する。
-- **確定境界**: 末尾の入力中チャンク以外はすべて確定（折りたたみ表示の
-  「確定チャンク＋入力中」と整合）。次のチャンクに移った時点で直前チャンクが
-  凍結記録される。
+- `raw`（entries.raw）が正本。確定チャンク＝raw 内の凍結リテラル領域、
+  末尾の入力中チャンク＝最後のリテラル以降のローマ字。
+- **確定境界**: 末尾の入力中チャンク以外はすべて確定。保存（デバウンス）時に
+  `freezeLiveTail` が、完結かつ変換 settled な文を（最後の1文を除き）リテラルへ畳む。
+- 永続化・チャンク化は従来どおり `chunkText(converted)` 由来（`chunks.content`）。
+  リテラルは atomic チャンクとして 1 チャンク 1 行になる。
 
 ### 永続化
 
-- 確定チャンク: `chunks.content`（既存カラムをそのまま正本に）。
-- ライブ末尾: tail raw を保存（`entries.raw` を「下書き末尾のみ」に転用、または
-  専用カラム）。再起動時に末尾だけ編集を継続できる。
-- 起動: 確定チャンクは `chunks.content` を読むだけ。**全文再変換は廃止**。
-  `conversion_cache`（`src/conversion/cache.ts`）の主目的（起動時再変換回避）は
-  不要化する（ライブ末尾の変換補助としてのみ残す、または削除）。
+- `raw`（凍結リテラル込み）を `entries.raw` に保存。`chunks` は従来どおり
+  `chunkText(converted)` 由来で `chunks.content` に保存（検索・エクスポート・解析が読む）。
+- 起動: `entries.raw` を読み、凍結リテラルは素通し（再変換されない）、ライブ末尾のみ
+  `conversion_cache`（`src/conversion/cache.ts`）をシードして変換する。
+- 移行不要: 既存 raw はリテラル無しの全ローマ字。初回保存時に `freezeLiveTail` が
+  確定文を順次リテラルへ畳む（破壊的変更なし）。
 
 ### 修正 UX（専用機構なし）
 
-- チャンクをクリック → その確定テキストを**編集バッファに展開**する: 既存テキストは
-  凍結リテラル（ペースト機構＝ `src/conversion/paste.ts` の PUA マーカーを流用）、
-  続きはローマ字 → パイプラインで入力。
-- 誤変換は「その部分を backspace（単位削除 `deleteLastUnit`, `src/romaji/convert.ts`）で
-  消して打ち直す」＝**通常の入力フロー**。直したら再記録。
-- これにより 箇所限定・専用上書きテーブル不要・かなキー問題なし・候補ピック UI 不要。
-  確定テキストに かな を保存しないため候補再生成は行わず、打ち直しで対応する。
+- 確定チャンク（メイン本文の各行）をクリック → 修正モードへ。元テキストを参照表示し、
+  ローマ字で打ち直す（`src/tui/App.tsx` の `editing` / `commitEdit`）。
+- 確定で、その**凍結リテラル領域を打ち直した確定テキストで置換**（空確定なら削除）。
+  箇所限定・専用上書きテーブル不要・かなキー問題なし・グローバル学習を汚さない。
 
 ### 話題グルーピング: 廃止
 
@@ -73,30 +80,20 @@ embedding で隣接文を 1 チャンクにまとめる二次区切り（`TopicG
 移行が容易。TUI 継続中は端末が IME プリエディットを扱えない（`CONCEPT.md` §形態）ため
 自前変換を維持する。
 
-## 実装インパクト（概略）
+## 実装（実施済み）
 
-変更:
+- 凍結ロジック `src/entry/records.ts`（`parseBlocks` / `liveTailStart` /
+  `firstSentenceRomajiLen` / `freezeLiveTail`）＋テスト。
+- `src/tui/App.tsx`: 確定チャンクを 1 行ずつクリック可能に描画＋ライブ末尾入力、
+  保存時に `freezeLiveTail` で凍結、クリックで修正モード（打ち直し）。
+- 廃止: `TopicGrouper` / `groupCompleted` と依存 `src/embedding/topics.ts`、
+  `displayTail` / `countChunks`（旧表示モデル）。`persistEntry` から grouper 引数を除去。
+- 据え置き: `convertRomaji` / `ConversionPipeline` / `segmentKana` / エンジン
+  （anco / zenz）。`corrections`（グローバル学習）はライブ入力の初手品質向上として残す。
 
-- 編集モデルを「確定チャンク列 ＋ ライブ末尾（raw）」へ。`src/tui/App.tsx`
-  （bufferRef は末尾 raw のみ）、`src/tui/controller.ts`。
-- 凍結記録の保存 / 読込: `src/entry/repository.ts`（saveSnapshot を「確定チャンクは
-  content をそのまま保存、末尾 raw を別保持」へ）、起動ロード `src/index.tsx`。
-- 修正モード: チャンククリック → 編集バッファ展開（凍結リテラル＋ローマ字）→ 再記録。
+## 既知の限界 / 今後
 
-廃止 / 縮小:
-
-- `TopicGrouper`（`src/chunk/grouper.ts`）と `groupCompleted`（`src/entry/autosave.ts`）。
-- 起動時の全文再変換、`conversion_cache` の主用途。
-
-据え置き（ライブ末尾の変換に必要）:
-
-- `convertRomaji` / `ConversionPipeline` / `segmentKana` / エンジン（anco / zenz）。
-  `corrections`（グローバル学習）はライブ入力の初手品質向上として任意で残す。
-
-## 未確定（実装前に詰める）
-
-- 確定チャンクの「編集モード」の UI 詳細（どのチャンクが編集中かの表示、
-  保存 / キャンセル操作、クリック対象を離散させるためのメイン本文の描画変更）。
-- tail raw の保存先（`entries.raw` 転用 vs 新カラム）とマイグレーション。
-- 既存データの移行: 既に `chunks.content` があるため確定分はそのまま使える。
-  `entries.raw` は末尾下書きの意味に変わる。
+- 修正は「打ち直し」（カーソル移動が無い追記専用モデルのため、文中の一語だけを
+  ピンポイント編集はできない）。
+- 凍結時の変換は settled を待つ（未変換のうちは畳まない）。確定文の変換が
+  遅延中はライブのまま残り、変換到着後に凍結される。

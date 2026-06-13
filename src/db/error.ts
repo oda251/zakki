@@ -1,4 +1,5 @@
 import { Result } from "neverthrow";
+import { errorMessage } from "@/util/error.ts";
 
 export interface DbError {
   readonly type: "db-error";
@@ -8,7 +9,7 @@ export interface DbError {
 
 const toDbError = (cause: unknown): DbError => ({
   type: "db-error",
-  message: cause instanceof Error ? cause.message : String(cause),
+  message: errorMessage(cause),
   cause,
 });
 

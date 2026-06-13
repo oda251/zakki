@@ -1,4 +1,4 @@
-import { PASTE_CLOSE, PASTE_OPEN } from "@/conversion/paste.ts";
+import { PASTE_OPEN, pasteBlockEnd } from "@/conversion/paste.ts";
 import { KEY_PREFIXES, MAX_KEY_LENGTH, ROMAJI_TABLE } from "./table.ts";
 
 export interface ConvertOptions {
@@ -63,8 +63,7 @@ function scan(input: string, flush: boolean): ScanResult {
 
     // ペースト領域: PASTE_OPEN … PASTE_CLOSE を変換せずそのまま 1 単位として通す
     if (c === PASTE_OPEN) {
-      const close = input.indexOf(PASTE_CLOSE, i);
-      const end = close === -1 ? input.length : close + 1;
+      const end = pasteBlockEnd(input, i);
       out += input.slice(i, end);
       units.push({ start, kind: "paste" });
       i = end;
