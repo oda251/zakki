@@ -30,6 +30,7 @@ const PUNCT_MAP: ReadonlyMap<string, string> = new Map([
 ]);
 
 const HIRAGANA_OR_CHOON = /[ぁ-ゖー]/;
+const VOWEL_OR_Y = /[aiueoy]/;
 
 export function convertRomaji(input: string, options: ConvertOptions = {}): ConvertResult {
   const flush = options.flush ?? false;
@@ -64,25 +65,37 @@ export function convertRomaji(input: string, options: ConvertOptions = {}): Conv
 
     const next = input.charAt(i + 1);
 
-    // ん: n + (子音 | 単語外) → ん。n' → ん。末尾の nn → ん
+    // 撥音 ん の処理（docs/CONCEPT.md §1）
     if (c === "n") {
       if (next === "'") {
+        // n' は明示的な ん
         out += "ん";
         i += 2;
         continue;
       }
-      if (next === "n" && i + 2 >= input.length && flush) {
-        out += "ん";
-        i += 2;
-        continue;
-      }
-      // n の次が子音（n 自身を含む。"onna" → おんな）または単語外文字なら ん
-      if (next !== "" && (CONSONANT.test(next) || next === "n" || !WORD_CHAR.test(next))) {
+      if (next === "n") {
+        // nn の後続で分岐する:
+        // - 母音/y が続く → 第1の n だけ ん、第2の n は な行・拗音の頭
+        //   （onna → おんな、konnichi → こんに、nna → んな）
+        // - 子音・記号・入力末尾 → nn 全体を 1 つの ん に畳む
+        //   （nn → ん、nnka → んか。宙ぶらりんな n を残さない）
+        const after = input.charAt(i + 2);
+        if (after === "" || !VOWEL_OR_Y.test(after)) {
+          out += "ん";
+          i += 2;
+          continue;
+        }
         out += "ん";
         i += 1;
         continue;
       }
-      // 末尾の孤立 n（次の打鍵で な行 にも ん にもなりうる）
+      // n + 子音 / 記号など単語外 → ん（1 文字消費）
+      if (next !== "" && (CONSONANT.test(next) || !WORD_CHAR.test(next))) {
+        out += "ん";
+        i += 1;
+        continue;
+      }
+      // 末尾の孤立 n は次打鍵で な行 にも ん にもなりうるため保留
       if (next === "") {
         if (flush) {
           out += "ん";

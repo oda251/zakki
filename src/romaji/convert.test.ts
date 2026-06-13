@@ -61,6 +61,19 @@ describe("促音・撥音", () => {
     expect(converted("onna")).toBe("おんな");
   });
 
+  test("nn は ん 1 つに畳む（宙ぶらりんな n を残さない）", () => {
+    // 単体・末尾: ん のみ。pending を残さない
+    expect(convertRomaji("nn")).toEqual({ converted: "ん", pending: "" });
+    // nn + 子音: んん にならない
+    expect(converted("nnka")).toBe("んか");
+    expect(converted("nnda")).toBe("んだ");
+    // nn + 母音: 第2の n は な行（んな）
+    expect(converted("nna")).toBe("んな");
+    // 末尾が nn の語: 宙ぶらりんな n なし、続けて母音を打つと な行に解決
+    expect(converted("konn")).toBe("こん");
+    expect(converted("konni")).toBe("こんに");
+  });
+
   test("n' は ん", () => {
     expect(converted("kin'en", true)).toBe("きんえん");
   });
