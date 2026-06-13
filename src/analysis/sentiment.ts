@@ -44,15 +44,18 @@ export function moodLabel(score: number): string {
   return MOOD_LABEL[moodOf(score)];
 }
 
-/** 情報量を絞った気分アイコン（フッター用）: ポジ 🔴 / ネガ 🔵 / 中立 ⚪ */
-const MOOD_ICON: Record<Mood, string> = {
-  positive: "🔴",
-  negative: "🔵",
-  neutral: "⚪",
+/**
+ * フッターの気分ドット（●）の色。ポジ=赤 / ネガ=青 / 中立=グレー。
+ * 絵文字は端末との幅計算ズレで表示が崩れるため、色付きの細い ● で表す。
+ */
+const MOOD_COLOR: Record<Mood, string> = {
+  positive: "#cf8f8f",
+  negative: "#8fa8cf",
+  neutral: "#999999",
 };
 
-export function moodIcon(score: number): string {
-  return MOOD_ICON[moodOf(score)];
+export function moodColor(score: number): string {
+  return MOOD_COLOR[moodOf(score)];
 }
 
 /** 極性スコアを符号付き小数文字列に整形する（例: "+0.42", "-0.10", "null → "-"）  */

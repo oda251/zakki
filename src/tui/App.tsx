@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "rea
 import { analyzeAll } from "@/analysis/service.ts";
 import { countChunks, displayTail } from "@/chunk/chunker.ts";
 import { TopicGrouper } from "@/chunk/grouper.ts";
-import { fmtPolarity, moodIcon, scoreSentiment } from "@/analysis/sentiment.ts";
+import { fmtPolarity, moodColor, scoreSentiment } from "@/analysis/sentiment.ts";
 import { saveConversion } from "@/conversion/cache.ts";
 import { saveCorrection } from "@/conversion/corrections.ts";
 import type { KanaKanjiEngine } from "@/conversion/engine.ts";
@@ -33,6 +33,8 @@ const SEARCH_RESULT_LIMIT = 8;
 const AMBIENT_LIMIT = 3;
 /** 折りたたみ時に表示する末尾チャンク数（最新の確定チャンク＋入力中チャンク） */
 const MIN_VISIBLE_CHUNKS = 2;
+/** 関連（アンビエント）パネルの幅 */
+const AMBIENT_PANEL_WIDTH = 30;
 
 export interface AppProps {
   db: Db;
@@ -449,10 +451,11 @@ export function App({
           </text>
         </scrollbox>
         {ambient.length > 0 && (
-          <box style={{ width: 30, flexDirection: "column", paddingLeft: 1 }}>
+          <box style={{ width: AMBIENT_PANEL_WIDTH, flexDirection: "column", paddingLeft: 1 }}>
             <text style={{ fg: "#666666" }}>── 関連 ──</text>
             {ambient.map((item, i) => (
-              <text key={i} style={{ fg: "#aaaaaa", wrapMode: "word" }}>
+              // 日本語は空白なしのため char 折り返し（word だと折り返せず崩れる）
+              <text key={i} style={{ fg: "#aaaaaa", wrapMode: "char" }}>
                 <span fg="#88aaff">{item.date}</span> {item.title}
               </text>
             ))}
@@ -467,8 +470,13 @@ export function App({
         }}
       >
         <text style={{ fg: "#888888" }}>
-          {date} ｜ チャンク {chunkCount}
-          {entryMood !== null && ` ｜ ${moodIcon(entryMood)} ${fmtPolarity(entryMood)}`} ｜{" "}
+          {date} ｜ チャンク {chunkCount} ｜{" "}
+          {entryMood !== null && (
+            <Fragment>
+              <span fg={moodColor(entryMood)}>●</span>
+              {`${fmtPolarity(entryMood)} ｜ `}
+            </Fragment>
+          )}
           {engine.name}
           {convertingNote}
         </text>
