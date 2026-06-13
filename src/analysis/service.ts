@@ -5,6 +5,7 @@ import type { DbError } from "@/db/error.ts";
 import { tryDb } from "@/db/error.ts";
 import { chunks, chunkTags, links, tags } from "@/db/schema.ts";
 import { computeLinks } from "./linker.ts";
+import { scoreSentiment } from "./sentiment.ts";
 import { computeTags } from "./tagger.ts";
 import { extractNouns } from "./tokenizer.ts";
 
@@ -69,6 +70,14 @@ export function analyzeAll(db: Db): Result<AnalysisSummary, DbError> {
         tx.insert(links)
           .values({ ...link, origin: "auto" })
           .onConflictDoNothing()
+          .run();
+      }
+
+      // ネガポジ極性（決定的, docs/FEATURES.md §整理・想起系 7）を算出して永続化する
+      for (const chunk of allChunks) {
+        tx.update(chunks)
+          .set({ polarity: scoreSentiment(chunk.content) })
+          .where(eq(chunks.id, chunk.id))
           .run();
       }
     });

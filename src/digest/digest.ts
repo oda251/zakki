@@ -1,3 +1,4 @@
+import { fmtPolarity, moodLabel, moodOf, scoreSentiment } from "@/analysis/sentiment.ts";
 import type { TextGenerator } from "@/llm/client.ts";
 
 /**
@@ -19,6 +20,24 @@ const TOP_TAGS = 5;
 export function deterministicDigest(input: DigestInput): string {
   const lines = [`# ふりかえり ${input.period}`, ""];
   lines.push(`チャンク数: ${input.chunks.length}`);
+
+  // 気分（決定的ネガポジ極性, docs/FEATURES.md §整理・想起系 10）。本文から都度算出
+  if (input.chunks.length > 0) {
+    const { sum, counts } = input.chunks.reduce(
+      (acc, c) => {
+        const s = scoreSentiment(c.content);
+        acc.sum += s;
+        acc.counts[moodOf(s)]++;
+        return acc;
+      },
+      { sum: 0, counts: { positive: 0, negative: 0, neutral: 0 } },
+    );
+    const avg = sum / input.chunks.length;
+    lines.push(
+      `気分: ${moodLabel(avg)}（平均 ${fmtPolarity(avg)}` +
+        `｜ポジ ${counts.positive}・ネガ ${counts.negative}・中立 ${counts.neutral}）`,
+    );
+  }
 
   const topTags = [...input.tagCounts.entries()]
     .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))

@@ -22,7 +22,7 @@ bun start
 
 データは SQLite（`~/.local/share/zakki/`）と Obsidian vault（既定 `~/obsidian-vault/zakki/`）に書き出される。`ZAKKI_VAULT_DIR` で出力先を、`XDG_DATA_HOME` で DB の場所を差し替えられる（お試しは別ディレクトリを指定すると本番データを汚さずに済む）。
 
-チャンクには TF-IDF キーワードタグと関連リンク（キーワード共有 + 埋め込み類似）が自動付与され、Obsidian エクスポート（frontmatter タグ・`[[リンク]]`）に反映される。Ctrl+F でインクリメンタル全文検索（ローマ字のまま漢字本文を検索可能。意味が近いものも補完表示）、Esc で戻る。
+チャンクには TF-IDF キーワードタグと関連リンク（キーワード共有 + 埋め込み類似）が自動付与され、Obsidian エクスポート（frontmatter タグ・`mood`・`[[リンク]]`）に反映される。`mood` はネガポジ極性 `[-1,+1]`（日本語評価極性辞書による決定的判定、モデル不要・ローカル完結）で、ダイジェストにも平均気分が出る。Ctrl+F でインクリメンタル全文検索（ローマ字のまま漢字本文を検索可能。意味が近いものも補完表示）、Esc で戻る。
 
 句点・改行の一次区切りに加え、ローカル embedding（ruri-v3-30m、初回起動時に約37MB を自動取得）による話題転換検出で隣接文が同一チャンクにまとまる。入力中は関連する過去チャンクが右ペインに自動表示される。`ZAKKI_NO_EMBEDDING=1` で embedding 系機能を無効化できる。
 
@@ -47,6 +47,7 @@ bun run tags            # タグの統合提案（--apply で適用）
 | TUI          | [OpenTUI](https://github.com/sst/opentui)                                                                                                                      |
 | かな漢字変換 | [AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter)（anco）+ [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) |
 | 形態素解析   | [lindera-wasm](https://github.com/lindera/lindera)                                                                                                             |
+| 感情分析     | [negaposi](https://github.com/hata6502/negaposi)（日本語評価極性辞書 / 東北大 乾・岡崎研）                                                                     |
 | DB           | bun:sqlite（+ [sqlite-vec](https://github.com/asg017/sqlite-vec)）                                                                                             |
 
 選定根拠は [docs/RESEARCH.md](docs/RESEARCH.md) を参照。

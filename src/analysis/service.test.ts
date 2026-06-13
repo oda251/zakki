@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, type Db } from "@/db/client.ts";
 import { saveSnapshot } from "@/entry/repository.ts";
-import { listLinksByChunk, listTagsByChunk } from "@/entry/queries.ts";
+import { dailySentiment, listLinksByChunk, listTagsByChunk } from "@/entry/queries.ts";
 import { analyzeAll } from "./service.ts";
 
 let db: Db;
@@ -48,6 +48,22 @@ describe("analyzeAll", () => {
     analyzeAll(db)._unsafeUnwrap();
     const second = listLinksByChunk(db)._unsafeUnwrap();
     expect(second).toEqual(first);
+  });
+
+  test("ネガポジ極性を永続化し、日ごとに集計できる", () => {
+    seed("2026-06-12", ["今日は良い天気です。", "最悪だ。つらい。", "コードを書いた。"]);
+    analyzeAll(db)._unsafeUnwrap();
+
+    const daily = dailySentiment(db)._unsafeUnwrap();
+    expect(daily).toHaveLength(1);
+    const day = daily[0];
+    expect(day?.date).toBe("2026-06-12");
+    expect(day?.chunks).toBe(3);
+    expect(day?.scored).toBe(3);
+    expect(day?.positive).toBe(1);
+    expect(day?.negative).toBe(1);
+    expect(day?.neutral).toBe(1);
+    expect(day?.average).toBeCloseTo(0, 5);
   });
 
   test("チャンクが消えたら使われないタグも消える", () => {

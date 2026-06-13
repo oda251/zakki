@@ -4,10 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "rea
 import { analyzeAll } from "@/analysis/service.ts";
 import { countChunks, displayTail } from "@/chunk/chunker.ts";
 import { TopicGrouper } from "@/chunk/grouper.ts";
+import { fmtPolarity, moodIcon, scoreSentiment } from "@/analysis/sentiment.ts";
 import { saveConversion } from "@/conversion/cache.ts";
 import { saveCorrection } from "@/conversion/corrections.ts";
 import type { KanaKanjiEngine } from "@/conversion/engine.ts";
-import { PASTE_CLOSE, PASTE_OPEN, wrapPaste } from "@/conversion/paste.ts";
+import { PASTE_CLOSE, PASTE_OPEN, stripPasteMarkers, wrapPaste } from "@/conversion/paste.ts";
 import { ConversionPipeline } from "@/conversion/pipeline.ts";
 import { segmentKana } from "@/conversion/segment.ts";
 import type { Db } from "@/db/client.ts";
@@ -70,6 +71,8 @@ export function App({
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [chunkCount, setChunkCount] = useState(0);
   const [message, setMessage] = useState("");
+  // フッターに出す当日エントリのネガポジ極性（保存時に算出。空なら null で非表示）
+  const [entryMood, setEntryMood] = useState<number | null>(null);
   // 折りたたみ表示: 既定は最新＋入力中チャンクのみ。上下キーで 1 チャンクずつめくる
   const [visibleChunks, setVisibleChunks] = useState(MIN_VISIBLE_CHUNKS);
   // 表示数クランプ用の総チャンク数（描画時に更新し、キーハンドラから参照する）
@@ -293,6 +296,9 @@ export function App({
     const timer = setTimeout(() => {
       const kana = convertRomaji(raw).converted;
       const snapshot = { date, raw, converted: pipeline.apply(kana).text };
+      // 当日エントリ全体のネガポジ極性をフッター用に更新（空なら非表示）
+      const stripped = stripPasteMarkers(snapshot.converted);
+      setEntryMood(stripped.trim() === "" ? null : scoreSentiment(stripped));
       persistEntry(db, snapshot, grouper).match(
         (saved) => {
           setSaveState("saved");
@@ -461,7 +467,9 @@ export function App({
         }}
       >
         <text style={{ fg: "#888888" }}>
-          {date} ｜ チャンク {chunkCount} ｜ {engine.name}
+          {date} ｜ チャンク {chunkCount}
+          {entryMood !== null && ` ｜ ${moodIcon(entryMood)} ${fmtPolarity(entryMood)}`} ｜{" "}
+          {engine.name}
           {convertingNote}
         </text>
         <text style={{ fg: "#888888" }}>{status}</text>

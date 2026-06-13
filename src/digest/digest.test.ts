@@ -23,6 +23,12 @@ describe("deterministicDigest", () => {
     expect(digest).toContain("変換（2）、散歩（1）");
     expect(digest).toContain("- 2026-06-13 変換の実装");
   });
+
+  test("気分（ネガポジ平均）の行を含む", () => {
+    const digest = deterministicDigest(input);
+    expect(digest).toContain("気分:");
+    expect(digest).toContain("ポジ");
+  });
 });
 
 describe("generateDigest", () => {

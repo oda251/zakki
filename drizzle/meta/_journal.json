@@ -36,6 +36,13 @@
       "when": 1781341192155,
       "tag": "0004_conversion_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1781365286206,
+      "tag": "0005_chunk_polarity",
+      "breakpoints": true
     }
   ]
 }

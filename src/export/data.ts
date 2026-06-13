@@ -1,4 +1,5 @@
 import { Result } from "neverthrow";
+import { scoreSentiment } from "@/analysis/sentiment.ts";
 import type { Db } from "@/db/client.ts";
 import type { DbError } from "@/db/error.ts";
 import { listChunksWithDate, listLinksByChunk, listTagsByChunk } from "@/entry/queries.ts";
@@ -18,6 +19,7 @@ export function getEntryExportChunks(db: Db, date: string): Result<ExportChunk[]
         .map((c) => ({
           position: c.position,
           content: c.content,
+          polarity: scoreSentiment(c.content),
           tags: tagsByChunk.get(c.id) ?? [],
           related: (linksByChunk.get(c.id) ?? [])
             .map((id) => nameById.get(id))

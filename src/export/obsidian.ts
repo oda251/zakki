@@ -16,6 +16,8 @@ export interface ExportChunk {
   tags?: string[];
   /** 関連チャンクのノート名（[[リンク]] として出力） */
   related?: string[];
+  /** ネガポジ極性スコア [-1,+1]（frontmatter mood に出力） */
+  polarity?: number;
 }
 
 export interface ExportSummary {
@@ -107,6 +109,9 @@ function fileName(date: string, position: number): string {
 
 function renderChunk(date: string, chunk: ExportChunk): string {
   const lines = ["---", `date: ${date}`, `position: ${chunk.position}`];
+  if (chunk.polarity !== undefined) {
+    lines.push(`mood: ${chunk.polarity.toFixed(2)}`);
+  }
   const tags = chunk.tags ?? [];
   if (tags.length > 0) {
     lines.push("tags:", ...tags.map((t) => `  - ${t}`));
