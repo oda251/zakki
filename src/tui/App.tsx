@@ -103,6 +103,18 @@ interface AmbientItem {
   content: string;
 }
 
+/**
+ * 子要素を scrollbox の上端へ合わせる（docs/PANES.md §5 の表示窓制御）。
+ * scrollChildIntoView と同じ child.y / viewport.y を使い、差分だけスクロールする
+ * （子は折り返しで高さ可変なため、index からの概算ではなく実レイアウトで合わせる）。
+ */
+function anchorChildToTop(sb: ScrollBoxRenderable, childId: string): void {
+  const child = sb.content.findDescendantById(childId);
+  if (child !== undefined) {
+    sb.scrollBy({ x: 0, y: child.y - sb.viewport.y });
+  }
+}
+
 export function App({
   db,
   date,
@@ -842,15 +854,27 @@ export function App({
     }
   }, [clamped, cursor]);
 
-  // カーソル変化時、選択要素を可視へスクロールする（追従の副作用, docs/PANES.md §3）。
-  // カーソルのあるペインの scrollbox を追従させる（メイン / 詳細で分岐）。
+  // カーソル変化時、表示窓を更新する（追従の副作用, docs/PANES.md §5）。
+  // select（View）: カーソルの 1 件手前を上端に固定する → カーソルと手前が常に見え、
+  // より新しい側は入る限り下へ並ぶ。New（入力）: 末尾へ寄せる（stickyBottom と同調）。
   useEffect(() => {
     if (clamped.pane === "detail") {
-      detailScrollRef.current?.scrollChildIntoView(`detail-${clamped.index}`);
-    } else {
-      mainScrollRef.current?.scrollChildIntoView(`chunk-${clamped.index}`);
+      const sb = detailScrollRef.current;
+      if (sb !== null) {
+        anchorChildToTop(sb, `detail-${Math.max(0, clamped.index - 1)}`);
+      }
+      return;
     }
-  }, [clamped.index, clamped.pane]);
+    const sb = mainScrollRef.current;
+    if (sb === null) {
+      return;
+    }
+    if (clamped.mode === "input") {
+      sb.scrollTo({ x: 0, y: sb.scrollHeight });
+      return;
+    }
+    anchorChildToTop(sb, `chunk-${Math.max(0, clamped.index - 1)}`);
+  }, [clamped.index, clamped.pane, clamped.mode]);
 
   const status =
     saveState === "saved" ? "保存済み" : saveState === "dirty" ? "…" : `エラー: ${message}`;
