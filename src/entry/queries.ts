@@ -13,6 +13,8 @@ export interface ChunkWithDate {
   position: number;
   content: string;
   date: string;
+  /** 永続化済みネガポジ極性 [-1,+1]。未解析は null */
+  polarity: number | null;
 }
 
 export function listChunksWithDate(db: Db): Result<ChunkWithDate[], DbError> {
@@ -24,12 +26,45 @@ export function listChunksWithDate(db: Db): Result<ChunkWithDate[], DbError> {
         position: chunks.position,
         content: chunks.content,
         date: entries.date,
+        polarity: chunks.polarity,
       })
       .from(chunks)
       .innerJoin(entries, eq(chunks.entryId, entries.id))
       .orderBy(asc(entries.date), asc(chunks.position))
       .all(),
   );
+}
+
+/**
+ * 指定チャンクとその前後（position 順の隣接 ±radius）を返す（関連の詳細展開用）。
+ * 全チャンクをメモリに保持せず、必要時に切り出す。
+ */
+export function getChunkContext(
+  db: Db,
+  chunkId: number,
+  radius: number,
+): Result<ChunkWithDate[], DbError> {
+  return listChunksWithDate(db).map((all) => {
+    const i = all.findIndex((c) => c.id === chunkId);
+    return i === -1 ? [] : all.slice(Math.max(0, i - radius), i + radius + 1);
+  });
+}
+
+/**
+ * chunk id → タグ名 の対応から、タグ出現数を数える。
+ * chunkIds 指定時はその部分集合のみ（例: 特定期間）。digest / normalize-tags が共有。
+ */
+export function countTags(
+  tagsByChunk: ReadonlyMap<number, string[]>,
+  chunkIds?: Iterable<number>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const id of chunkIds ?? tagsByChunk.keys()) {
+    for (const name of tagsByChunk.get(id) ?? []) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 /** chunk id → タグ名（スコア降順） */

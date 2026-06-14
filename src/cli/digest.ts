@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { generateDigest } from "@/digest/digest.ts";
 import { createDb } from "@/db/client.ts";
 import { localDate } from "@/entry/autosave.ts";
-import { listChunksWithDate, listTagsByChunk } from "@/entry/queries.ts";
+import { countTags, listChunksWithDate, listTagsByChunk } from "@/entry/queries.ts";
 import { defaultVaultDir } from "@/export/obsidian.ts";
 import { detectLlm } from "@/llm/client.ts";
 
@@ -35,12 +35,10 @@ const chunks = listChunksWithDate(db)
   ._unsafeUnwrap()
   .filter((c) => dates.has(c.date));
 const tagsByChunk = listTagsByChunk(db)._unsafeUnwrap();
-const tagCounts = new Map<string, number>();
-for (const chunk of chunks) {
-  for (const name of tagsByChunk.get(chunk.id) ?? []) {
-    tagCounts.set(name, (tagCounts.get(name) ?? 0) + 1);
-  }
-}
+const tagCounts = countTags(
+  tagsByChunk,
+  chunks.map((c) => c.id),
+);
 
 const llm = await detectLlm();
 const digest = await generateDigest({ period, chunks, tagCounts }, llm);

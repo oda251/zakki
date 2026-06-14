@@ -19,7 +19,8 @@ export function getEntryExportChunks(db: Db, date: string): Result<ExportChunk[]
         .map((c) => ({
           position: c.position,
           content: c.content,
-          polarity: scoreSentiment(c.content),
+          // 永続化済み polarity を使い、未解析（null）のみその場算出にフォールバック
+          polarity: c.polarity ?? scoreSentiment(c.content),
           tags: tagsByChunk.get(c.id) ?? [],
           related: (linksByChunk.get(c.id) ?? [])
             .map((id) => nameById.get(id))

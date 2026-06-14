@@ -13,18 +13,13 @@ import {
 } from "@/analysis/normalizer.ts";
 import { createDb } from "@/db/client.ts";
 import { cosine, createRuriEmbedder } from "@/embedding/embedder.ts";
-import { listTagsByChunk } from "@/entry/queries.ts";
+import { countTags, listTagsByChunk } from "@/entry/queries.ts";
 import { detectLlm } from "@/llm/client.ts";
 
 const apply = process.argv.includes("--apply");
 const db = createDb();
 
-const counts = new Map<string, number>();
-for (const names of listTagsByChunk(db)._unsafeUnwrap().values()) {
-  for (const name of names) {
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-}
+const counts = countTags(listTagsByChunk(db)._unsafeUnwrap());
 const tagCounts: TagWithCount[] = [...counts.entries()].map(([name, count]) => ({ name, count }));
 if (tagCounts.length < 2) {
   console.log("タグが少ないため提案はありません");

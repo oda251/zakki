@@ -9,6 +9,7 @@ const chunks: ChunkWithDate[] = [
     position: 0,
     content: "自動保存の仕組みを実装した。",
     date: "2026-06-12",
+    polarity: null,
   },
   {
     id: 2,
@@ -16,6 +17,7 @@ const chunks: ChunkWithDate[] = [
     position: 1,
     content: "天気がよかったので散歩した。",
     date: "2026-06-12",
+    polarity: null,
   },
   {
     id: 3,
@@ -23,6 +25,7 @@ const chunks: ChunkWithDate[] = [
     position: 0,
     content: "Claudeと変換エンジンの話をした。",
     date: "2026-06-13",
+    polarity: null,
   },
 ];
 

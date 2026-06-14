@@ -16,13 +16,14 @@ import { addSemanticLinks, nearestChunks } from "@/embedding/semantic.ts";
 import { loadVectors, syncChunkEmbeddings } from "@/embedding/store.ts";
 import { persistEntry } from "@/entry/autosave.ts";
 import type { ChunkWithDate } from "@/entry/queries.ts";
-import { listChunksWithDate } from "@/entry/queries.ts";
+import { getChunkContext, listChunksWithDate } from "@/entry/queries.ts";
 import { freezeLiveTail, frozenCount, parseBlocks, replaceBlock } from "@/entry/records.ts";
 import { getEntryExportChunks } from "@/export/data.ts";
 import { exportEntry } from "@/export/obsidian.ts";
 import { convertRomaji } from "@/romaji/convert.ts";
 import type { SearchIndex } from "@/search/index.ts";
 import { buildIndex, searchChunks } from "@/search/index.ts";
+import { searchSemantic } from "@/search/semantic.ts";
 import { applyKey, applySearchKey } from "./controller.ts";
 
 /** キーストローク単位の永続化（docs/CONCEPT.md）。打鍵停止後この時間で保存する */
@@ -30,6 +31,8 @@ const SAVE_DEBOUNCE_MS = 300;
 /** 解析（タグ・関連・埋め込み）と vault への反映は保存より粗くてよい */
 const ANALYZE_EXPORT_DEBOUNCE_MS = 2000;
 const SEARCH_RESULT_LIMIT = 8;
+/** 全文ヒットと重複しない「意味が近い」補足の最大件数 */
+const MAX_SEMANTIC_EXTRA = 4;
 const AMBIENT_LIMIT = 5;
 /** 折りたたみ時に表示する確定チャンク数（これ＋入力中チャンクが見える） */
 const MIN_VISIBLE_FROZEN = 1;
@@ -116,8 +119,6 @@ export function App({
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [chunkCount, setChunkCount] = useState(0);
   const [message, setMessage] = useState("");
-  // フッターに出す当日エントリのネガポジ極性（保存時に算出。空なら null で非表示）
-  const [entryMood, setEntryMood] = useState<number | null>(null);
   // 折りたたみ表示: 既定は最新の確定チャンク＋入力中のみ。上下キーで 1 つずつめくる
   const [visibleFrozen, setVisibleFrozen] = useState(MIN_VISIBLE_FROZEN);
   // 確定チャンクの修正（クリックで開く）。null なら通常入力
@@ -128,8 +129,8 @@ export function App({
   const [ambient, setAmbient] = useState<AmbientItem[]>([]);
   // 関連項目をクリックすると、その投稿の前後を右パネルに展開する（null で一覧表示）
   const [expandedChunkId, setExpandedChunkId] = useState<number | null>(null);
-  // 前後チャンクを引くための、日付・position 順に整列した全チャンク（解析時に更新）
-  const [allChunks, setAllChunks] = useState<ChunkWithDate[]>([]);
+  // 展開中の「当該チャンク＋前後」。クリック時に getChunkContext で取得して保持する
+  const [contextChunks, setContextChunks] = useState<ChunkWithDate[]>([]);
   const searchIndexRef = useRef<SearchIndex | null>(null);
   const searchChunksRef = useRef<Map<number, ChunkWithDate>>(new Map());
   const renderer = useRenderer();
@@ -208,8 +209,6 @@ export function App({
     (vectors: ReadonlyMap<number, Float32Array>) => {
       listChunksWithDate(db).match(
         (all) => {
-          // 前後チャンクの展開に使うため、整列済みの全チャンクを保持する
-          setAllChunks(all);
           const todays = all.filter((c) => c.date === date);
           const last = todays.at(-1);
           const lastVector = last === undefined ? undefined : vectors.get(last.id);
@@ -284,12 +283,35 @@ export function App({
     }, finish);
   }, [db, date, renderer, engine, convertRaw, exportCurrent]);
 
-  /** 確定チャンクの修正を開く（クリック）。バッファは空（打ち直し）で始める */
-  const openEdit = useCallback((block: { start: number; end: number; text: string }) => {
-    editRawRef.current = "";
-    setEditing({ start: block.start, end: block.end, raw: "", old: block.text });
+  /** 関連の詳細を閉じる（一覧表示へ戻す） */
+  const closeExpand = useCallback(() => {
     setExpandedChunkId(null);
+    setContextChunks([]);
   }, []);
+
+  /** 関連項目クリック: その投稿＋前後を取得して詳細ペインに展開する */
+  const openExpand = useCallback(
+    (chunkId: number) => {
+      getChunkContext(db, chunkId, CONTEXT_RADIUS).match(
+        (ctx) => {
+          setExpandedChunkId(chunkId);
+          setContextChunks(ctx);
+        },
+        (e) => setMessage(`関連: ${e.message}`),
+      );
+    },
+    [db],
+  );
+
+  /** 確定チャンクの修正を開く（クリック）。バッファは空（打ち直し）で始める */
+  const openEdit = useCallback(
+    (block: { start: number; end: number; text: string }) => {
+      editRawRef.current = "";
+      setEditing({ start: block.start, end: block.end, raw: "", old: block.text });
+      closeExpand();
+    },
+    [closeExpand],
+  );
 
   /** 修正を確定: リテラル領域を打ち直した確定テキストで置換（空なら削除） */
   const commitEdit = useCallback(() => {
@@ -371,7 +393,7 @@ export function App({
         return;
       case "collapse":
         setVisibleFrozen(MIN_VISIBLE_FROZEN);
-        setExpandedChunkId(null);
+        closeExpand();
         return;
       case "edit":
         bufferRef.current = action.raw;
@@ -411,7 +433,6 @@ export function App({
       const current = bufferRef.current;
       // 2. 永続化（converted から決定的チャンク化）
       const converted = convertRaw(current).text;
-      setEntryMood(converted.trim() === "" ? null : scoreSentiment(converted));
       persistEntry(db, { date, raw: current, converted }).match(
         (saved) => {
           setSaveState("saved");
@@ -431,7 +452,7 @@ export function App({
     // conversionVersion: 非同期変換が確定したら再保存・再凍結する
   }, [db, date, raw, conversionVersion, convertRaw, convertSettled, runBackgroundPass]);
 
-  // セマンティック検索（docs/FEATURES.md 候補8）: クエリをかな→漢字→埋め込みして近傍検索。
+  // セマンティック検索（docs/FEATURES.md 候補8）。実体は search/semantic.ts に委譲する
   useEffect(() => {
     const active = mode === "search" && embedder !== null && searchQuery !== "";
     if (!active) {
@@ -441,28 +462,14 @@ export function App({
       if (!active || embedder === null) {
         return;
       }
-      const kana = convertRomaji(searchQuery, { flush: true }).converted;
-      void (async () => {
-        const text = (await engine.convert(kana)).match(
-          (candidates) => candidates[0] ?? kana,
-          () => kana,
-        );
-        const [queryVector] = await embedder.embed([text]).catch(() => []);
-        if (queryVector === undefined) {
-          return;
-        }
-        loadVectors(db).match(
-          (vectors) => {
-            const byId = searchChunksRef.current;
-            const hits = nearestChunks(vectors, queryVector, SEARCH_RESULT_LIMIT).flatMap((n) => {
-              const chunk = byId.get(n.chunkId);
-              return chunk === undefined ? [] : [chunk];
-            });
-            setSemanticHits(hits);
-          },
-          () => {},
-        );
-      })();
+      void searchSemantic(
+        searchQuery,
+        engine,
+        embedder,
+        db,
+        searchChunksRef.current,
+        SEARCH_RESULT_LIMIT,
+      ).then(setSemanticHits);
     }, 350);
     return () => clearTimeout(timer);
   }, [mode, searchQuery, embedder, engine, db]);
@@ -486,16 +493,11 @@ export function App({
     saveState === "saved" ? "保存済み" : saveState === "dirty" ? "…" : `エラー: ${message}`;
   const convertingNote = live.converting > 0 ? ` ｜ 変換中 ${live.converting}` : "";
 
-  const contextChunks = useMemo(() => {
-    if (expandedChunkId === null) {
-      return [];
-    }
-    const i = allChunks.findIndex((c) => c.id === expandedChunkId);
-    if (i === -1) {
-      return [];
-    }
-    return allChunks.slice(Math.max(0, i - CONTEXT_RADIUS), i + CONTEXT_RADIUS + 1);
-  }, [expandedChunkId, allChunks]);
+  // フッターの気分（当日エントリ全体のネガポジ極性）。converted の純粋な導出
+  const entryMood = useMemo(() => {
+    const text = convertRaw(raw).text;
+    return text.trim() === "" ? null : scoreSentiment(text);
+  }, [raw, conversionVersion, convertRaw]);
 
   const bigramHits = useMemo(() => {
     if (mode !== "search" || searchIndexRef.current === null) {
@@ -503,6 +505,11 @@ export function App({
     }
     return searchChunks(searchIndexRef.current, searchQuery).slice(0, SEARCH_RESULT_LIMIT);
   }, [mode, searchQuery]);
+  // 全文ヒットと重複しない「意味が近い」補足
+  const extraSemantic = useMemo(() => {
+    const seen = new Set(bigramHits.map((h) => h.id));
+    return semanticHits.filter((h) => !seen.has(h.id)).slice(0, MAX_SEMANTIC_EXTRA);
+  }, [bigramHits, semanticHits]);
   const queryDisplay = useMemo(() => convertRomaji(searchQuery), [searchQuery]);
   const editDisplay = useMemo(() => convertRomaji(editing?.raw ?? ""), [editing?.raw]);
   const editText = useMemo(
@@ -532,8 +539,6 @@ export function App({
   }
 
   if (mode === "search") {
-    const seen = new Set(bigramHits.map((h) => h.id));
-    const extraSemantic = semanticHits.filter((h) => !seen.has(h.id)).slice(0, 4);
     return (
       <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
         <box style={{ height: 1 }}>
@@ -615,7 +620,7 @@ export function App({
               {ambient.map((item) => {
                 const active = item.chunkId === expandedChunkId;
                 return (
-                  <box key={item.chunkId} onMouseDown={() => setExpandedChunkId(item.chunkId)}>
+                  <box key={item.chunkId} onMouseDown={() => openExpand(item.chunkId)}>
                     <text style={{ fg: active ? "#ffffff" : "#aaaaaa", wrapMode: "char" }}>
                       <span fg="#88aaff">{item.date}</span> {makeTitle(item.content)}
                     </text>
@@ -625,7 +630,7 @@ export function App({
             </box>
             {expandedChunkId !== null && (
               <box style={{ flexDirection: "column", flexGrow: 1, minHeight: 0, marginTop: 1 }}>
-                <box style={{ flexShrink: 0 }} onMouseDown={() => setExpandedChunkId(null)}>
+                <box style={{ flexShrink: 0 }} onMouseDown={closeExpand}>
                   <text style={{ fg: "#666666" }}>── 詳細（Esc で閉じる） ──</text>
                 </box>
                 <ReadingPane>
