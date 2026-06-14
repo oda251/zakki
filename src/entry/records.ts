@@ -117,10 +117,11 @@ export function freezeLiveTail(
     }
     const rest = live.slice(len);
     const { text, settled } = convert(live.slice(0, len));
-    // Enter（改行）で終えた文は最後でも確定する。句点だけで終わる最後の文は
-    // まだ書き足す余地があるためライブのまま残す（末尾以外確定 + Enter で即確定）。
-    const newlineTerminated = text.endsWith("\n");
-    if (rest.trim() === "" && !newlineTerminated) {
+    // Enter（改行）で終えた文は最後でも確定する。改行は文（句点 split で text 側）にも
+    // rest 側（「文。」の直後で Enter）にも現れうるので両方を見る。句点だけで終わる
+    // 最後の文は書き足す余地があるためライブのまま残す（末尾以外確定 + Enter で即確定）。
+    const hasNewline = text.endsWith("\n") || rest.includes("\n");
+    if (rest.trim() === "" && !hasNewline) {
       break;
     }
     if (!settled) {

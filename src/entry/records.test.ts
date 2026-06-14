@@ -99,6 +99,13 @@ describe("freezeLiveTail", () => {
     expect(raw).toBe(wrapPaste("a"));
   });
 
+  test("句点の直後で Enter（文。＋改行）も確定する", () => {
+    // "a。" の後で Enter → 改行は rest 側に出るが、確定して凍結する
+    const { raw, changed } = freezeLiveTail("a。\n", settled);
+    expect(changed).toBe(true);
+    expect(raw).toBe(wrapPaste("a。"));
+  });
+
   test("未変換（settled でない）に達したら畳まず止める", () => {
     const { raw, changed } = freezeLiveTail("a。b", unsettled);
     expect(changed).toBe(false);

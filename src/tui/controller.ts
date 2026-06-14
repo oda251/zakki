@@ -1,3 +1,4 @@
+import { liveTailStart } from "@/entry/records.ts";
 import { deleteLastUnit } from "@/romaji/convert.ts";
 import { matchesAction } from "./keymap.ts";
 
@@ -42,9 +43,16 @@ export function applyKey(raw: string, key: KeyLike): KeyAction {
     return { type: "none" };
   }
   switch (key.name) {
-    case "backspace":
-      // かな変換済みはかな単位、打鍵途中ローマ字は 1 文字ずつ削る（仕様）
-      return raw === "" ? { type: "none" } : { type: "edit", raw: deleteLastUnit(raw) };
+    case "backspace": {
+      // 削除はライブ末尾（最後の凍結リテラル以降）に限る。ライブ末尾が空なら no-op で
+      // 確定チャンク（凍結リテラル）を消さない。かな変換済みはかな単位、打鍵途中
+      // ローマ字は 1 文字ずつ削る（仕様）。
+      const tailStart = liveTailStart(raw);
+      const tail = raw.slice(tailStart);
+      return tail === ""
+        ? { type: "none" }
+        : { type: "edit", raw: raw.slice(0, tailStart) + deleteLastUnit(tail) };
+    }
     case "return":
     case "enter":
       return { type: "edit", raw: `${raw}\n` };

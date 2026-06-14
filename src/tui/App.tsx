@@ -842,7 +842,14 @@ export function App({
     () => ({ main: frozen.length, related: ambient.length, detail: contextChunks.length }),
     [frozen.length, ambient.length, contextChunks.length],
   );
-  const clamped = useMemo(() => clampCursor(cursor, lens), [cursor, lens]);
+  const clamped = useMemo<Cursor>(() => {
+    // New（入力位置）は末尾に追従させる: 編集中でない main の input は常に末尾 New。
+    // 文の確定（freeze）でチャンクが増減しても、New が後ろのチャンクに取り残されない。
+    if (editing === null && cursor.pane === "main" && cursor.mode === "input") {
+      return { pane: "main", index: lens.main, mode: "input" };
+    }
+    return clampCursor(cursor, lens);
+  }, [cursor, lens, editing]);
   useEffect(() => {
     if (
       clamped.pane !== cursor.pane ||
@@ -855,14 +862,18 @@ export function App({
   }, [clamped, cursor]);
 
   // メイン表示窓の開始 index（docs/PANES.md §5）。カーソルの 1 件手前から描画し、
-  // それより古いチャンクは描画しない（New も最後の確定チャンク＋入力行のみ）。
-  const windowStart = useMemo(() => {
-    if (clamped.pane !== "main") {
-      return 0;
-    }
-    const cursorIdx = clamped.mode === "input" ? frozen.length : clamped.index;
-    return Math.max(0, cursorIdx - 1);
-  }, [clamped.pane, clamped.mode, clamped.index, frozen.length]);
+  // それより古いチャンクは描画しない。clamped.index は New＝末尾・Edit＝当該・select＝当該
+  // をすべて指すため、一律に「1 件手前」で計算できる。
+  const windowStart = useMemo(
+    () => (clamped.pane === "main" ? Math.max(0, clamped.index - 1) : 0),
+    [clamped.pane, clamped.index],
+  );
+
+  // メインは「表示窓」をそのまま上詰めで描く。scrollbox に内部スクロールが残ると
+  // 先頭（1 件手前）が画面外へ隠れてしまうため、毎レンダーで先頭固定に戻す。
+  useEffect(() => {
+    mainScrollRef.current?.scrollTo({ x: 0, y: 0 });
+  });
 
   // 詳細ペインだけはカーソル追従スクロールする（メインは表示窓を直接描画するため不要）。
   // 詳細はカーソルの 1 件手前を上端に寄せる（docs/PANES.md §5）。
@@ -960,23 +971,26 @@ export function App({
               editing.target.kind === "main" &&
               editing.target.start === b.start;
             const selected = clamped.pane === "main" && clamped.index === idx;
+            // key / id はブロック固有（raw オフセット）で安定させる。位置や確定数から
+            // 導くと id が要素間で使い回され、scrollbox の子が増えない不具合になる。
             return isEditing ? (
-              <box key={b.start} id={`chunk-${idx}`}>
+              <box key={`chunk-${b.start}`} id={`chunk-${b.start}`}>
                 <Chunk.Edit text={editing.text} cursor={editing.cursor} />
               </box>
             ) : (
               <Chunk.View
-                key={b.start}
-                id={`chunk-${idx}`}
+                key={`chunk-${b.start}`}
+                id={`chunk-${b.start}`}
                 text={b.text}
                 selected={selected}
                 onClick={() => openEdit(b, idx)}
               />
             );
           })}
-          {/* 入力中チャンク（ライブ）: 変換しつつ末尾カーソルと打鍵途中ローマ字を出す */}
+          {/* 入力中チャンク（ライブ）。id/key は固定（確定数で変えない）。 */}
           <Chunk.New
-            id={`chunk-${frozen.length}`}
+            key="chunk-new"
+            id="chunk-new"
             text={live.text}
             pending={live.pending}
             onClick={() => moveCursor({ pane: "main", index: frozen.length, mode: "input" })}

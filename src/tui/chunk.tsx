@@ -32,6 +32,9 @@ function Surface({
       focused={focused}
       stickyScroll={stickyBottom}
       stickyStart={stickyBottom ? "bottom" : undefined}
+      // 動的に追加した子（確定でできたチャンク）が描画されないのを防ぐためカリング無効。
+      // 1 日ぶんの有界なチャンク数なので性能影響はない。
+      viewportCulling={false}
       // スクロールバーが本文右端の文字に被らないよう、本文側に 1 桁の余白を確保する
       contentOptions={{ paddingRight: 1 }}
     >

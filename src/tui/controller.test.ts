@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { wrapPaste } from "@/conversion/paste.ts";
 import type { Cursor, CursorState, KeyLike, ScreenLens } from "./controller.ts";
 import {
   applyCursorKey,
@@ -47,6 +48,20 @@ describe("applyKey", () => {
       raw: "ka",
     });
     expect(applyKey("", key({ name: "backspace" }))).toEqual({ type: "none" });
+  });
+
+  test("確定リテラルの後ろでライブ末尾が空なら backspace は no-op（確定チャンクを消さない）", () => {
+    // 凍結リテラルのみ＝ライブ末尾が空。ここで backspace しても確定は削らない
+    const raw = wrapPaste("かくてい");
+    expect(applyKey(raw, key({ name: "backspace" }))).toEqual({ type: "none" });
+  });
+
+  test("確定リテラルの後ろのライブ末尾だけを backspace で削る（確定は保つ）", () => {
+    const raw = `${wrapPaste("かくてい")}ka`;
+    expect(applyKey(raw, key({ name: "backspace" }))).toEqual({
+      type: "edit",
+      raw: wrapPaste("かくてい"),
+    });
   });
 
   test("return / space を追記する", () => {

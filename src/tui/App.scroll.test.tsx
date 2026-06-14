@@ -87,4 +87,23 @@ describe("チャンクリストの表示窓（docs/PANES.md §5）", () => {
 
     t.renderer.destroy();
   }, 20000);
+
+  // 確定（freeze）で動的に増えたチャンクが scrollbox に表示され続けること。
+  // id を確定数から導くと New と View で id が使い回され、子が描画されない不具合があった。
+  test("New で文を入力して Enter 確定すると、確定チャンクが残って表示される", async () => {
+    const t = await setup([], 20, 8);
+    await t.flush();
+
+    await t.mockInput.typeText("aiu."); // → あいう。（ライブ）
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await t.flush();
+    t.mockInput.pressEnter(); // 確定 → 凍結
+    await new Promise((resolve) => setTimeout(resolve, 500)); // 保存デバウンスで freeze
+    await t.flush();
+
+    const r = rows(t.captureCharFrame());
+    expect(visible(r, "あいう。")).toBe(true); // 確定チャンクが消えずに残る
+    expect(r.join("\n")).toContain("▌"); // 末尾の入力行も出る
+    t.renderer.destroy();
+  }, 20000);
 });
