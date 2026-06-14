@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { wrapPaste } from "@/conversion/paste.ts";
-import { firstSentenceRomajiLen, freezeLiveTail, liveTailStart, parseBlocks } from "./records.ts";
+import {
+  firstSentenceRomajiLen,
+  freezeLiveTail,
+  frozenBlockAt,
+  liveTailStart,
+  parseBlocks,
+} from "./records.ts";
 
 describe("parseBlocks", () => {
   test("先頭の凍結リテラル＋末尾のライブを順に分解する", () => {
@@ -41,6 +47,31 @@ describe("firstSentenceRomajiLen", () => {
 
   test("境界が無ければ null", () => {
     expect(firstSentenceRomajiLen("ame")).toBeNull();
+  });
+});
+
+describe("frozenBlockAt", () => {
+  test("凍結リテラルは prefix・position と 1:1 で対応する", () => {
+    const raw = `${wrapPaste("雨。")}${wrapPaste("晴れ。")}kyou`;
+    const b0 = frozenBlockAt(raw, 0);
+    const b1 = frozenBlockAt(raw, 1);
+    expect(b0?.text).toBe("雨。");
+    expect(b1?.text).toBe("晴れ。");
+    // 領域 [start,end) が parseBlocks の凍結ブロックと一致する
+    const frozen = parseBlocks(raw).filter((b) => b.frozen);
+    expect(b0).toEqual(frozen[0] ?? null);
+    expect(b1).toEqual(frozen[1] ?? null);
+  });
+
+  test("末尾の未凍結ライブ文（範囲外）は null", () => {
+    const raw = `${wrapPaste("雨。")}kyou`;
+    // position 1 はライブ "kyou"（凍結数 1）なので対象外
+    expect(frozenBlockAt(raw, 1)).toBeNull();
+    expect(frozenBlockAt(raw, 5)).toBeNull();
+  });
+
+  test("凍結リテラルが無ければ null", () => {
+    expect(frozenBlockAt("ame", 0)).toBeNull();
   });
 });
 

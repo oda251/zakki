@@ -62,6 +62,16 @@ export function replaceBlock(raw: string, start: number, end: number, text: stri
   return text === "" ? before + after : before + wrapPaste(text) + after;
 }
 
+/**
+ * raw の position 番目の凍結リテラル領域を返す（無ければ null）。
+ * 不変条件「凍結リテラルは chunks.position 順で 1:1」（docs/PANES.md 実装リスク2）
+ * により、過去/当日チャンクの編集対象領域をマッピングする。末尾の未凍結ライブ文
+ * （position >= 凍結数）は対象外で null を返す（メインで編集に委ねる）。
+ */
+export function frozenBlockAt(raw: string, position: number): RawBlock | null {
+  return parseBlocks(raw).filter((b) => b.frozen)[position] ?? null;
+}
+
 const SENTENCE_BOUNDARY = /[。！？\n]/u;
 
 /**
