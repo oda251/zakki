@@ -1,6 +1,6 @@
 import { decodePasteBytes } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
-import { useCallback, useEffect, useMemo, useRef, useState, Fragment, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { analyzeAll } from "@/analysis/service.ts";
 import { makeTitle } from "@/chunk/chunker.ts";
 import { fmtPolarity, moodColor, scoreSentiment } from "@/analysis/sentiment.ts";
@@ -24,7 +24,9 @@ import { convertRomaji } from "@/romaji/convert.ts";
 import type { SearchIndex } from "@/search/index.ts";
 import { buildIndex, searchChunks } from "@/search/index.ts";
 import { searchSemantic } from "@/search/semantic.ts";
-import { applyKey, applySearchKey } from "./controller.ts";
+import type { CursorState } from "./controller.ts";
+import { applyEditKey, applyKey, applySearchKey } from "./controller.ts";
+import { Editor } from "./editor.tsx";
 
 /** キーストローク単位の永続化（docs/CONCEPT.md）。打鍵停止後この時間で保存する */
 const SAVE_DEBOUNCE_MS = 300;
@@ -57,43 +59,20 @@ export interface AppProps {
 
 type SaveState = "saved" | "dirty" | "error";
 
-/** 修正中の確定チャンク（記録モデル, docs/RECORDS.md）。raw 内のリテラル領域を打ち直す */
+/**
+ * 修正中の確定チャンク（記録モデル, docs/RECORDS.md）。
+ * raw 内のリテラル領域を、プレーンテキスト＋可動カーソルで打ち直す（再変換しない）。
+ */
 interface Editing {
   /** raw 内のリテラル領域 [start, end) */
   start: number;
   end: number;
-  /** 編集バッファ（ローマ字。空のまま確定するとそのチャンクを削除） */
-  raw: string;
+  /** 編集中のプレーンテキスト（空のまま確定するとそのチャンクを削除） */
+  text: string;
+  /** カーソル位置 [0, text.length] */
+  cursor: number;
   /** 参照表示する元の確定テキスト */
   old: string;
-}
-
-/**
- * メイン入力ペイン・検索結果・関連の詳細ペインで共有する読み取り用スクロール面。
- * scrollbox の設定（右余白・末尾スティック・フォーカス）を一元化する。
- */
-function ReadingPane({
-  focused = false,
-  stickyBottom = false,
-  children,
-}: {
-  focused?: boolean;
-  stickyBottom?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <scrollbox
-      // minHeight:0 で flex 親内でも内容に膨らまず、はみ出さずスクロールできる
-      style={{ flexGrow: 1, minHeight: 0 }}
-      focused={focused}
-      stickyScroll={stickyBottom}
-      stickyStart={stickyBottom ? "bottom" : undefined}
-      // スクロールバーが本文右端の文字に被らないよう、本文側に 1 桁の余白を確保する
-      contentOptions={{ paddingRight: 1 }}
-    >
-      {children}
-    </scrollbox>
-  );
 }
 
 interface AmbientItem {
@@ -138,8 +117,8 @@ export function App({
   // 入力の正本。キーイベントは同一 tick に連続して届くため、render を待つ
   // state ではなく ref を同期更新して取りこぼしを防ぐ（state は表示用）。
   const bufferRef = useRef(initialRaw);
-  // 修正バッファも同様に ref で取りこぼしを防ぐ
-  const editRawRef = useRef("");
+  // 修正バッファ（プレーンテキスト＋カーソル）も ref で同期更新し取りこぼしを防ぐ
+  const editRef = useRef<CursorState>({ text: "", cursor: 0 });
 
   const bump = useCallback(() => setConversionVersion((v) => v + 1), []);
 
@@ -303,29 +282,39 @@ export function App({
     [db],
   );
 
-  /** 確定チャンクの修正を開く（クリック）。バッファは空（打ち直し）で始める */
+  /**
+   * 確定チャンクの修正を開く（クリック）。元テキストをプレーンテキストとして読み込み、
+   * カーソルを末尾に置く。修正中はかな漢字変換せず、打った文字がそのまま入る
+   * （文単位の非同期変換はバッファ途中のインライン変換ができないため）。
+   */
   const openEdit = useCallback(
     (block: { start: number; end: number; text: string }) => {
-      editRawRef.current = "";
-      setEditing({ start: block.start, end: block.end, raw: "", old: block.text });
+      editRef.current = { text: block.text, cursor: block.text.length };
+      setEditing({
+        start: block.start,
+        end: block.end,
+        text: block.text,
+        cursor: block.text.length,
+        old: block.text,
+      });
       closeExpand();
     },
     [closeExpand],
   );
 
-  /** 修正を確定: リテラル領域を打ち直した確定テキストで置換（空なら削除） */
+  /** 修正を確定: リテラル領域を打ち直したプレーンテキストで置換（空なら削除）。変換しない */
   const commitEdit = useCallback(() => {
     const current = editing;
     if (current === null) {
       return;
     }
-    const text = convertRaw(editRawRef.current, true).text.trim();
+    const text = current.text.trim();
     const next = replaceBlock(bufferRef.current, current.start, current.end, text);
     bufferRef.current = next;
     setRaw(next);
     setSaveState("dirty");
     setEditing(null);
-  }, [editing, convertRaw]);
+  }, [editing]);
 
   useKeyboard((keyEvent) => {
     if (editing !== null) {
@@ -337,13 +326,13 @@ export function App({
         commitEdit();
         return;
       }
-      const action = applyKey(editRawRef.current, keyEvent);
-      if (action.type === "exit") {
+      if (keyEvent.ctrl && (keyEvent.name === "c" || keyEvent.name === "d")) {
         exit();
-      } else if (action.type === "edit") {
-        editRawRef.current = action.raw;
-        setEditing((e) => (e === null ? e : { ...e, raw: action.raw }));
+        return;
       }
+      const next = applyEditKey(editRef.current, keyEvent);
+      editRef.current = next;
+      setEditing((e) => (e === null ? e : { ...e, text: next.text, cursor: next.cursor }));
       return;
     }
     if (mode === "search") {
@@ -511,29 +500,16 @@ export function App({
     return semanticHits.filter((h) => !seen.has(h.id)).slice(0, MAX_SEMANTIC_EXTRA);
   }, [bigramHits, semanticHits]);
   const queryDisplay = useMemo(() => convertRomaji(searchQuery), [searchQuery]);
-  const editDisplay = useMemo(() => convertRomaji(editing?.raw ?? ""), [editing?.raw]);
-  const editText = useMemo(
-    () => pipeline.apply(editDisplay.converted).text,
-    [editDisplay, pipeline],
-  );
 
-  // 修正モード: 確定チャンクを打ち直す（メイン入力ペインの編集版）
+  // 修正モード: 確定チャンクをプレーンテキスト＋可動カーソルで打ち直す（変換しない）
   if (editing !== null) {
     return (
       <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
-        <box style={{ height: 1 }}>
-          <text style={{ fg: "#666666" }}>修正前: {editing.old}</text>
-        </box>
-        <ReadingPane focused>
-          <text style={{ wrapMode: "word" }}>
-            {editText}
-            <span fg="#777777">{editDisplay.pending}</span>
-            <span fg="#aaaaaa">▌</span>
-          </text>
-        </ReadingPane>
-        <box style={{ height: 1 }}>
-          <text style={{ fg: "#888888" }}>Enter で確定 ｜ Esc で取消（空のまま確定で削除）</text>
-        </box>
+        <Editor.Status fg="#666666">修正前: {editing.old}</Editor.Status>
+        <Editor.Surface focused>
+          <Editor.Field variant="edit" text={editing.text} cursor={editing.cursor} />
+        </Editor.Surface>
+        <Editor.Status>←→ で移動 ｜ Enter で確定 ｜ Esc で取消（空で削除）</Editor.Status>
       </box>
     );
   }
@@ -548,7 +524,7 @@ export function App({
             <span fg="#aaaaaa">▌</span>
           </text>
         </box>
-        <ReadingPane focused>
+        <Editor.Surface focused>
           {bigramHits.length === 0 && extraSemantic.length === 0 ? (
             <text style={{ fg: "#888888" }}>
               {searchQuery === "" ? "ローマ字で入力すると絞り込まれます" : "該当なし"}
@@ -577,7 +553,7 @@ export function App({
               )}
             </Fragment>
           )}
-        </ReadingPane>
+        </Editor.Surface>
         <box style={{ height: 1 }}>
           <text style={{ fg: "#888888" }}>Esc で戻る</text>
         </box>
@@ -588,7 +564,7 @@ export function App({
   return (
     <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
       <box style={{ flexDirection: "row", flexGrow: 1 }}>
-        <ReadingPane focused stickyBottom>
+        <Editor.Surface focused stickyBottom>
           {hiddenCount > 0 && (
             <text style={{ fg: "#555555" }}>… ↑ で履歴（あと {hiddenCount}） ──</text>
           )}
@@ -598,13 +574,9 @@ export function App({
               <text style={{ fg: "#cccccc", wrapMode: "word" }}>{b.text}</text>
             </box>
           ))}
-          {/* 入力中チャンク（ライブ）: 変換しつつカーソルを出す */}
-          <text style={{ wrapMode: "word" }}>
-            {live.text}
-            <span fg="#777777">{live.pending}</span>
-            <span fg="#aaaaaa">▌</span>
-          </text>
-        </ReadingPane>
+          {/* 入力中チャンク（ライブ）: 変換しつつ末尾カーソルと打鍵途中ローマ字を出す */}
+          <Editor.Field variant="new" text={live.text} pending={live.pending} />
+        </Editor.Surface>
         {ambient.length > 0 && (
           <box
             style={{
@@ -633,7 +605,7 @@ export function App({
                 <box style={{ flexShrink: 0 }} onMouseDown={closeExpand}>
                   <text style={{ fg: "#666666" }}>── 詳細（Esc で閉じる） ──</text>
                 </box>
-                <ReadingPane>
+                <Editor.Surface>
                   <text style={{ wrapMode: "word" }}>
                     {contextChunks.map((c, idx) => (
                       <span key={c.id} fg={c.id === expandedChunkId ? "#cccccc" : "#666666"}>
@@ -641,7 +613,7 @@ export function App({
                       </span>
                     ))}
                   </text>
-                </ReadingPane>
+                </Editor.Surface>
               </box>
             )}
           </box>

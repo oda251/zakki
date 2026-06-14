@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { KeyLike } from "./controller.ts";
-import { applyKey } from "./controller.ts";
+import type { CursorState, KeyLike } from "./controller.ts";
+import { applyEditKey, applyKey } from "./controller.ts";
 
 function key(partial: Partial<KeyLike> & { name: string }): KeyLike {
   return { sequence: "", ctrl: false, meta: false, ...partial };
 }
+
+const st = (text: string, cursor: number): CursorState => ({ text, cursor });
 
 describe("applyKey", () => {
   test("印字可能文字を末尾に追記する", () => {
@@ -71,5 +73,48 @@ describe("applyKey", () => {
       type: "none",
     });
     expect(applyKey("a", key({ name: "s", sequence: "s", meta: true }))).toEqual({ type: "none" });
+  });
+});
+
+describe("applyEditKey", () => {
+  test("左右キーでカーソルを移動し、両端でクランプする", () => {
+    expect(applyEditKey(st("あいう", 1), key({ name: "left" }))).toEqual(st("あいう", 0));
+    expect(applyEditKey(st("あいう", 0), key({ name: "left" }))).toEqual(st("あいう", 0));
+    expect(applyEditKey(st("あいう", 2), key({ name: "right" }))).toEqual(st("あいう", 3));
+    expect(applyEditKey(st("あいう", 3), key({ name: "right" }))).toEqual(st("あいう", 3));
+  });
+
+  test("home / end で行頭・行末へ移動する", () => {
+    expect(applyEditKey(st("あいう", 2), key({ name: "home" }))).toEqual(st("あいう", 0));
+    expect(applyEditKey(st("あいう", 1), key({ name: "end" }))).toEqual(st("あいう", 3));
+  });
+
+  test("印字可能文字をカーソル位置に挿入する（変換しない）", () => {
+    expect(applyEditKey(st("あう", 1), key({ name: "k", sequence: "い" }))).toEqual(
+      st("あいう", 2),
+    );
+    // ローマ字も素のまま入る（かな変換されない）
+    expect(applyEditKey(st("", 0), key({ name: "k", sequence: "k" }))).toEqual(st("k", 1));
+  });
+
+  test("space はカーソル位置に空白を挿入する", () => {
+    expect(applyEditKey(st("ab", 1), key({ name: "space", sequence: " " }))).toEqual(st("a b", 2));
+  });
+
+  test("backspace はカーソル手前の 1 文字を削る（先頭では無効）", () => {
+    expect(applyEditKey(st("あいう", 2), key({ name: "backspace" }))).toEqual(st("あう", 1));
+    expect(applyEditKey(st("あいう", 0), key({ name: "backspace" }))).toEqual(st("あいう", 0));
+  });
+
+  test("delete はカーソル位置の 1 文字を削る（末尾では無効）", () => {
+    expect(applyEditKey(st("あいう", 1), key({ name: "delete" }))).toEqual(st("あう", 1));
+    expect(applyEditKey(st("あいう", 3), key({ name: "delete" }))).toEqual(st("あいう", 3));
+  });
+
+  test("ctrl / meta 併用と未対応キーは状態を変えない", () => {
+    expect(applyEditKey(st("a", 1), key({ name: "a", sequence: "a", ctrl: true }))).toEqual(
+      st("a", 1),
+    );
+    expect(applyEditKey(st("a", 1), key({ name: "f1", sequence: "OP" }))).toEqual(st("a", 1));
   });
 });
