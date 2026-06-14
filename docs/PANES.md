@@ -25,12 +25,12 @@
 チャンク 1 個の全表現を 1 つの compound に集約する（既存 `src/tui/editor.tsx` の
 `Editor` を拡張・改名）。
 
-| 変種 | 用途 | 表示 | 旧実装 |
-|---|---|---|---|
-| `Chunk.View` | 確定チャンク（1 チャンク 1 行） | 本文。選択時は強調 | App の frozen 行 |
-| `Chunk.Digest` | 関連リスト項目 | 日付＋本文（`makeTitle`） | ambient 行 |
-| `Chunk.Edit` | 確定チャンクの修正 | プレーン編集＋可動カーソル | `Editor.Field variant="edit"` |
-| `Chunk.New` | 末尾の新規入力 | 変換中本文＋pending＋末尾カーソル | `Editor.Field variant="new"` |
+| 変種           | 用途                            | 表示                              | 旧実装                        |
+| -------------- | ------------------------------- | --------------------------------- | ----------------------------- |
+| `Chunk.View`   | 確定チャンク（1 チャンク 1 行） | 本文。選択時は強調                | App の frozen 行              |
+| `Chunk.Digest` | 関連リスト項目                  | 日付＋本文（`makeTitle`）         | ambient 行                    |
+| `Chunk.Edit`   | 確定チャンクの修正              | プレーン編集＋可動カーソル        | `Editor.Field variant="edit"` |
+| `Chunk.New`    | 末尾の新規入力                  | 変換中本文＋pending＋末尾カーソル | `Editor.Field variant="new"`  |
 
 スクロール面（`Surface`）と 1 行ヘッダ／フッタ（`Status`）はレイアウト補助として残す。
 
@@ -64,35 +64,72 @@
 - 既定位置はメインの `Chunk.New`（`mode: "input"`。従来どおり打てば末尾に追記される）。
 - 選択表示（`View` / `Digest`）は **fg 強調のみ**（左ガター記号は使わない）。
 
-### 4. 変種ごとの挙動
+### 4. キーバインドの抽象化（アクション層）
 
-| 位置 (mode) | ↑ / ↓ | ← / → | 印字文字 | Enter | Backspace/Delete | Esc |
-|---|---|---|---|---|---|---|
-| `New` (input) | ↑で直上の `View`へ(→select)／↓は無効 | 無効 | 末尾に追記（変換あり） | 改行追記（＝文確定, RECORDS.md） | 確定かな単位で削除 | — |
-| `View` (select) | 前後のチャンクへ移動 | 隣ペインへ移動 | 無視 | `Edit` へ切替(→input) | 無視 | — |
-| `Edit` (input) | 無効 | 文字カーソル移動 | カーソル位置に挿入（**変換しない**） | 確定→`View`へ(→select、空なら削除し直上へ) | カーソル前後を削除 | 取消→`View`へ(→select) |
-| `Digest` (select) | 関連項目間を移動 | 隣ペインへ移動 | 無視 | 当該チャンクを詳細ペインに前後展開（4a） | 無視 | — |
+生キーを直接解釈せず、**意味アクション**へ正規化してから扱う（`src/tui/keymap.ts`、
+純粋関数 `matchesAction(key, action)`）。1 つのキーが複数アクションに該当してよく
+（例: Enter＝submit かつ select）、文脈側が必要なアクションを優先順に判定する。
 
-- `Edit` 確定後はそのチャンク（`View`, select）にカーソル維持。空確定で削除した場合は直上へ。
-- `New` から ↓ で末尾を越えようとしても何もしない。
+| アクション                 | キー              |
+| -------------------------- | ----------------- |
+| move（up/down/left/right） | ↑ ↓ ← →           |
+| `edit`                     | `e`               |
+| `delete`                   | `d` / `Delete`    |
+| `submit`                   | `Enter`           |
+| `select`                   | `Space` / `Enter` |
+| `cancel`                   | `Esc`             |
 
-### 5. 過去エントリ（詳細ペイン）の編集と永続化
+アクションは **select モード・ダイアログ・メニュー** で使う。**input モード（New/Edit）では
+`e`/`d`/`Space` 等は素の文字入力**であり、アクションとして解釈しない（移動の `↑` 等は例外）。
+
+### 5. 変種ごとの挙動（アクションで記述）
+
+| 位置 (mode)       | move                                    | `edit`(e)        | `delete`(d/Del)                      | `submit`(Enter)                                          | `select`(Space/Enter)        | `cancel`(Esc)          |
+| ----------------- | --------------------------------------- | ---------------- | ------------------------------------ | -------------------------------------------------------- | ---------------------------- | ---------------------- |
+| `New` (input)     | ↑で直上 `View`へ(→select)／他移動は無効 | （素の文字 `e`） | （素の文字 `d`／Del は確定かな削除） | 改行追記（＝文確定, RECORDS.md）                         | （素の Space／Enter は改行） | —                      |
+| `View` (select)   | ↑↓＝チャンク移動／←→＝隣ペイン          | → `Edit`(→input) | 削除確認ダイアログ                   | （select と同じ→メニュー）                               | **メニューダイアログ表示**   | —                      |
+| `Edit` (input)    | 無効（←→＝文字カーソル）                | （素の文字）     | （素の文字／Del＝カーソル位置削除）  | 確定→`View`へ(→select)。空なら**元に戻す（削除しない）** | （素の Space／Enter は確定） | 取消→`View`へ(→select) |
+| `Digest` (select) | ↑↓＝関連項目／←→＝隣ペイン              | （将来）無視     | （将来）無視                         | 詳細ペインに前後展開（4a）                               | 詳細ペインに前後展開（4a）   | —                      |
+
+- `View` の起動は二段階: `edit`(e) は **Edit へ直行**、`select`(Space/Enter) は **メニュー**
+  （`編集` / `削除` …）を出し、そこから選ぶ。`delete`(d/Del) は確認ダイアログへ直行。
+- `Edit` 確定後はそのチャンク（`View`, select）にカーソル維持。`Edit` の空確定は削除せず
+  元のテキストに戻す。チャンクリスト（select）の Backspace は no-op。
+- `New` から下方向で末尾を越えようとしても何もしない。
+
+### 6. ダイアログ / メニュー（汎用コンポーネント）
+
+モーダルは `src/tui/dialog.tsx` の compound にまとめる。共有のオーバーレイ
+（`position:"absolute"` + `zIndex` の遮蔽ボックス＋中央モーダル）の上に:
+
+- **`Dialog.Confirm`**: 破壊的操作の確認（メッセージ＋確定/取消）。キー解釈は純粋関数
+  `applyDialogKey`（`submit`＝確定 / `cancel`＝取消、`y`/`n` ショートカット）。
+- **`Dialog.Menu`**: 操作の選択（項目リスト＋ハイライト）。キー解釈は純粋関数
+  `applyMenuKey`（up/down＝移動、`submit`/`select`＝決定、`cancel`＝取消）。
+
+App はモーダル表示中、他の全キー処理に優先してこれを処理する。状態は最小形で持ち
+（Confirm: `{ message, onConfirm }`、Menu: `{ items, index }`、`items[i] = { label, onChoose }`）、
+将来の操作も同じ仕組みを再利用する。
+
+### 7. 過去エントリ（詳細ペイン）の編集と永続化
 
 詳細ペインの `View`→Enter→`Edit`→確定で、**その過去エントリの `raw` を `replaceBlock`
 で書き換えて即保存**する（メインと同じ凍結リテラル方式, RECORDS.md）。当日／過去で
 挙動は同じ。詳細を開いた直後のカーソル初期位置は「開いた当該チャンク」。
 
-## 実装リスク / 要素技術
+## 実装リスク / 要素技術（解決済み）
 
-1. **カーソル追従スクロール**: 「選択要素を可視に保つ」プログラム的スクロールが
-   OpenTUI scrollbox で必要。API（要素位置→scrollTop 設定）の有無を先に確認する。
-   無ければ、選択 index から表示窓を自前計算して描画範囲をクランプする方式に退避。
-2. **過去エントリ編集のマッピング**: 現在 `bufferRef` は当日 `raw` のみ。詳細ペインの
-   `contextChunks` は `chunks` テーブル（`chunks.content`）由来で、`entries.raw` の
-   凍結リテラル領域とは別物。過去チャンクを編集するには
-   (a) 対象 `date` の `entries.raw` を読み、(b) そのチャンクに対応する凍結リテラル領域を
-   特定し、(c) `replaceBlock`、(d) その `date` を `persistEntry`＋再エクスポート、が要る。
-   チャンク行→raw 領域の対応付けが非自明（同一文の重複等）。実装最大の難所。
+1. **カーソル追従スクロール**: 解決。`ScrollBoxRenderable.scrollChildIntoView(childId)` が使える
+   （`@opentui/react` は scrollbox に ref を渡せる）。各要素に `id="chunk-<index>"` を付け、
+   カーソル変化時の effect で呼ぶ。
+2. **過去エントリ編集のマッピング**: 解決。**不変条件「raw は 凍結リテラル(prefix) ＋
+   ライブ末尾(suffix) 構造で、凍結リテラルは各 1 チャンク・順序保存」** により、凍結チャンクは
+   `chunks.position` 順で先頭から `parseBlocks(raw).filter(frozen)` と 1:1。よって対象は
+   `frozenBlocks[chunk.position]`（content マッチ不要・同一文重複に強い）。手順:
+   (a) 対象 `date` の `entries.raw` を読む（当日は `bufferRef`、過去は DB クエリ）、
+   (b) `frozenBlocks[position]` で領域 [start,end) を得る、(c) `replaceBlock`、
+   (d) `persistEntry` ＋ 再エクスポート。`position >= frozenBlocks.length`（末尾の未凍結
+   ライブ文）は対象外とし、メインでの編集に委ねる（稀・代替手段あり）。
 
 ## 決定済みの細目
 
@@ -102,8 +139,10 @@
 
 ## 段階実装案
 
-1. `Editor`→`Chunk` 改名＋`View`/`Digest` 追加、`Pane` 抽出（描画は現状維持・カーソル無し）。
-2. 単一カーソル状態と ↑↓ 移動＋追従スクロール（メインペイン内のみ）。`visibleFrozen` 撤去。
-3. `View`→Enter→`Edit` をカーソル経由に統合（クリックも選択に統一）。
-4. 関連 `Digest` をカーソル対象化、ペイン間移動（要決定で確定した方式）。
-5. 詳細ペインの過去エントリ編集（実装リスク 2 を解消）。
+1. ✅ `Editor`→`Chunk` 改名＋`View`/`Digest` 追加（描画は現状維持・カーソル無し）。
+2. ✅ 単一カーソル状態と ↑↓ 移動＋追従スクロール（メインペイン内）。`visibleFrozen` 撤去。
+3. ✅ `View`→`Edit` をカーソル経由に統合（クリックも選択に統一）。削除（`d`→確認ダイアログ）。
+4. キーバインドのアクション抽象化（`keymap.ts`）＋メニュー（`Dialog.Menu`）。`View` の
+   `edit`→Edit / `select`→メニュー / `delete`→確認、に再配線。
+5. 関連 `Digest` をカーソル対象化、ペイン間移動（←→）、`Digest` `select`→詳細展開＋カーソル移送。
+6. 詳細ペインの過去エントリ編集・削除（実装リスク 2 の方式）。
