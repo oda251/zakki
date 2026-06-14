@@ -949,7 +949,13 @@ export function App({
   return (
     <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
       <box style={{ flexDirection: "row", flexGrow: 1 }}>
-        <Chunk.Surface focused stickyBottom scrollRef={mainScrollRef}>
+        {/* 末尾吸着は New（入力中）だけ。履歴を見る（select）間は吸着を切り、
+            カーソル追従（anchorChildToTop）が押し戻されないようにする（docs/PANES.md §5）。 */}
+        <Chunk.Surface
+          focused
+          stickyBottom={clamped.pane === "main" && clamped.mode === "input"}
+          scrollRef={mainScrollRef}
+        >
           {/* 確定チャンクを全件描画（1 エントリ＝1 日で件数有界）。スクロールは追従に任せる。
               編集中のチャンクだけインラインで Chunk.Edit に差し替える。 */}
           {frozen.map((b, idx) => {
