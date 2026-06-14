@@ -62,6 +62,12 @@ describe("freezeLiveTail", () => {
     expect(raw).toBe("a。");
   });
 
+  test("Enter（改行）で終えた文は最後でも確定する", () => {
+    const { raw, changed } = freezeLiveTail("a\n", settled);
+    expect(changed).toBe(true);
+    expect(raw).toBe(wrapPaste("a"));
+  });
+
   test("未変換（settled でない）に達したら畳まず止める", () => {
     const { raw, changed } = freezeLiveTail("a。b", unsettled);
     expect(changed).toBe(false);

@@ -106,10 +106,13 @@ export function freezeLiveTail(
       break; // 境界なし＝末尾チャンクのみ
     }
     const rest = live.slice(len);
-    if (rest.trim() === "") {
-      break; // 先頭文が最後のチャンク＝ライブのまま残す（末尾以外確定）
-    }
     const { text, settled } = convert(live.slice(0, len));
+    // Enter（改行）で終えた文は最後でも確定する。句点だけで終わる最後の文は
+    // まだ書き足す余地があるためライブのまま残す（末尾以外確定 + Enter で即確定）。
+    const newlineTerminated = text.endsWith("\n");
+    if (rest.trim() === "" && !newlineTerminated) {
+      break;
+    }
     if (!settled) {
       break; // 未変換は畳まず次回へ
     }
