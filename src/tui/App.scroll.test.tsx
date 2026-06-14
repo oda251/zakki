@@ -37,54 +37,54 @@ function rows(frame: string): string[] {
   return frame.split("\n").map((r) => r.trimEnd());
 }
 
-/** 行の先頭トークン（スクロールバー █ や余白を除いた最初の語） */
+/** 行の先頭トークン（余白・スクロールバー文字を挟んだ最初の語） */
 function firstToken(row: string): string {
-  return row.replace(/[█\s]+$/u, "").trim();
+  return row.trim().split(/\s+/u)[0] ?? "";
+}
+
+/** いずれかの行の先頭がそのチャンク名か（スクロールバー列を無視して可視判定する） */
+function visible(r: string[], label: string): boolean {
+  return r.some((row) => firstToken(row) === label);
 }
 
 const CHUNKS = ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"];
 
+/** 1 キー押下後、React のスケジューラが state 更新をコミットするまで待つ。
+ * 連続 flush だけでは次の再描画が間に合わないため、毎押下ごとに settle させる。 */
 async function pressUp(t: Awaited<ReturnType<typeof setup>>, n: number) {
   for (let i = 0; i < n; i++) {
     t.mockInput.pressArrow("up");
+    await new Promise((resolve) => setTimeout(resolve, 20));
     await t.flush();
   }
-  // フレーム更新（毎フレームの stickyScroll 再適用など）を回し切る。
-  // 末尾吸着が anchor を押し戻すデグレはここで初めて顕在化する。
-  await t.waitForVisualIdle();
 }
 
 describe("チャンクリストの表示窓（docs/PANES.md §5）", () => {
-  test("初期（New）は末尾に吸着し、最新チャンク＋カーソルを表示する", async () => {
-    const t = await setup(CHUNKS);
+  // renderer 生成が重いので 1 つの renderer で段階的に検証する
+  test("1件手前を上端に、新しい側は入る限り、古い側は描画しない", async () => {
+    const t = await setup(CHUNKS, 16, 6);
     await t.flush();
-    const r = rows(t.captureCharFrame());
-    expect(r).toContain("L8");
+
+    // 初期（New）: 最後の確定チャンク（L8）＋入力行だけ。古い側は出ない
+    let r = rows(t.captureCharFrame());
+    expect(firstToken(r[0] ?? "")).toBe("L8");
     expect(r.join("\n")).toContain("▌"); // 入力カーソル
-    expect(r.join("\n")).not.toContain("L1"); // 古い側はスクロールアウト
-    t.renderer.destroy();
-  });
+    expect(visible(r, "L7")).toBe(false);
 
-  test("View へ ↑ で移動すると、カーソルの 1 件手前が上端に来る", async () => {
-    const t = await setup(CHUNKS);
-    await t.flush();
-    // New(8) → L8(7) → L7(6) → L6(5) → L5(4)。カーソル=L5、1 件手前=L4
+    // ↑×4 → カーソル=L5。1 件手前 L4 が上端、新しい側 L5,L6… が並び、L3 は出ない
     await pressUp(t, 4);
-    const r = rows(t.captureCharFrame());
-    expect(firstToken(r[0] ?? "")).toBe("L4"); // 1 件手前が上端
-    expect(r).toContain("L5"); // カーソルチャンク
-    // カーソルより新しい側（L6…）が入る限り下へ並ぶ
-    expect(r).toContain("L6");
-    t.renderer.destroy();
-  });
+    r = rows(t.captureCharFrame());
+    expect(firstToken(r[0] ?? "")).toBe("L4");
+    expect(visible(r, "L5")).toBe(true);
+    expect(visible(r, "L6")).toBe(true);
+    expect(visible(r, "L3")).toBe(false);
 
-  test("先頭まで ↑ で上がると L1 が上端に出る", async () => {
-    const t = await setup(CHUNKS);
-    await t.flush();
-    await pressUp(t, 8);
-    const r = rows(t.captureCharFrame());
+    // さらに ↑×4 → 先頭 L1 が上端（古い側が無い）
+    await pressUp(t, 4);
+    r = rows(t.captureCharFrame());
     expect(firstToken(r[0] ?? "")).toBe("L1");
-    expect(r).toContain("L2");
+    expect(visible(r, "L2")).toBe(true);
+
     t.renderer.destroy();
-  });
+  }, 20000);
 });

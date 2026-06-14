@@ -854,27 +854,27 @@ export function App({
     }
   }, [clamped, cursor]);
 
-  // カーソル変化時、表示窓を更新する（追従の副作用, docs/PANES.md §5）。
-  // select（View）: カーソルの 1 件手前を上端に固定する → カーソルと手前が常に見え、
-  // より新しい側は入る限り下へ並ぶ。New（入力）: 末尾へ寄せる（stickyBottom と同調）。
+  // メイン表示窓の開始 index（docs/PANES.md §5）。カーソルの 1 件手前から描画し、
+  // それより古いチャンクは描画しない（New も最後の確定チャンク＋入力行のみ）。
+  const windowStart = useMemo(() => {
+    if (clamped.pane !== "main") {
+      return 0;
+    }
+    const cursorIdx = clamped.mode === "input" ? frozen.length : clamped.index;
+    return Math.max(0, cursorIdx - 1);
+  }, [clamped.pane, clamped.mode, clamped.index, frozen.length]);
+
+  // 詳細ペインだけはカーソル追従スクロールする（メインは表示窓を直接描画するため不要）。
+  // 詳細はカーソルの 1 件手前を上端に寄せる（docs/PANES.md §5）。
   useEffect(() => {
-    if (clamped.pane === "detail") {
-      const sb = detailScrollRef.current;
-      if (sb !== null) {
-        anchorChildToTop(sb, `detail-${Math.max(0, clamped.index - 1)}`);
-      }
+    if (clamped.pane !== "detail") {
       return;
     }
-    const sb = mainScrollRef.current;
-    if (sb === null) {
-      return;
+    const sb = detailScrollRef.current;
+    if (sb !== null) {
+      anchorChildToTop(sb, `detail-${Math.max(0, clamped.index - 1)}`);
     }
-    if (clamped.mode === "input") {
-      sb.scrollTo({ x: 0, y: sb.scrollHeight });
-      return;
-    }
-    anchorChildToTop(sb, `chunk-${Math.max(0, clamped.index - 1)}`);
-  }, [clamped.index, clamped.pane, clamped.mode]);
+  }, [clamped.index, clamped.pane]);
 
   const status =
     saveState === "saved" ? "保存済み" : saveState === "dirty" ? "…" : `エラー: ${message}`;
@@ -949,16 +949,12 @@ export function App({
   return (
     <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
       <box style={{ flexDirection: "row", flexGrow: 1 }}>
-        {/* 末尾吸着は New（入力中）だけ。履歴を見る（select）間は吸着を切り、
-            カーソル追従（anchorChildToTop）が押し戻されないようにする（docs/PANES.md §5）。 */}
-        <Chunk.Surface
-          focused
-          stickyBottom={clamped.pane === "main" && clamped.mode === "input"}
-          scrollRef={mainScrollRef}
-        >
-          {/* 確定チャンクを全件描画（1 エントリ＝1 日で件数有界）。スクロールは追従に任せる。
-              編集中のチャンクだけインラインで Chunk.Edit に差し替える。 */}
-          {frozen.map((b, idx) => {
+        {/* 表示窓（docs/PANES.md §5）: カーソルの 1 件手前から描画し、それより古い
+            チャンクは描画しない（収まる物まで全部出さない）。上詰めで、より新しい側は
+            入る限り下へ並ぶ。カーソル（＝窓の 2 番目）は常に見える。 */}
+        <Chunk.Surface focused scrollRef={mainScrollRef}>
+          {frozen.slice(windowStart).map((b, j) => {
+            const idx = windowStart + j;
             const isEditing =
               editing !== null &&
               editing.target.kind === "main" &&
