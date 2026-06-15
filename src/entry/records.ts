@@ -73,10 +73,13 @@ export function frozenBlockAt(raw: string, position: number): RawBlock | null {
 }
 
 const SENTENCE_BOUNDARY = /[。！？\n]/u;
+// 区切り文字（句点系とそのローマ字）。連続分は 1 境界へ畳まれるので末尾まで食い切る。
+const DELIM_CHARS = /[.。!！?？]/u;
 
 /**
  * ローマ字の先頭1文（最初の句点・改行境界まで）のローマ字長を返す。
- * 境界が無ければ null（＝まだ末尾の入力途中チャンクのみ）。
+ * 境界が無ければ null（＝まだ末尾の入力途中チャンクのみ）。連続した区切り文字
+ * （"あ。。" 等、変換で最後の 1 つに畳まれる）は末尾までまとめて 1 文に含める。
  */
 export function firstSentenceRomajiLen(romaji: string): number | null {
   const { converted } = convertRomaji(romaji);
@@ -87,7 +90,12 @@ export function firstSentenceRomajiLen(romaji: string): number | null {
   const need = m.index + 1; // 境界文字を含める
   for (let r = 1; r <= romaji.length; r++) {
     if (convertRomaji(romaji.slice(0, r)).converted.length >= need) {
-      return r;
+      // 連続する区切り文字（畳まれて 1 つの境界になる）を末尾まで食い切る
+      let end = r;
+      while (end < romaji.length && DELIM_CHARS.test(romaji.charAt(end))) {
+        end += 1;
+      }
+      return end;
     }
   }
   return romaji.length;

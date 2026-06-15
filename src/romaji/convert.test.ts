@@ -89,6 +89,27 @@ describe("促音・撥音", () => {
   });
 });
 
+describe("区切り文字のマージ（連続したら最後の 1 つだけ採用）", () => {
+  test("句点が連続したら 1 つに畳む", () => {
+    expect(converted("a..")).toBe("あ。");
+    expect(converted("a。。")).toBe("あ。");
+    expect(converted("a.。")).toBe("あ。");
+  });
+
+  test("異なる区切りが連続したら最後の 1 つを採用", () => {
+    expect(converted("a.!")).toBe("あ！");
+    expect(converted("a!?")).toBe("あ？");
+  });
+
+  test("文をまたいでも各境界で正しく畳む（孤立した区切りを残さない）", () => {
+    expect(converted("aiu..kaki.")).toBe("あいう。かき。");
+  });
+
+  test("数字内のピリオドは句点にしない（直前が非かな）", () => {
+    expect(converted("3.14")).toBe("3.14");
+  });
+});
+
 describe("pending（打鍵途中の保留）", () => {
   test("末尾の孤立子音は pending", () => {
     expect(convertRomaji("k")).toEqual({ converted: "", pending: "k" });

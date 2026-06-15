@@ -30,6 +30,18 @@ const PUNCT_MAP: ReadonlyMap<string, string> = new Map([
   ["-", "ー"],
 ]);
 
+// 文区切り（。！？ と そのローマ字 . ! ?）。各文字を採用する全角形へ写像する。
+// 連続したら最後の 1 つだけ採用してマージする（"あ。。" → "あ。"、"あ。！" → "あ！"）。
+const SENTENCE_DELIMS: ReadonlyMap<string, string> = new Map([
+  [".", "。"],
+  ["。", "。"],
+  ["!", "！"],
+  ["！", "！"],
+  ["?", "？"],
+  ["？", "？"],
+]);
+const FULLWIDTH_DELIM = /[。！？]/;
+
 const HIRAGANA_OR_CHOON = /[ぁ-ゖー]/;
 
 /** 入力を消費して生成した 1 表示単位。削除（かな単位 backspace）の境界に使う */
@@ -154,7 +166,24 @@ function scan(input: string, flush: boolean): ScanResult {
       return { converted: out, pending: input.slice(i), units };
     }
 
-    // 句読点・長音: 直前がかなのときのみ全角へ写像（"3.14" 等を壊さない）
+    // 文区切り（。！？）: 直前がかな、または既に全角区切りのとき採用する
+    // （"3.14" 等を壊さない）。連続した区切りは読み進め、最後の 1 つだけ採用する。
+    const delim = SENTENCE_DELIMS.get(c);
+    if (delim !== undefined && (HIRAGANA_OR_CHOON.test(out.slice(-1)) || FULLWIDTH_DELIM.test(c))) {
+      let j = i + 1;
+      let lastMapped = delim;
+      for (let nextDelim = SENTENCE_DELIMS.get(input.charAt(j)); nextDelim !== undefined; ) {
+        lastMapped = nextDelim;
+        j += 1;
+        nextDelim = SENTENCE_DELIMS.get(input.charAt(j));
+      }
+      out += lastMapped;
+      units.push({ start, kind: "kana" });
+      i = j;
+      continue;
+    }
+
+    // 句読点・長音（、ー）: 直前がかなのときのみ全角へ写像（"3.14" 等を壊さない）
     const punct = PUNCT_MAP.get(c);
     if (punct !== undefined && HIRAGANA_OR_CHOON.test(out.slice(-1))) {
       out += punct;

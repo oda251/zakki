@@ -48,6 +48,13 @@ describe("firstSentenceRomajiLen", () => {
   test("境界が無ければ null", () => {
     expect(firstSentenceRomajiLen("ame")).toBeNull();
   });
+
+  test("連続した区切り文字は末尾まで 1 文に含める（孤立した区切りを残さない）", () => {
+    // "a.." は "あ。" に畳まれる。ローマ字長は両方の "." を含む 3
+    expect(firstSentenceRomajiLen("a..")).toBe(3);
+    // 次の文の手前で止まる
+    expect(firstSentenceRomajiLen("a..kaki.")).toBe(3);
+  });
 });
 
 describe("frozenBlockAt", () => {
