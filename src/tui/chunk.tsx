@@ -3,10 +3,11 @@ import type { ReactNode } from "react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { makeTitle } from "@/chunk/chunker.ts";
 
-/** カーソル字形と打鍵途中ローマ字の色（App の従来表示に合わせる） */
-const CURSOR_GLYPH = "▌";
-const CURSOR_FG = "#aaaaaa";
+/** 打鍵途中ローマ字の色（App の従来表示に合わせる） */
 const PENDING_FG = "#777777";
+
+// カーソルはグリフではなく端末ネイティブの縦棒で描く（src/tui/native-cursor.ts）。
+// セル境界に置かれるので前後の文字との隙間が出ない（useBarCursor が位置を制御）。
 
 /**
  * メイン入力・修正・検索で共有する読み取り用スクロール面。
@@ -53,8 +54,8 @@ function Status({ fg = "#888888", children }: { fg?: string; children: ReactNode
 }
 
 /**
- * 末尾の新規入力（追記専用）。末尾にカーソルを置き、
- * pending（打鍵途中ローマ字）をカーソル直前に淡色で添える。
+ * 末尾の新規入力（追記専用）。末尾にネイティブ縦棒カーソルが置かれる（useBarCursor）。
+ * pending（打鍵途中ローマ字）を末尾に淡色で添える。
  */
 function New({
   text,
@@ -64,7 +65,7 @@ function New({
 }: {
   text: string;
   pending?: string;
-  /** 追従スクロールの対象にするための要素 id（任意） */
+  /** 追従スクロール・カーソル位置算出の対象にするための要素 id（任意） */
   id?: string;
   onClick?: () => void;
 }) {
@@ -73,25 +74,17 @@ function New({
       <text style={{ wrapMode: "word" }}>
         {text}
         <span fg={PENDING_FG}>{pending}</span>
-        <span fg={CURSOR_FG}>{CURSOR_GLYPH}</span>
       </text>
     </box>
   );
 }
 
 /**
- * 確定チャンクの修正（可動カーソル）。cursor 位置でテキストを分割し、
- * その間にカーソルを置く（プレーン編集）。
+ * 確定チャンクの修正（プレーン編集）。テキストはそのまま描き、カーソルは
+ * ネイティブ縦棒で重ねて描く（位置は useBarCursor が editing.cursor から算出する）。
  */
-function Edit({ text, cursor }: { text: string; cursor: number }) {
-  const at = Math.max(0, Math.min(text.length, cursor));
-  return (
-    <text style={{ wrapMode: "word" }}>
-      {text.slice(0, at)}
-      <span fg={CURSOR_FG}>{CURSOR_GLYPH}</span>
-      {text.slice(at)}
-    </text>
-  );
+function Edit({ text }: { text: string }) {
+  return <text style={{ wrapMode: "word" }}>{text}</text>;
 }
 
 /**

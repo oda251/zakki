@@ -62,14 +62,50 @@ export function replaceBlock(raw: string, start: number, end: number, text: stri
   return text === "" ? before + after : before + wrapPaste(text) + after;
 }
 
+/** 編集対象として解決した raw 内のチャンク領域（docs/PANES.md §7） */
+export interface EditableBlock {
+  /** raw 内の範囲 [start, end) */
+  start: number;
+  end: number;
+  /** 凍結リテラルか（false は末尾ライブ文＝確定時に literal へ畳む） */
+  frozen: boolean;
+  /** frozen: リテラル本文（編集の初期値）。live: 空（初期値は呼び出し側が DB content から渡す） */
+  text: string;
+}
+
 /**
- * raw の position 番目の凍結リテラル領域を返す（無ければ null）。
- * 不変条件「凍結リテラルは chunks.position 順で 1:1」（docs/PANES.md 実装リスク2）
- * により、過去/当日チャンクの編集対象領域をマッピングする。末尾の未凍結ライブ文
- * （position >= 凍結数）は対象外で null を返す（メインで編集に委ねる）。
+ * raw の position 番目のチャンクの編集対象領域を返す（無ければ null）。
+ * 不変条件「チャンクは raw の順序と 1:1」（docs/PANES.md 実装リスク2）により、
+ * 先頭から凍結リテラル群を数え、続けて末尾ライブ領域を文単位（firstSentenceRomajiLen）
+ * に分割して数える。エントリ末尾の文は常にライブのローマ字として残る（freezeLiveTail は
+ * 最後の1文を畳まない）ため、過去エントリの最後／単一チャンクの編集にはこの分解が要る。
  */
-export function frozenBlockAt(raw: string, position: number): RawBlock | null {
-  return parseBlocks(raw).filter((b) => b.frozen)[position] ?? null;
+export function editableBlockAt(raw: string, position: number): EditableBlock | null {
+  const frozen = parseBlocks(raw).filter((b) => b.frozen);
+  const lit = frozen[position];
+  if (lit !== undefined) {
+    return { start: lit.start, end: lit.end, frozen: true, text: lit.text };
+  }
+  // 末尾ライブ領域を文単位の部分範囲へ分割し、残りの index を引く
+  const tailStart = liveTailStart(raw);
+  const tail = raw.slice(tailStart);
+  let liveIndex = position - frozen.length;
+  let offset = 0;
+  while (offset < tail.length) {
+    const len = firstSentenceRomajiLen(tail.slice(offset));
+    const segLen = len ?? tail.length - offset;
+    if (liveIndex === 0) {
+      return {
+        start: tailStart + offset,
+        end: tailStart + offset + segLen,
+        frozen: false,
+        text: "",
+      };
+    }
+    liveIndex -= 1;
+    offset += segLen;
+  }
+  return null;
 }
 
 const SENTENCE_BOUNDARY = /[。！？\n]/u;

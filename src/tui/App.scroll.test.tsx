@@ -68,7 +68,10 @@ describe("チャンクリストの表示窓（docs/PANES.md §5）", () => {
     // 初期（New）: 最後の確定チャンク（L8）＋入力行だけ。古い側は出ない
     let r = rows(t.captureCharFrame());
     expect(firstToken(r[0] ?? "")).toBe("L8");
-    expect(r.join("\n")).toContain("▌"); // 入力カーソル
+    // 入力カーソルは端末ネイティブの縦棒（グリフではなく getCursorState で検証する）
+    const cursor = t.renderer.getCursorState();
+    expect(cursor.visible).toBe(true);
+    expect(cursor.style).toBe("line");
     expect(visible(r, "L7")).toBe(false);
 
     // ↑×4 → カーソル=L5。1 件手前 L4 が上端、新しい側 L5,L6… が並び、L3 は出ない
@@ -103,7 +106,10 @@ describe("チャンクリストの表示窓（docs/PANES.md §5）", () => {
 
     const r = rows(t.captureCharFrame());
     expect(visible(r, "あいう。")).toBe(true); // 確定チャンクが消えずに残る
-    expect(r.join("\n")).toContain("▌"); // 末尾の入力行も出る
+    // 末尾の入力カーソルは端末ネイティブの縦棒（getCursorState で検証する）
+    const cursor = t.renderer.getCursorState();
+    expect(cursor.visible).toBe(true);
+    expect(cursor.style).toBe("line");
     t.renderer.destroy();
   }, 20000);
 });

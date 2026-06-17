@@ -18,7 +18,7 @@ import { loadVectors, syncChunkEmbeddings } from "@/embedding/store.ts";
 import { persistEntry } from "@/entry/autosave.ts";
 import type { ChunkWithDate } from "@/entry/queries.ts";
 import { getChunkContext, listChunksWithDate } from "@/entry/queries.ts";
-import { freezeLiveTail, frozenBlockAt, parseBlocks, replaceBlock } from "@/entry/records.ts";
+import { editableBlockAt, freezeLiveTail, parseBlocks, replaceBlock } from "@/entry/records.ts";
 import { getEntryWithChunks } from "@/entry/repository.ts";
 import { getEntryExportChunks } from "@/export/data.ts";
 import { exportEntry } from "@/export/obsidian.ts";
@@ -39,6 +39,7 @@ import {
 import { Chunk } from "./chunk.tsx";
 import { Dialog } from "./dialog.tsx";
 import { matchesAction } from "./keymap.ts";
+import { useBarCursor, type BarCursorTarget } from "./native-cursor.ts";
 
 /** キーストローク単位の永続化（docs/CONCEPT.md）。打鍵停止後この時間で保存する */
 const SAVE_DEBOUNCE_MS = 300;
@@ -372,8 +373,9 @@ export function App({
 
   /**
    * 詳細ペインの過去/当日チャンクの修正を開く（docs/PANES.md §7）。
-   * 対象 raw（当日=bufferRef / 過去=DB）から frozenBlockAt で領域を解決する。
-   * 末尾の未凍結ライブ文（null）はメイン編集に委ねる。
+   * 対象 raw（当日=bufferRef / 過去=DB）から editableBlockAt で領域を解決する。
+   * 末尾ライブ文は凍結リテラルが無いため、編集の初期値には DB の content を使う
+   * （確定時にその文だけが literal へ畳まれる, patchDetailChunk）。
    */
   const openDetailEdit = useCallback(
     (chunk: ChunkWithDate, viewIndex: number) => {
@@ -387,17 +389,19 @@ export function App({
                 return "";
               },
             );
-      const block = frozenBlockAt(targetRaw, chunk.position);
+      const block = editableBlockAt(targetRaw, chunk.position);
       if (block === null) {
-        setMessage("末尾の未確定文はメインで編集してください");
+        setMessage("対象チャンクが見つかりません");
         return;
       }
-      editRef.current = { text: block.text, cursor: block.text.length };
+      // 凍結リテラルは本文を、ライブ末尾文は表示中の確定テキスト（DB content）を初期値にする
+      const initial = block.frozen ? block.text : chunk.content;
+      editRef.current = { text: initial, cursor: initial.length };
       setEditing({
         target: { kind: "detail", date: chunk.date, position: chunk.position, chunkId: chunk.id },
-        text: block.text,
-        cursor: block.text.length,
-        old: block.text,
+        text: initial,
+        cursor: initial.length,
+        old: initial,
       });
       moveCursor({ pane: "detail", index: viewIndex, mode: "input" });
     },
@@ -408,12 +412,12 @@ export function App({
    * 詳細ペイン経由の確定チャンク編集/削除を、対象エントリの raw に反映する（docs/PANES.md §7）。
    * `nextText` が空文字なら削除（replaceBlock が領域を消す）。当日は bufferRef を正本とし
    * （ライブ末尾を失わない）、過去は DB から raw を再取得して即保存＋当該日を再エクスポートする。
-   * stale offset を避けるため、領域は呼び出し時点の raw から `frozenBlockAt` で再解決する。
+   * stale offset を避けるため、領域は呼び出し時点の raw から `editableBlockAt` で再解決する。
    */
   const patchDetailChunk = useCallback(
     (chunk: { date: string; position: number }, nextText: string) => {
       if (chunk.date === date) {
-        const block = frozenBlockAt(bufferRef.current, chunk.position);
+        const block = editableBlockAt(bufferRef.current, chunk.position);
         if (block === null) {
           setMessage("対象チャンクが見つかりません");
           return;
@@ -427,7 +431,7 @@ export function App({
       getEntryWithChunks(db, chunk.date).match(
         (entry) => {
           const targetRaw = entry?.entry.raw ?? "";
-          const block = frozenBlockAt(targetRaw, chunk.position);
+          const block = editableBlockAt(targetRaw, chunk.position);
           if (block === null) {
             setMessage("対象チャンクが見つかりません");
             return;
@@ -869,6 +873,46 @@ export function App({
     [clamped.pane, clamped.index],
   );
 
+  // New（末尾入力）にカーソルを描くのは、グローバルカーソルが実際に New を指すときだけ。
+  // 修正中（editing）や他ペイン・select 中はカーソルが別所にあるので New には出さない。
+  const newFocused =
+    editing === null &&
+    clamped.pane === "main" &&
+    clamped.mode === "input" &&
+    clamped.index === lens.main;
+
+  // 端末ネイティブ縦棒カーソルの描画対象（src/tui/native-cursor.ts）。
+  // 修正中はその編集箇所、それ以外で New 入力中なら末尾（確定テキスト＋打鍵途中ローマ字の
+  // 直後）。select 中・モーダル表示中・検索中は null（カーソルを隠す）。
+  const barTarget = useMemo<BarCursorTarget | null>(() => {
+    if (mode === "search" || dialog !== null || menu !== null) {
+      return null;
+    }
+    if (editing !== null) {
+      if (editing.target.kind === "main") {
+        return {
+          scope: "main",
+          id: `chunk-${editing.target.start}`,
+          text: editing.text,
+          offset: editing.cursor,
+        };
+      }
+      return {
+        scope: "detail",
+        id: `detail-${clamped.index}`,
+        text: editing.text,
+        offset: editing.cursor,
+      };
+    }
+    if (newFocused) {
+      const text = live.text + live.pending;
+      return { scope: "main", id: "chunk-new", text, offset: text.length };
+    }
+    return null;
+  }, [mode, dialog, menu, editing, clamped.index, newFocused, live.text, live.pending]);
+
+  useBarCursor(renderer, barTarget, { main: mainScrollRef, detail: detailScrollRef });
+
   // メインは「表示窓」をそのまま上詰めで描く。scrollbox に内部スクロールが残ると
   // 先頭（1 件手前）が画面外へ隠れてしまうため、毎レンダーで先頭固定に戻す。
   useEffect(() => {
@@ -975,7 +1019,7 @@ export function App({
             // 導くと id が要素間で使い回され、scrollbox の子が増えない不具合になる。
             return isEditing ? (
               <box key={`chunk-${b.start}`} id={`chunk-${b.start}`}>
-                <Chunk.Edit text={editing.text} cursor={editing.cursor} />
+                <Chunk.Edit text={editing.text} />
               </box>
             ) : (
               <Chunk.View
@@ -1037,7 +1081,7 @@ export function App({
                     const selected = clamped.pane === "detail" && clamped.index === idx;
                     return isEditing ? (
                       <box key={c.id} id={`detail-${idx}`}>
-                        <Chunk.Edit text={editing.text} cursor={editing.cursor} />
+                        <Chunk.Edit text={editing.text} />
                       </box>
                     ) : (
                       <Chunk.View

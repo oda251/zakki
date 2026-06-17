@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { wrapPaste } from "@/conversion/paste.ts";
 import {
+  editableBlockAt,
   firstSentenceRomajiLen,
   freezeLiveTail,
-  frozenBlockAt,
   liveTailStart,
   parseBlocks,
+  replaceBlock,
 } from "./records.ts";
 
 describe("parseBlocks", () => {
@@ -57,28 +58,45 @@ describe("firstSentenceRomajiLen", () => {
   });
 });
 
-describe("frozenBlockAt", () => {
+describe("editableBlockAt", () => {
   test("凍結リテラルは prefix・position と 1:1 で対応する", () => {
-    const raw = `${wrapPaste("雨。")}${wrapPaste("晴れ。")}kyou`;
-    const b0 = frozenBlockAt(raw, 0);
-    const b1 = frozenBlockAt(raw, 1);
-    expect(b0?.text).toBe("雨。");
-    expect(b1?.text).toBe("晴れ。");
+    const raw = `${wrapPaste("雨。")}${wrapPaste("晴れ。")}`;
+    const b0 = editableBlockAt(raw, 0);
+    const b1 = editableBlockAt(raw, 1);
+    expect(b0).toMatchObject({ frozen: true, text: "雨。" });
+    expect(b1).toMatchObject({ frozen: true, text: "晴れ。" });
     // 領域 [start,end) が parseBlocks の凍結ブロックと一致する
     const frozen = parseBlocks(raw).filter((b) => b.frozen);
-    expect(b0).toEqual(frozen[0] ?? null);
-    expect(b1).toEqual(frozen[1] ?? null);
+    expect([b0?.start, b0?.end]).toEqual([frozen[0]?.start, frozen[0]?.end]);
+    expect([b1?.start, b1?.end]).toEqual([frozen[1]?.start, frozen[1]?.end]);
   });
 
-  test("末尾の未凍結ライブ文（範囲外）は null", () => {
-    const raw = `${wrapPaste("雨。")}kyou`;
-    // position 1 はライブ "kyou"（凍結数 1）なので対象外
-    expect(frozenBlockAt(raw, 1)).toBeNull();
-    expect(frozenBlockAt(raw, 5)).toBeNull();
+  // 回帰: エントリ末尾の文はライブのローマ字（未凍結）として raw に残るため、
+  // 凍結リテラルとしては解決できない。これを編集領域として解決できないと、
+  // 詳細ペインの最後（＝単一チャンクの日では唯一）のチャンクが編集できなくなる。
+  test("末尾のライブ文も編集領域として解決する（frozen:false）", () => {
+    const raw = `${wrapPaste("あめです。")}haredesu.`;
+    // position 1 はライブ末尾 "haredesu."（凍結数 1）。範囲は当該ローマ字を指す
+    const live = editableBlockAt(raw, 1);
+    expect(live).toMatchObject({ frozen: false });
+    expect(raw.slice(live?.start, live?.end)).toBe("haredesu.");
+    // 当該領域だけを置換すると、その文だけが凍結リテラルへ畳まれる
+    const next = replaceBlock(raw, live?.start ?? 0, live?.end ?? 0, "はれです。");
+    expect(next).toBe(`${wrapPaste("あめです。")}${wrapPaste("はれです。")}`);
   });
 
-  test("凍結リテラルが無ければ null", () => {
-    expect(frozenBlockAt("ame", 0)).toBeNull();
+  test("ライブ末尾が複数文なら文ごとに領域を分ける", () => {
+    const raw = `${wrapPaste("あめです。")}haredesu.kumori`;
+    const s1 = editableBlockAt(raw, 1);
+    const s2 = editableBlockAt(raw, 2);
+    expect(raw.slice(s1?.start, s1?.end)).toBe("haredesu.");
+    expect(raw.slice(s2?.start, s2?.end)).toBe("kumori");
+    expect(editableBlockAt(raw, 3)).toBeNull();
+  });
+
+  test("範囲外は null", () => {
+    expect(editableBlockAt(wrapPaste("雨。"), 1)).toBeNull();
+    expect(editableBlockAt("", 0)).toBeNull();
   });
 });
 
