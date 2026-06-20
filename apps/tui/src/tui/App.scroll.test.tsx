@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ok } from "neverthrow";
 import { testRender } from "@opentui/react/test-utils";
 import { identityEngine } from "@zakki/tui/conversion/engine.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
@@ -23,6 +24,7 @@ async function setup(rawChunks: string[], width = 20, height = 6) {
       corrections={new Map()}
       conversionCache={new Map()}
       embedder={null}
+      sync={() => Promise.resolve(ok(undefined))}
     />,
     { width, height },
   );

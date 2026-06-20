@@ -6,7 +6,8 @@ import { loadConversionCache } from "@zakki/tui/conversion/cache.ts";
 import { loadCorrections } from "@zakki/tui/conversion/corrections.ts";
 import { identityEngine } from "@zakki/tui/conversion/engine.ts";
 import { createRuriEmbedder } from "@zakki/tui/embedding/embedder.ts";
-import { createDb } from "@zakki/data/db/client.ts";
+import { openDb } from "@zakki/data/db/connect.ts";
+import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { localDate } from "@zakki/tui/entry/autosave.ts";
 import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
@@ -19,7 +20,13 @@ if (!process.stdout.isTTY) {
   process.exit(1);
 }
 
-const db = await createDb();
+// Identity を解決し、embedded replica（クラウド設定時）/ ローカル専用で DB を開く。
+// 開く処理はオフライン安全（ネットワーク I/O なし）。
+const identity = resolveLocalIdentity();
+const { db, sync } = await openDb(identity);
+// 起動時の同期はベストエフォート。オフラインや未設定は正常系なので、失敗しても
+// 起動は続行する（ローカルレプリカでそのまま動く）。
+await sync();
 const date = localDate();
 const entry = await getOrCreateEntry(db, date).match(
   (e) => e,
@@ -57,5 +64,6 @@ createRoot(renderer).render(
     corrections={corrections}
     conversionCache={conversionCache}
     embedder={embedder}
+    sync={sync}
   />,
 );

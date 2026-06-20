@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { Client } from "@libsql/client";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
@@ -8,6 +9,12 @@ import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import * as schema from "./schema.ts";
 
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
+
+/** embedded replica の同期設定（リモートプライマリ＋認証トークン） */
+export interface SyncConfig {
+  readonly syncUrl: string;
+  readonly authToken: string;
+}
 
 const MIGRATIONS_FOLDER = join(import.meta.dir, "..", "..", "drizzle");
 
@@ -30,14 +37,31 @@ function toLibsqlUrl(path: string): string {
 }
 
 /**
- * DB を開いてマイグレーションを適用する。起動時に 1 回呼ぶ。
- * 失敗は起動不能を意味するため throw する（以降のクエリ層は Result を返す）。
+ * libSQL クライアントを開いてマイグレーションを適用する共通処理。
+ * `sync` を渡すと embedded replica（ローカルファイル＋リモート同期先）として開く。
+ * 同期そのものはここでは行わない（構築はオフラインでも成功する）。
  */
-export async function createDb(path: string = defaultDbPath()): Promise<Db> {
-  const client = createClient({ url: toLibsqlUrl(path) });
+export async function openClient(
+  path: string,
+  sync?: SyncConfig,
+): Promise<{ client: Client; db: Db }> {
+  const url = toLibsqlUrl(path);
+  const client =
+    sync === undefined
+      ? createClient({ url })
+      : createClient({ url, syncUrl: sync.syncUrl, authToken: sync.authToken });
   // FK cascade に依存する（store.ts はチャンク削除で embeddings を連鎖削除する）
   await client.execute("PRAGMA foreign_keys = ON");
   const db = drizzle(client, { schema });
   await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+  return { client, db };
+}
+
+/**
+ * DB を開いてマイグレーションを適用する。起動時に 1 回呼ぶ。
+ * 失敗は起動不能を意味するため throw する（以降のクエリ層は Result を返す）。
+ */
+export async function createDb(path: string = defaultDbPath()): Promise<Db> {
+  const { db } = await openClient(path);
   return db;
 }

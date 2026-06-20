@@ -12,6 +12,7 @@ import { stripPasteMarkers, wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { ConversionPipeline } from "@zakki/tui/conversion/pipeline.ts";
 import { segmentKana } from "@zakki/core/conversion/segment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
+import type { DbError } from "@zakki/data/db/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { addSemanticLinks, nearestChunks } from "@zakki/data/embedding/semantic.ts";
 import { loadVectors, syncChunkEmbeddings } from "@zakki/data/embedding/store.ts";
@@ -75,6 +76,8 @@ export interface AppProps {
   conversionCache: ReadonlyMap<string, string>;
   /** ローカル embedding。null なら関連・セマンティック機能は無効（決定的動作のみ） */
   embedder: Embedder | null;
+  /** リモートとの同期（ベストエフォート）。ローカル専用なら no-op の Ok を返す */
+  sync: () => Promise<Result<void, DbError>>;
 }
 
 type SaveState = "saved" | "dirty" | "error";
@@ -132,6 +135,7 @@ export function App({
   corrections,
   conversionCache,
   embedder,
+  sync,
 }: AppProps) {
   const [raw, setRaw] = useState(initialRaw);
   // 変換解決のたびに増え、再描画と再保存（effect の依存）を駆動する
@@ -328,9 +332,12 @@ export function App({
     void persistEntry(db, snapshot).match(async () => {
       // export の成否に関わらず端末を復帰する（保存は完了済み）
       await exportCurrent();
+      // ローカル保存は完了済み。リモート同期はベストエフォートで、失敗しても終了を妨げない
+      // （オフライン・未設定は正常系。ローカル専用なら no-op）。
+      await sync();
       finish();
     }, finish);
-  }, [db, date, renderer, engine, convertRaw, exportCurrent]);
+  }, [db, date, renderer, engine, convertRaw, exportCurrent, sync]);
 
   /** 関連の詳細を閉じる（一覧表示へ戻す） */
   const closeExpand = useCallback(() => {
