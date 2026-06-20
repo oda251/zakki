@@ -1,55 +1,72 @@
 import { eq } from "drizzle-orm";
-import { generateDek, unwrapDek, wrapDek } from "@zakki/core/crypto/dek.ts";
+import { generateDek, wrapDek } from "@zakki/core/crypto/dek.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { attachCrypto, makeCryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { chunks, cryptoMeta, embeddings, entries, tags } from "@zakki/data/db/schema.ts";
+import {
+  addKeyfileEnvelope,
+  hasEnvelope,
+  unlockWithKeyfile,
+} from "@zakki/data/crypto/envelopes.ts";
 
 const ENVELOPE_VERSION = 1;
 
 /**
- * E2E 暗号を初期化し、Db に {@link CryptoContext} を登録して返す（Phase 5b）。
+ * DEK から {@link CryptoContext} を作って Db に登録し、返す（Phase 6）。
  *
- * `crypto_meta` 行が無ければ DEK を新規生成し KEK で封筒化して保存する。
- * 既にあれば封筒を KEK で開いて DEK を復元する（KEK 違いは AEAD 認証失敗で throw）。
+ * いずれのアンロック手段（キーファイル / パスフレーズ / リカバリ）で DEK を得た後、
+ * データアクセス前に 1 回呼ぶ。`unlockOrSetup` の各分岐から使う共通の出口。
+ */
+export function provisionCrypto(db: Db, dek: Uint8Array): CryptoContext {
+  const ctx = makeCryptoContext(dek);
+  attachCrypto(db, ctx);
+  return ctx;
+}
+
+/**
+ * E2E 暗号を初期化し、Db に {@link CryptoContext} を登録して返す（キーファイル単体）。
  *
- * 既存の平文データがある DB（暗号 OFF で書かれた行）に対して初めて暗号を
- * 有効化した場合は、{@link migratePlaintextToEncrypted} で全行をその場で
- * 暗号化する。これは新規（空）DB では no-op。
+ * キーファイル封筒が無ければ DEK を新規生成し、`crypto_meta`（メタ）と
+ * `key_envelopes`（kind='keyfile'）へ封筒を保存する。既にあれば封筒を KEK で開いて
+ * DEK を復元する（KEK 違いは AEAD 認証失敗で throw）。
+ *
+ * 既存の平文データがある DB に対して初めて暗号を有効化した場合は、
+ * {@link migratePlaintextToEncrypted} で全行をその場で暗号化する（新規 DB では no-op）。
+ *
+ * Phase 6 の正式なアンロックは {@link import("./unlock.ts").unlockOrSetup} に移った。
+ * 本関数はキーファイルのみのセットアップ／アンロックを 1 呼び出しで行う薄い経路で、
+ * 既存テスト（at-rest / migrate / init）と Phase 5 互換のために維持する。
  *
  * migrate（テーブル作成）後・データアクセス前に 1 回呼ぶこと。
  */
 export async function initCrypto(db: Db, kek: Uint8Array): Promise<CryptoContext> {
   await ready();
-  const [meta] = await db.select().from(cryptoMeta).where(eq(cryptoMeta.id, 1)).limit(1);
 
+  if (await hasEnvelope(db, "keyfile")) {
+    const dek = await unlockWithKeyfile(db, kek);
+    return provisionCrypto(db, dek);
+  }
+
+  const dek = generateDek();
+  // メタ行（version / created_at）。Phase 6 では封筒の正本ではないが、後方互換と
+  // バージョン管理のため crypto_meta も書く（wrapped_dek は key_envelopes と同一封筒）。
+  const [meta] = await db.select().from(cryptoMeta).where(eq(cryptoMeta.id, 1)).limit(1);
   if (meta === undefined) {
-    const dek = generateDek();
-    const envelope = wrapDek(dek, kek);
     await db.insert(cryptoMeta).values({
       id: 1,
       version: ENVELOPE_VERSION,
-      wrappedDek: Buffer.from(envelope),
+      wrappedDek: Buffer.from(wrapDek(dek, kek)),
       kekSalt: null,
       createdAt: new Date().toISOString(),
     });
-    const ctx = makeCryptoContext(dek);
-    // 既存の平文データ（暗号 OFF で書かれた行）があればその場で暗号化する。
-    // 新規 DB なら全テーブル空で no-op。
-    await migratePlaintextToEncrypted(db, ctx);
-    attachCrypto(db, ctx);
-    return ctx;
   }
-
-  const envelope = new Uint8Array(
-    meta.wrappedDek.buffer,
-    meta.wrappedDek.byteOffset,
-    meta.wrappedDek.byteLength,
-  );
-  const dek = unwrapDek(envelope, kek);
-  const ctx = makeCryptoContext(dek);
-  attachCrypto(db, ctx);
+  await addKeyfileEnvelope(db, dek, kek);
+  const ctx = provisionCrypto(db, dek);
+  // 既存の平文データ（暗号 OFF で書かれた行）があればその場で暗号化する。
+  // 新規 DB なら全テーブル空で no-op。
+  await migratePlaintextToEncrypted(db, ctx);
   return ctx;
 }
 

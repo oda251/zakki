@@ -57,6 +57,13 @@
       "when": 1781979857565,
       "tag": "0007_cynical_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1781980931748,
+      "tag": "0008_strange_hannibal_king",
+      "breakpoints": true
     }
   ]
 }

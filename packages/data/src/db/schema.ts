@@ -80,15 +80,44 @@ export const tags = sqliteTable(
 );
 
 /**
- * E2E 暗号のメタデータ（Phase 5b）。単一行（id=1）で、封筒（wrapped DEK）を保管する。
- * `wrapped_dek` は KEK で AEAD した `nonce || ciphertext`。`kek_salt` は Phase 6 の
- * パスフレーズ KDF 用（キーファイル KEK では null）。
+ * E2E 暗号のメタデータ（Phase 5b）。単一行（id=1）で、バージョンと作成時刻を保持する。
+ *
+ * Phase 6 で封筒（wrapped DEK）の正本は {@link keyEnvelopes} へ移った。`wrapped_dek` 列は
+ * 後方互換のため残すが（Phase 5 DB が読めるよう・マイグレーションの移送元）、もはや
+ * 真実の源ではない。アンロックは必ず `key_envelopes` を参照する。
  */
 export const cryptoMeta = sqliteTable("crypto_meta", {
   id: integer("id").primaryKey(),
   version: integer("version").notNull(),
   wrappedDek: blob("wrapped_dek", { mode: "buffer" }).notNull(),
   kekSalt: blob("kek_salt", { mode: "buffer" }),
+  createdAt: text("created_at").notNull(),
+});
+
+/**
+ * DEK を開くための封筒（Phase 6）。同一の DEK に対して複数のアンロック手段を持つ。
+ *
+ * 各行は 1 つの KEK で wrap した独立した封筒で、`kind` で手段を区別する：
+ * - `keyfile`: キーファイル KEK（このデバイスを信頼する）。`kdf_*` は null。
+ * - `passphrase`: パスフレーズから Argon2id 導出した KEK。`kdf_salt/ops/mem` を保存。
+ * - `recovery`: リカバリコードから Argon2id 導出した KEK。同上。
+ *
+ * `kdf_ops/kdf_mem` は導出時の Argon2id パラメータ。将来パラメータを引き上げても、
+ * 既存封筒は保存値で再導出して開けるように、封筒ごとに保存する。
+ *
+ * パスフレーズ変更は `passphrase` 行の再 wrap（新ソルト）だけで完結し、データ行の
+ * 再暗号化は一切しない（DEK は不変）。
+ */
+export const keyEnvelopes = sqliteTable("key_envelopes", {
+  kind: text("kind", { enum: ["keyfile", "passphrase", "recovery"] }).primaryKey(),
+  /** KEK で AEAD した DEK 封筒（`nonce || ciphertext`） */
+  wrappedDek: blob("wrapped_dek", { mode: "buffer" }).notNull(),
+  /** Argon2id ソルト（keyfile は null） */
+  kdfSalt: blob("kdf_salt", { mode: "buffer" }),
+  /** Argon2id opsLimit（keyfile は null） */
+  kdfOps: integer("kdf_ops"),
+  /** Argon2id memLimit（バイト, keyfile は null） */
+  kdfMem: integer("kdf_mem"),
   createdAt: text("created_at").notNull(),
 });
 
@@ -144,3 +173,5 @@ export type Chunk = typeof chunks.$inferSelect;
 export type Correction = typeof corrections.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type Link = typeof links.$inferSelect;
+export type KeyEnvelope = typeof keyEnvelopes.$inferSelect;
+export type EnvelopeKind = KeyEnvelope["kind"];

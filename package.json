@@ -12,6 +12,7 @@
     "digest": "bun apps/tui/src/cli/digest.ts",
     "stats": "bun apps/tui/src/cli/stats.ts",
     "tags": "bun apps/tui/src/cli/normalize-tags.ts",
+    "passphrase": "bun apps/tui/src/cli/passphrase.ts",
     "test": "bun test",
     "lint": "oxlint --type-check --type-aware",
     "fmt": "oxfmt",

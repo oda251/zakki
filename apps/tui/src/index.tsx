@@ -7,8 +7,9 @@ import { loadCorrections } from "@zakki/tui/conversion/corrections.ts";
 import { identityEngine } from "@zakki/tui/conversion/engine.ts";
 import { createRuriEmbedder } from "@zakki/tui/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
-import { initCrypto } from "@zakki/data/crypto/init.ts";
+import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
+import { stdinPrompts } from "@zakki/tui/tui/prompt.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { localDate } from "@zakki/tui/entry/autosave.ts";
 import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
@@ -26,12 +27,32 @@ if (!process.stdout.isTTY) {
 // 開く処理はオフライン安全（ネットワーク I/O なし）。
 const identity = resolveLocalIdentity();
 const { db, sync } = await openDb(identity);
-// E2E 暗号は Phase 5 ではオプトイン（ZAKKI_ENCRYPTION=1）。Phase 6 でアンロック UI
-// による正式機能にする。有効時は keyfile の KEK で DEK 封筒を開き（無ければ生成）、
-// 既存平文があればその場で暗号化してから（initCrypto 内）データアクセスに入る。
+// E2E 暗号はオプトイン（ZAKKI_ENCRYPTION=1）。有効時は keyfile の KEK でまず無言
+// アンロックを試み、初回は DEK を生成してキーファイル／パスフレーズ／リカバリ封筒を
+// 作る（リカバリコードを一度だけ表示）。キーファイルが使えない場合はパスフレーズを
+// 尋ね、誤りは数回まで再試行する。データアクセス前に DEK を用意する。
 if (process.env["ZAKKI_ENCRYPTION"] === "1") {
-  const kek = await loadOrCreateKeyfile();
-  await initCrypto(db, kek);
+  const keyfileKek = await loadOrCreateKeyfile();
+  const MAX_TRIES = 3;
+  let unlocked = false;
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    try {
+      await unlockOrSetup(db, keyfileKek, stdinPrompts);
+      unlocked = true;
+      break;
+    } catch (err) {
+      // パスフレーズ違い等。秘密はログに出さず、メッセージのみ提示して再試行する。
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < MAX_TRIES) {
+        console.error(`zakki: アンロックに失敗しました（${msg}）。再試行してください。`);
+      } else {
+        console.error(`zakki: アンロックに失敗しました（${msg}）。終了します。`);
+      }
+    }
+  }
+  if (!unlocked) {
+    process.exit(1);
+  }
 }
 // 起動時の同期はベストエフォート。オフラインや未設定は正常系なので、失敗しても
 // 起動は続行する（ローカルレプリカでそのまま動く）。
