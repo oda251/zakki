@@ -24,8 +24,10 @@ import {
   parseBlocks,
   replaceBlock,
 } from "@zakki/core/entry/records.ts";
+import type { Result } from "neverthrow";
 import { getEntryWithChunks } from "@zakki/data/entry/repository.ts";
 import { getEntryExportChunks } from "@zakki/tui/export/data.ts";
+import type { ExportError, ExportSummary } from "@zakki/tui/export/obsidian.ts";
 import { exportEntry } from "@zakki/tui/export/obsidian.ts";
 import { convertRomaji } from "@zakki/core/romaji/convert.ts";
 import type { SearchIndex } from "@zakki/tui/search/index.ts";
@@ -157,6 +159,8 @@ export function App({
   } | null>(null);
   const [mode, setMode] = useState<"write" | "search">("write");
   const [searchQuery, setSearchQuery] = useState("");
+  // 検索索引の非同期ロード完了で全文ヒットの再計算を駆動する
+  const [searchIndexVersion, setSearchIndexVersion] = useState(0);
   const [semanticHits, setSemanticHits] = useState<ChunkWithDate[]>([]);
   const [ambient, setAmbient] = useState<AmbientItem[]>([]);
   // 関連項目をクリックすると、その投稿の前後を右パネルに展開する（null で一覧表示）
@@ -194,7 +198,7 @@ export function App({
         cache: conversionCache,
         // 確定した変換を永続化し、次回起動時にシードして全文再変換を避ける
         onConverted: (kana, conv) => {
-          saveConversion(db, kana, conv).mapErr((e) => setMessage(`変換保存: ${e.message}`));
+          void saveConversion(db, kana, conv).mapErr((e) => setMessage(`変換保存: ${e.message}`));
         },
       }),
     [engine, corrections, conversionCache, db, bump],
@@ -228,7 +232,7 @@ export function App({
       return;
     }
     pipeline.rotate(target.text, (chosen) => {
-      saveCorrection(db, target.text, chosen).match(
+      void saveCorrection(db, target.text, chosen).match(
         () => {},
         (e) => setMessage(`学習エラー: ${e.message}`),
       );
@@ -238,14 +242,14 @@ export function App({
   // タグ・関連の鮮度は前回解析時点でよい（次回の解析で追いつく）。
   // 任意の日付を再エクスポートする（過去チャンク編集後の反映に使う）。
   const exportFor = useCallback(
-    (target: string) =>
-      getEntryExportChunks(db, target).match(
-        (chunks) => exportEntry({ vaultDir, date: target, chunks }),
-        (e) => {
-          setMessage(`export: ${e.message}`);
-          return null;
-        },
-      ),
+    async (target: string): Promise<Result<ExportSummary, ExportError> | null> => {
+      const chunks = await getEntryExportChunks(db, target);
+      if (chunks.isErr()) {
+        setMessage(`export: ${chunks.error.message}`);
+        return null;
+      }
+      return exportEntry({ vaultDir, date: target, chunks: chunks.value });
+    },
     [db, vaultDir],
   );
   const exportCurrent = useCallback(() => exportFor(date), [exportFor, date]);
@@ -253,7 +257,7 @@ export function App({
   /** アンビエント表示: 直近チャンクの関連を更新する（docs/FEATURES.md 候補1） */
   const refreshAmbient = useCallback(
     (vectors: ReadonlyMap<number, Float32Array>) => {
-      listChunksWithDate(db).match(
+      void listChunksWithDate(db).match(
         (all) => {
           const todays = all.filter((c) => c.date === date);
           const last = todays.at(-1);
@@ -281,11 +285,11 @@ export function App({
 
   /** 保存より粗い周期で走るバックグラウンド処理: 解析 → 埋め込み → エクスポート */
   const runBackgroundPass = useCallback(() => {
-    analyzeAll(db).mapErr((e) => setMessage(`解析: ${e.message}`));
+    void analyzeAll(db).mapErr((e) => setMessage(`解析: ${e.message}`));
     const finish = () => {
-      void exportCurrent()?.then((result) =>
-        result?.mapErr((e) => setMessage(`export: ${e.message}`)),
-      );
+      void exportCurrent().then((result) => {
+        result?.mapErr((e) => setMessage(`export: ${e.message}`));
+      });
     };
     if (embedder === null) {
       finish();
@@ -294,10 +298,12 @@ export function App({
     void syncChunkEmbeddings(db, embedder)
       .then((synced) =>
         synced
-          .andThen(() => loadVectors(db))
+          .asyncAndThen(() => loadVectors(db))
           .match(
             (vectors) => {
-              addSemanticLinks(db, vectors).mapErr((e) => setMessage(`関連付け: ${e.message}`));
+              void addSemanticLinks(db, vectors).mapErr((e) =>
+                setMessage(`関連付け: ${e.message}`),
+              );
               refreshAmbient(vectors);
             },
             (e) => setMessage(`埋め込み: ${e.message}`),
@@ -319,13 +325,10 @@ export function App({
       renderer.destroy();
       process.exit(0);
     };
-    persistEntry(db, snapshot).match(() => {
-      const exported = exportCurrent();
-      if (exported === null) {
-        finish();
-        return;
-      }
-      void exported.then(finish, finish);
+    void persistEntry(db, snapshot).match(async () => {
+      // export の成否に関わらず端末を復帰する（保存は完了済み）
+      await exportCurrent();
+      finish();
     }, finish);
   }, [db, date, renderer, engine, convertRaw, exportCurrent]);
 
@@ -341,7 +344,7 @@ export function App({
    */
   const openExpand = useCallback(
     (chunkId: number) => {
-      getChunkContext(db, chunkId, CONTEXT_RADIUS).match(
+      void getChunkContext(db, chunkId, CONTEXT_RADIUS).match(
         (ctx) => {
           setExpandedChunkId(chunkId);
           setContextChunks(ctx);
@@ -383,11 +386,11 @@ export function App({
    * （確定時にその文だけが literal へ畳まれる, patchDetailChunk）。
    */
   const openDetailEdit = useCallback(
-    (chunk: ChunkWithDate, viewIndex: number) => {
+    async (chunk: ChunkWithDate, viewIndex: number) => {
       const targetRaw =
         chunk.date === date
           ? bufferRef.current
-          : getEntryWithChunks(db, chunk.date).match(
+          : await getEntryWithChunks(db, chunk.date).match(
               (e) => e?.entry.raw ?? "",
               (e) => {
                 setMessage(`読込: ${e.message}`);
@@ -420,7 +423,7 @@ export function App({
    * stale offset を避けるため、領域は呼び出し時点の raw から `editableBlockAt` で再解決する。
    */
   const patchDetailChunk = useCallback(
-    (chunk: { date: string; position: number }, nextText: string) => {
+    async (chunk: { date: string; position: number }, nextText: string) => {
       if (chunk.date === date) {
         const block = editableBlockAt(bufferRef.current, chunk.position);
         if (block === null) {
@@ -433,8 +436,8 @@ export function App({
         setSaveState("dirty");
         return;
       }
-      getEntryWithChunks(db, chunk.date).match(
-        (entry) => {
+      await getEntryWithChunks(db, chunk.date).match(
+        async (entry) => {
           const targetRaw = entry?.entry.raw ?? "";
           const block = editableBlockAt(targetRaw, chunk.position);
           if (block === null) {
@@ -442,12 +445,14 @@ export function App({
             return;
           }
           const next = replaceBlock(targetRaw, block.start, block.end, nextText);
-          persistEntry(db, { date: chunk.date, raw: next, converted: convertRaw(next).text }).match(
-            () => {
-              const exported = exportFor(chunk.date);
-              if (exported !== null) {
-                void exported.then((r) => r?.mapErr((e) => setMessage(`export: ${e.message}`)));
-              }
+          await persistEntry(db, {
+            date: chunk.date,
+            raw: next,
+            converted: convertRaw(next).text,
+          }).match(
+            async () => {
+              const exported = await exportFor(chunk.date);
+              exported?.mapErr((e) => setMessage(`export: ${e.message}`));
             },
             (e) => setMessage(`保存: ${e.message}`),
           );
@@ -490,9 +495,9 @@ export function App({
     // ── detail: 対象エントリの raw に反映（patchDetailChunk が当日/過去を分岐）──
     const { date: targetDate, position, chunkId } = current.target;
     setEditing(null);
-    patchDetailChunk({ date: targetDate, position }, text);
+    void patchDetailChunk({ date: targetDate, position }, text);
     // 表示中の詳細を最新へ更新し、当該 detail View(select) にカーソルを戻す
-    getChunkContext(db, chunkId, CONTEXT_RADIUS).match(
+    void getChunkContext(db, chunkId, CONTEXT_RADIUS).match(
       (ctx) => setContextChunks(ctx),
       () => {},
     );
@@ -534,7 +539,7 @@ export function App({
   const deleteDetailChunk = useCallback(
     (chunk: ChunkWithDate) => {
       // 空テキストで置換＝削除（patchDetailChunk が当日/過去を分岐）
-      patchDetailChunk({ date: chunk.date, position: chunk.position }, "");
+      void patchDetailChunk({ date: chunk.date, position: chunk.position }, "");
       // 詳細を閉じてカーソルを関連へ戻す（展開元の ambient index、無ければ 0）
       closeExpand();
       const ai = ambient.findIndex((a) => a.chunkId === expandedChunkId);
@@ -646,7 +651,7 @@ export function App({
           } else if (intent.pane === "detail") {
             const chunk = contextChunks[intent.index];
             if (chunk !== undefined) {
-              openDetailEdit(chunk, intent.index);
+              void openDetailEdit(chunk, intent.index);
             }
           }
           return;
@@ -689,7 +694,12 @@ export function App({
             setMenu({
               index: 0,
               items: [
-                { label: "編集", onChoose: () => openDetailEdit(chunk, viewIndex) },
+                {
+                  label: "編集",
+                  onChoose: () => {
+                    void openDetailEdit(chunk, viewIndex);
+                  },
+                },
                 { label: "削除", onChoose: () => requestDeleteDetail(chunk) },
               ],
             });
@@ -744,17 +754,22 @@ export function App({
         rotateLastSegment();
         return;
       case "open-search":
-        // 索引はペインを開いた時点の全チャンクから構築する
-        searchIndexRef.current = listChunksWithDate(db).match(
-          (chunks) => {
-            searchChunksRef.current = new Map(chunks.map((c) => [c.id, c]));
-            return buildIndex(chunks);
-          },
-          (e) => {
-            setMessage(`検索: ${e.message}`);
-            return null;
-          },
-        );
+        // 索引はペインを開いた時点の全チャンクから構築する（非同期ロード後に再描画する）
+        void listChunksWithDate(db)
+          .match(
+            (chunks) => {
+              searchChunksRef.current = new Map(chunks.map((c) => [c.id, c]));
+              return buildIndex(chunks);
+            },
+            (e) => {
+              setMessage(`検索: ${e.message}`);
+              return null;
+            },
+          )
+          .then((index) => {
+            searchIndexRef.current = index;
+            setSearchIndexVersion((v) => v + 1);
+          });
         setMode("search");
         return;
       case "edit":
@@ -793,7 +808,7 @@ export function App({
       const current = bufferRef.current;
       // 2. 永続化（converted から決定的チャンク化）
       const converted = convertRaw(current).text;
-      persistEntry(db, { date, raw: current, converted }).match(
+      void persistEntry(db, { date, raw: current, converted }).match(
         (saved) => {
           setSaveState("saved");
           setChunkCount(saved.chunks.length);
@@ -951,7 +966,7 @@ export function App({
       return [];
     }
     return searchChunks(searchIndexRef.current, searchQuery).slice(0, SEARCH_RESULT_LIMIT);
-  }, [mode, searchQuery]);
+  }, [mode, searchQuery, searchIndexVersion]);
   // 全文ヒットと重複しない「意味が近い」補足
   const extraSemantic = useMemo(() => {
     const seen = new Set(bigramHits.map((h) => h.id));

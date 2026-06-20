@@ -1,8 +1,8 @@
 import { and, asc, eq, gte } from "drizzle-orm";
-import type { Result } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
-import { tryDb } from "@zakki/data/db/error.ts";
+import { tryDbAsync } from "@zakki/data/db/error.ts";
 import type { Chunk, Entry } from "@zakki/data/db/schema.ts";
 import { chunks, entries } from "@zakki/data/db/schema.ts";
 
@@ -27,13 +27,20 @@ export function getOrCreateEntry(
   db: Db,
   date: string,
   now: string = new Date().toISOString(),
-): Result<Entry, DbError> {
-  return tryDb(() => {
-    const existing = db.select().from(entries).where(eq(entries.date, date)).get();
+): ResultAsync<Entry, DbError> {
+  return tryDbAsync(async () => {
+    const [existing] = await db.select().from(entries).where(eq(entries.date, date)).limit(1);
     if (existing !== undefined) {
       return existing;
     }
-    return db.insert(entries).values({ date, createdAt: now, updatedAt: now }).returning().get();
+    const [created] = await db
+      .insert(entries)
+      .values({ date, createdAt: now, updatedAt: now })
+      .returning();
+    if (created === undefined) {
+      throw new Error("entry の作成に失敗しました");
+    }
+    return created;
   });
 }
 
@@ -46,10 +53,10 @@ export function saveSnapshot(
   db: Db,
   snapshot: EntrySnapshot,
   now: string = new Date().toISOString(),
-): Result<SavedEntry, DbError> {
-  return tryDb(() =>
-    db.transaction((tx) => {
-      const entry = tx
+): ResultAsync<SavedEntry, DbError> {
+  return tryDbAsync(() =>
+    db.transaction(async (tx) => {
+      const [entry] = await tx
         .insert(entries)
         .values({
           date: snapshot.date,
@@ -62,11 +69,14 @@ export function saveSnapshot(
           target: entries.date,
           set: { raw: snapshot.raw, converted: snapshot.converted, updatedAt: now },
         })
-        .returning()
-        .get();
+        .returning();
+      if (entry === undefined) {
+        throw new Error("entry の保存に失敗しました");
+      }
 
-      const saved = snapshot.chunks.map((chunk, position) =>
-        tx
+      const saved: Chunk[] = [];
+      for (const [position, chunk] of snapshot.chunks.entries()) {
+        const [row] = await tx
           .insert(chunks)
           .values({
             entryId: entry.id,
@@ -79,31 +89,33 @@ export function saveSnapshot(
             target: [chunks.entryId, chunks.position],
             set: { content: chunk.content, updatedAt: now },
           })
-          .returning()
-          .get(),
-      );
+          .returning();
+        if (row === undefined) {
+          throw new Error("chunk の保存に失敗しました");
+        }
+        saved.push(row);
+      }
 
-      tx.delete(chunks)
-        .where(and(eq(chunks.entryId, entry.id), gte(chunks.position, snapshot.chunks.length)))
-        .run();
+      await tx
+        .delete(chunks)
+        .where(and(eq(chunks.entryId, entry.id), gte(chunks.position, snapshot.chunks.length)));
 
       return { entry, chunks: saved };
     }),
   );
 }
 
-export function getEntryWithChunks(db: Db, date: string): Result<SavedEntry | null, DbError> {
-  return tryDb(() => {
-    const entry = db.select().from(entries).where(eq(entries.date, date)).get();
+export function getEntryWithChunks(db: Db, date: string): ResultAsync<SavedEntry | null, DbError> {
+  return tryDbAsync(async () => {
+    const [entry] = await db.select().from(entries).where(eq(entries.date, date)).limit(1);
     if (entry === undefined) {
       return null;
     }
-    const list = db
+    const list = await db
       .select()
       .from(chunks)
       .where(eq(chunks.entryId, entry.id))
-      .orderBy(asc(chunks.position))
-      .all();
+      .orderBy(asc(chunks.position));
     return { entry, chunks: list };
   });
 }

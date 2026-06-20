@@ -5,13 +5,15 @@ import { localDate, persistEntry } from "./autosave.ts";
 let db: Db;
 
 describe("persistEntry（自動保存の入口）", () => {
-  test("converted からチャンクを再生成して保存する", () => {
-    db = createDb(":memory:");
-    const saved = persistEntry(db, {
-      date: "2026-06-12",
-      raw: "hare.Claude tohanashita.",
-      converted: "はれ。Claudeとはなした。",
-    })._unsafeUnwrap();
+  test("converted からチャンクを再生成して保存する", async () => {
+    db = await createDb(":memory:");
+    const saved = (
+      await persistEntry(db, {
+        date: "2026-06-12",
+        raw: "hare.Claude tohanashita.",
+        converted: "はれ。Claudeとはなした。",
+      })
+    )._unsafeUnwrap();
 
     expect(saved.chunks.map((c) => c.content)).toEqual(["はれ。", "Claudeとはなした。"]);
   });

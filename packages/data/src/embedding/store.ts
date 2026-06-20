@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
-import { tryDb } from "@zakki/data/db/error.ts";
+import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunks, embeddings } from "@zakki/data/db/schema.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
@@ -20,16 +20,15 @@ export async function syncChunkEmbeddings(
   db: Db,
   embedder: Embedder,
 ): Promise<Result<{ embedded: number }, DbError>> {
-  const stale = tryDb(() => {
-    const rows = db
+  const stale = await tryDbAsync(async () => {
+    const rows = await db
       .select({
         id: chunks.id,
         content: chunks.content,
         hash: embeddings.contentHash,
       })
       .from(chunks)
-      .leftJoin(embeddings, eq(chunks.id, embeddings.chunkId))
-      .all();
+      .leftJoin(embeddings, eq(chunks.id, embeddings.chunkId));
     return rows.filter((r) => r.hash !== contentHash(r.content));
   });
   if (stale.isErr()) {
@@ -47,16 +46,18 @@ export async function syncChunkEmbeddings(
   }
 
   const now = new Date().toISOString();
-  return tryDb(() => {
-    db.transaction((tx) => {
-      stale.value.forEach((row, i) => {
+  const staleRows = stale.value;
+  return tryDbAsync(async () => {
+    await db.transaction(async (tx) => {
+      for (const [i, row] of staleRows.entries()) {
         const vector = vectors[i];
         if (vector === undefined) {
-          return;
+          continue;
         }
         const hash = contentHash(row.content);
         const buf = vectorToBuffer(vector);
-        tx.insert(embeddings)
+        await tx
+          .insert(embeddings)
           .values({
             chunkId: row.id,
             contentHash: hash,
@@ -72,18 +73,17 @@ export async function syncChunkEmbeddings(
               vector: buf,
               updatedAt: now,
             },
-          })
-          .run();
-      });
+          });
+      }
     });
-    return { embedded: stale.value.length };
+    return { embedded: staleRows.length };
   });
 }
 
 /** chunk id → 正規化済みベクトル */
-export function loadVectors(db: Db): Result<Map<number, Float32Array>, DbError> {
-  return tryDb(() => {
-    const rows = db.select().from(embeddings).all();
+export function loadVectors(db: Db): ResultAsync<Map<number, Float32Array>, DbError> {
+  return tryDbAsync(async () => {
+    const rows = await db.select().from(embeddings);
     return new Map(rows.map((r) => [r.chunkId, bufferToVector(r.vector)]));
   });
 }

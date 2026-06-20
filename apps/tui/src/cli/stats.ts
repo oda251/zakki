@@ -13,9 +13,9 @@ import { createDb } from "@zakki/data/db/client.ts";
 import { dailySentiment } from "@zakki/data/entry/queries.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 
-const db = createDb();
-analyzeAll(db)._unsafeUnwrap();
-const rows = dailySentiment(db)._unsafeUnwrap();
+const db = await createDb();
+(await analyzeAll(db))._unsafeUnwrap();
+const rows = (await dailySentiment(db))._unsafeUnwrap();
 
 const lines = [
   "# 気分の推移",

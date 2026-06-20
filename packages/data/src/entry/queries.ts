@@ -1,9 +1,9 @@
 import { asc, eq, sql } from "drizzle-orm";
-import type { Result } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import { NEUTRAL_BAND } from "@zakki/core/analysis/sentiment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
-import { tryDb } from "@zakki/data/db/error.ts";
+import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunks, chunkTags, entries, links, tags } from "@zakki/data/db/schema.ts";
 
 /** 検索・エクスポート・関連表示で共有する「日付付きチャンク」ビュー */
@@ -17,8 +17,8 @@ export interface ChunkWithDate {
   polarity: number | null;
 }
 
-export function listChunksWithDate(db: Db): Result<ChunkWithDate[], DbError> {
-  return tryDb(() =>
+export function listChunksWithDate(db: Db): ResultAsync<ChunkWithDate[], DbError> {
+  return tryDbAsync(() =>
     db
       .select({
         id: chunks.id,
@@ -30,8 +30,7 @@ export function listChunksWithDate(db: Db): Result<ChunkWithDate[], DbError> {
       })
       .from(chunks)
       .innerJoin(entries, eq(chunks.entryId, entries.id))
-      .orderBy(asc(entries.date), asc(chunks.position))
-      .all(),
+      .orderBy(asc(entries.date), asc(chunks.position)),
   );
 }
 
@@ -43,7 +42,7 @@ export function getChunkContext(
   db: Db,
   chunkId: number,
   radius: number,
-): Result<ChunkWithDate[], DbError> {
+): ResultAsync<ChunkWithDate[], DbError> {
   return listChunksWithDate(db).map((all) => {
     const i = all.findIndex((c) => c.id === chunkId);
     return i === -1 ? [] : all.slice(Math.max(0, i - radius), i + radius + 1);
@@ -68,17 +67,16 @@ export function countTags(
 }
 
 /** chunk id → タグ名（スコア降順） */
-export function listTagsByChunk(db: Db): Result<Map<number, string[]>, DbError> {
-  return tryDb(() => {
-    const rows = db
+export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbError> {
+  return tryDbAsync(async () => {
+    const rows = await db
       .select({
         chunkId: chunkTags.chunkId,
         name: tags.name,
         score: chunkTags.score,
       })
       .from(chunkTags)
-      .innerJoin(tags, eq(chunkTags.tagId, tags.id))
-      .all();
+      .innerJoin(tags, eq(chunkTags.tagId, tags.id));
     rows.sort((a, b) => b.score - a.score);
     const result = new Map<number, string[]>();
     for (const row of rows) {
@@ -109,8 +107,8 @@ export interface DailySentiment {
  * 分類閾値は scoreSentiment と共有（NEUTRAL_BAND）。未算出（null）は average から除外し、
  * positive/negative/neutral にも数えない（scored が分母）。
  */
-export function dailySentiment(db: Db): Result<DailySentiment[], DbError> {
-  return tryDb(() =>
+export function dailySentiment(db: Db): ResultAsync<DailySentiment[], DbError> {
+  return tryDbAsync(() =>
     db
       .select({
         date: entries.date,
@@ -124,15 +122,14 @@ export function dailySentiment(db: Db): Result<DailySentiment[], DbError> {
       .from(chunks)
       .innerJoin(entries, eq(chunks.entryId, entries.id))
       .groupBy(entries.date)
-      .orderBy(asc(entries.date))
-      .all(),
+      .orderBy(asc(entries.date)),
   );
 }
 
 /** chunk id → 関連 chunk id（スコア降順、双方向） */
-export function listLinksByChunk(db: Db): Result<Map<number, number[]>, DbError> {
-  return tryDb(() => {
-    const rows = db.select().from(links).all();
+export function listLinksByChunk(db: Db): ResultAsync<Map<number, number[]>, DbError> {
+  return tryDbAsync(async () => {
+    const rows = await db.select().from(links);
     rows.sort((a, b) => b.score - a.score);
     const result = new Map<number, number[]>();
     const push = (from: number, to: number) => {

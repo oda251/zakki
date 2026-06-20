@@ -19,9 +19,9 @@ if (!process.stdout.isTTY) {
   process.exit(1);
 }
 
-const db = createDb();
+const db = await createDb();
 const date = localDate();
-const entry = getOrCreateEntry(db, date).match(
+const entry = await getOrCreateEntry(db, date).match(
   (e) => e,
   (e): never => {
     console.error(`zakki: DB エラー: ${e.message}`);
@@ -38,9 +38,9 @@ const engine = existsSync(ancoPath)
   ? new AncoEngine(ancoPath, existsSync(zenzPath) ? zenzPath : undefined)
   : identityEngine;
 
-const corrections = loadCorrections(db).unwrapOr(new Map());
+const corrections = await loadCorrections(db).unwrapOr(new Map());
 // 永続化済みの自動変換キャッシュをシードし、毎起動の全文再変換を避ける
-const conversionCache = loadConversionCache(db).unwrapOr(new Map());
+const conversionCache = await loadConversionCache(db).unwrapOr(new Map());
 
 // embedding は遅延ロード（初回 embed 時にモデル取得）のため起動をブロックしない。
 // ZAKKI_NO_EMBEDDING=1 で無効化できる（完全決定的動作）

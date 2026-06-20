@@ -18,9 +18,9 @@ import { countTags, listTagsByChunk } from "@zakki/data/entry/queries.ts";
 import { detectLlm } from "@zakki/tui/llm/client.ts";
 
 const apply = process.argv.includes("--apply");
-const db = createDb();
+const db = await createDb();
 
-const counts = countTags(listTagsByChunk(db)._unsafeUnwrap());
+const counts = countTags((await listTagsByChunk(db))._unsafeUnwrap());
 const tagCounts: TagWithCount[] = [...counts.entries()].map(([name, count]) => ({ name, count }));
 if (tagCounts.length < 2) {
   console.log("タグが少ないため提案はありません");
@@ -57,7 +57,7 @@ for (const p of proposals) {
   console.log(`${p.from} → ${p.to}（${p.reason}）`);
 }
 if (apply) {
-  const result = applyTagMerges(db, proposals)._unsafeUnwrap();
+  const result = (await applyTagMerges(db, proposals))._unsafeUnwrap();
   console.log(`適用しました: ${result.merged} 件`);
 } else {
   console.log("適用するには --apply を付けてください");

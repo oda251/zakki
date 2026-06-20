@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
-import type { Result } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
-import { tryDb } from "@zakki/data/db/error.ts";
+import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunkTags, tags } from "@zakki/data/db/schema.ts";
 import type { TextGenerator } from "@zakki/tui/llm/client.ts";
 
@@ -118,32 +118,29 @@ export async function filterProposalsWithLlm(
 export function applyTagMerges(
   db: Db,
   proposals: MergeProposal[],
-): Result<{ merged: number }, DbError> {
-  return tryDb(() => {
-    db.transaction((tx) => {
-      const rows = tx.select().from(tags).all();
+): ResultAsync<{ merged: number }, DbError> {
+  return tryDbAsync(async () => {
+    await db.transaction(async (tx) => {
+      const rows = await tx.select().from(tags);
       const idByName = new Map(rows.map((r) => [r.name, r.id]));
       for (const proposal of proposals) {
         const fromId = idByName.get(proposal.from);
         const toId = idByName.get(proposal.to);
         if (fromId === undefined || toId === undefined) continue;
         const existing = new Set(
-          tx
-            .select()
-            .from(chunkTags)
-            .where(eq(chunkTags.tagId, toId))
-            .all()
-            .map((r) => r.chunkId),
+          (await tx.select().from(chunkTags).where(eq(chunkTags.tagId, toId))).map(
+            (r) => r.chunkId,
+          ),
         );
-        for (const row of tx.select().from(chunkTags).where(eq(chunkTags.tagId, fromId)).all()) {
+        for (const row of await tx.select().from(chunkTags).where(eq(chunkTags.tagId, fromId))) {
           if (!existing.has(row.chunkId)) {
-            tx.insert(chunkTags)
-              .values({ chunkId: row.chunkId, tagId: toId, score: row.score })
-              .run();
+            await tx
+              .insert(chunkTags)
+              .values({ chunkId: row.chunkId, tagId: toId, score: row.score });
           }
         }
-        tx.delete(chunkTags).where(eq(chunkTags.tagId, fromId)).run();
-        tx.delete(tags).where(eq(tags.id, fromId)).run();
+        await tx.delete(chunkTags).where(eq(chunkTags.tagId, fromId));
+        await tx.delete(tags).where(eq(tags.id, fromId));
       }
     });
     return { merged: proposals.length };

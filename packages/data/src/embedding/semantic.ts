@@ -1,7 +1,7 @@
-import type { Result } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
-import { tryDb } from "@zakki/data/db/error.ts";
+import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { links } from "@zakki/data/db/schema.ts";
 import { cosine } from "./vector.ts";
 
@@ -20,17 +20,13 @@ export const SEMANTIC_LINK_MIN_SCORE = 0.88;
 export function addSemanticLinks(
   db: Db,
   vectors: ReadonlyMap<number, Float32Array>,
-): Result<{ added: number }, DbError> {
+): ResultAsync<{ added: number }, DbError> {
   const ids = [...vectors.keys()].toSorted((a, b) => a - b);
-  return tryDb(() => {
+  return tryDbAsync(async () => {
     let added = 0;
-    db.transaction((tx) => {
+    await db.transaction(async (tx) => {
       const existing = new Set(
-        tx
-          .select()
-          .from(links)
-          .all()
-          .map((r) => `${r.fromChunkId}:${r.toChunkId}`),
+        (await tx.select().from(links)).map((r) => `${r.fromChunkId}:${r.toChunkId}`),
       );
       for (let i = 0; i < ids.length; i++) {
         for (let j = i + 1; j < ids.length; j++) {
@@ -43,7 +39,7 @@ export function addSemanticLinks(
           if (va === undefined || vb === undefined) continue;
           const score = cosine(va, vb);
           if (score < SEMANTIC_LINK_MIN_SCORE) continue;
-          tx.insert(links).values({ fromChunkId: a, toChunkId: b, score, origin: "auto" }).run();
+          await tx.insert(links).values({ fromChunkId: a, toChunkId: b, score, origin: "auto" });
           added += 1;
         }
       }

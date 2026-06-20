@@ -22,17 +22,19 @@ const fakeEmbedder: Embedder = {
   },
 };
 
-function seed(contents: string[]): void {
-  saveSnapshot(db, {
-    date: "2026-06-13",
-    raw: "",
-    converted: contents.join(""),
-    chunks: contents.map((content) => ({ content })),
-  })._unsafeUnwrap();
+async function seed(contents: string[]): Promise<void> {
+  (
+    await saveSnapshot(db, {
+      date: "2026-06-13",
+      raw: "",
+      converted: contents.join(""),
+      chunks: contents.map((content) => ({ content })),
+    })
+  )._unsafeUnwrap();
 }
 
-beforeEach(() => {
-  db = createDb(":memory:");
+beforeEach(async () => {
+  db = await createDb(":memory:");
   embedCalls = [];
 });
 
@@ -45,7 +47,7 @@ describe("ベクトル直列化", () => {
 
 describe("syncChunkEmbeddings", () => {
   test("未計算チャンクだけを埋め込み、再実行では何もしない", async () => {
-    seed(["あの話。", "別の話。"]);
+    await seed(["あの話。", "別の話。"]);
     const first = (await syncChunkEmbeddings(db, fakeEmbedder))._unsafeUnwrap();
     expect(first.embedded).toBe(2);
 
@@ -55,9 +57,9 @@ describe("syncChunkEmbeddings", () => {
   });
 
   test("内容が変わったチャンクは再計算する", async () => {
-    seed(["あの話。"]);
+    await seed(["あの話。"]);
     (await syncChunkEmbeddings(db, fakeEmbedder))._unsafeUnwrap();
-    seed(["違う話。"]);
+    await seed(["違う話。"]);
     const resync = (await syncChunkEmbeddings(db, fakeEmbedder))._unsafeUnwrap();
     expect(resync.embedded).toBe(1);
   });
@@ -65,14 +67,14 @@ describe("syncChunkEmbeddings", () => {
 
 describe("addSemanticLinks / nearestChunks", () => {
   test("近傍ペアのみリンクし、既存ペアは増やさない", async () => {
-    seed(["あれ。", "あの件。", "別件。"]);
+    await seed(["あれ。", "あの件。", "別件。"]);
     (await syncChunkEmbeddings(db, fakeEmbedder))._unsafeUnwrap();
-    const vectors = loadVectors(db)._unsafeUnwrap();
+    const vectors = (await loadVectors(db))._unsafeUnwrap();
 
     // chunk1,2 は同方向（cos=1）、chunk3 は直交（cos=0）
-    const added = addSemanticLinks(db, vectors)._unsafeUnwrap();
+    const added = (await addSemanticLinks(db, vectors))._unsafeUnwrap();
     expect(added.added).toBe(1);
-    expect(addSemanticLinks(db, vectors)._unsafeUnwrap().added).toBe(0);
+    expect((await addSemanticLinks(db, vectors))._unsafeUnwrap().added).toBe(0);
   });
 
   test("nearestChunks はスコア降順・自己含む近傍を返す", () => {

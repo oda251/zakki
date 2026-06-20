@@ -5,8 +5,8 @@ import { countTags, getChunkContext, listChunksWithDate } from "./queries.ts";
 
 let db: Db;
 
-beforeEach(() => {
-  db = createDb(":memory:");
+beforeEach(async () => {
+  db = await createDb(":memory:");
 });
 
 describe("countTags", () => {
@@ -38,36 +38,36 @@ describe("countTags", () => {
 });
 
 describe("getChunkContext", () => {
-  beforeEach(() => {
-    saveSnapshot(db, {
-      date: "2026-06-13",
-      raw: "",
-      converted: "",
-      chunks: [{ content: "一" }, { content: "二" }, { content: "三" }, { content: "四" }],
-    })._unsafeUnwrap();
+  beforeEach(async () => {
+    (
+      await saveSnapshot(db, {
+        date: "2026-06-13",
+        raw: "",
+        converted: "",
+        chunks: [{ content: "一" }, { content: "二" }, { content: "三" }, { content: "四" }],
+      })
+    )._unsafeUnwrap();
   });
 
-  const idOf = (content: string): number => {
-    const chunk = listChunksWithDate(db)
-      ._unsafeUnwrap()
-      .find((c) => c.content === content);
+  const idOf = async (content: string): Promise<number> => {
+    const chunk = (await listChunksWithDate(db))._unsafeUnwrap().find((c) => c.content === content);
     if (chunk === undefined) {
       throw new Error(`setup: ${content} not found`);
     }
     return chunk.id;
   };
 
-  test("当該チャンクとその前後（±radius）を返す", () => {
-    const ctx = getChunkContext(db, idOf("二"), 1)._unsafeUnwrap();
+  test("当該チャンクとその前後（±radius）を返す", async () => {
+    const ctx = (await getChunkContext(db, await idOf("二"), 1))._unsafeUnwrap();
     expect(ctx.map((c) => c.content)).toEqual(["一", "二", "三"]);
   });
 
-  test("先頭は前が無くても範囲内で返す", () => {
-    const ctx = getChunkContext(db, idOf("一"), 1)._unsafeUnwrap();
+  test("先頭は前が無くても範囲内で返す", async () => {
+    const ctx = (await getChunkContext(db, await idOf("一"), 1))._unsafeUnwrap();
     expect(ctx.map((c) => c.content)).toEqual(["一", "二"]);
   });
 
-  test("存在しない id は空", () => {
-    expect(getChunkContext(db, 9999, 1)._unsafeUnwrap()).toEqual([]);
+  test("存在しない id は空", async () => {
+    expect((await getChunkContext(db, 9999, 1))._unsafeUnwrap()).toEqual([]);
   });
 });

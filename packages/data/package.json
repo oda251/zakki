@@ -7,6 +7,7 @@
     "./*": "./src/*"
   },
   "dependencies": {
+    "@libsql/client": "^0.15.0",
     "@zakki/core": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "neverthrow": "^8.2.0"

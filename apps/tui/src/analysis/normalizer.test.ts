@@ -74,27 +74,29 @@ describe("filterProposalsWithLlm", () => {
 
 describe("applyTagMerges", () => {
   let db: Db;
-  beforeEach(() => {
-    db = createDb(":memory:");
+  beforeEach(async () => {
+    db = await createDb(":memory:");
   });
 
-  test("chunk_tags を代表タグへ付け替え、統合元タグを消す", () => {
-    saveSnapshot(db, {
-      date: "2026-06-13",
-      raw: "",
-      converted: "",
-      chunks: [{ content: "変換辞書と学習辞書の話。" }, { content: "変換器の辞書の続き。" }],
-    })._unsafeUnwrap();
-    analyzeAll(db)._unsafeUnwrap();
+  test("chunk_tags を代表タグへ付け替え、統合元タグを消す", async () => {
+    (
+      await saveSnapshot(db, {
+        date: "2026-06-13",
+        raw: "",
+        converted: "",
+        chunks: [{ content: "変換辞書と学習辞書の話。" }, { content: "変換器の辞書の続き。" }],
+      })
+    )._unsafeUnwrap();
+    (await analyzeAll(db))._unsafeUnwrap();
 
-    const before = listTagsByChunk(db)._unsafeUnwrap();
+    const before = (await listTagsByChunk(db))._unsafeUnwrap();
     const names = new Set([...before.values()].flat());
     expect(names.has("辞書")).toBe(true);
 
     // 「変換」を「辞書」に統合する仮の提案を適用
-    applyTagMerges(db, [{ from: "変換", to: "辞書", reason: "embedding" }])._unsafeUnwrap();
+    (await applyTagMerges(db, [{ from: "変換", to: "辞書", reason: "embedding" }]))._unsafeUnwrap();
 
-    const after = new Set([...listTagsByChunk(db)._unsafeUnwrap().values()].flat());
+    const after = new Set([...(await listTagsByChunk(db))._unsafeUnwrap().values()].flat());
     expect(after.has("変換")).toBe(false);
     expect(after.has("辞書")).toBe(true);
   });

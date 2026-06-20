@@ -1,4 +1,4 @@
-import { Result } from "neverthrow";
+import { ResultAsync } from "neverthrow";
 import { errorMessage } from "@zakki/core/util/error.ts";
 
 export interface DbError {
@@ -13,7 +13,7 @@ const toDbError = (cause: unknown): DbError => ({
   cause,
 });
 
-/** 同期 DB 操作を Result に包む共通ヘルパー */
-export function tryDb<T>(fn: () => T): Result<T, DbError> {
-  return Result.fromThrowable(fn, toDbError)();
+/** 非同期 DB 操作を ResultAsync に包む共通ヘルパー（libSQL は async） */
+export function tryDbAsync<T>(fn: () => Promise<T>): ResultAsync<T, DbError> {
+  return ResultAsync.fromPromise(fn(), toDbError);
 }

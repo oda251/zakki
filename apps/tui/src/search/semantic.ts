@@ -34,6 +34,6 @@ export async function searchSemantic(
         const chunk = byId.get(n.chunkId);
         return chunk === undefined ? [] : [chunk];
       }),
-    () => [],
+    () => [] as ChunkWithDate[],
   );
 }

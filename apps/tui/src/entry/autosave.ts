@@ -1,4 +1,4 @@
-import type { Result } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import { chunkText } from "@zakki/core/chunk/chunker.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
@@ -21,6 +21,6 @@ export function localDate(d: Date = new Date()): string {
 export function persistEntry(
   db: Db,
   input: { date: string; raw: string; converted: string },
-): Result<SavedEntry, DbError> {
+): ResultAsync<SavedEntry, DbError> {
   return saveSnapshot(db, { ...input, chunks: chunkText(input.converted) });
 }

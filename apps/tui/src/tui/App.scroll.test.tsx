@@ -11,7 +11,7 @@ import { App } from "./App.tsx";
  * captureCharFrame の文字列に出る/出ないを assert する。
  */
 async function setup(rawChunks: string[], width = 20, height = 6) {
-  const db = createDb(":memory:");
+  const db = await createDb(":memory:");
   const initialRaw = rawChunks.map((c) => wrapPaste(c)).join("");
   const t = await testRender(
     <App

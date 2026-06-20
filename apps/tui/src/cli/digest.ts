@@ -30,11 +30,9 @@ if (week) {
 }
 const period = week ? `${[...dates].toSorted()[0]} 〜 ${endDate}` : endDate;
 
-const db = createDb();
-const chunks = listChunksWithDate(db)
-  ._unsafeUnwrap()
-  .filter((c) => dates.has(c.date));
-const tagsByChunk = listTagsByChunk(db)._unsafeUnwrap();
+const db = await createDb();
+const chunks = (await listChunksWithDate(db))._unsafeUnwrap().filter((c) => dates.has(c.date));
+const tagsByChunk = (await listTagsByChunk(db))._unsafeUnwrap();
 const tagCounts = countTags(
   tagsByChunk,
   chunks.map((c) => c.id),
