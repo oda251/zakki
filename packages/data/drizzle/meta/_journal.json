@@ -50,6 +50,13 @@
       "when": 1781371185032,
       "tag": "0006_drop_chunk_title",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1781979857565,
+      "tag": "0007_cynical_power_man",
+      "breakpoints": true
     }
   ]
 }

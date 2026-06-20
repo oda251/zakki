@@ -7,6 +7,8 @@ import { loadCorrections } from "@zakki/tui/conversion/corrections.ts";
 import { identityEngine } from "@zakki/tui/conversion/engine.ts";
 import { createRuriEmbedder } from "@zakki/tui/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
+import { initCrypto } from "@zakki/data/crypto/init.ts";
+import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { localDate } from "@zakki/tui/entry/autosave.ts";
 import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
@@ -24,6 +26,13 @@ if (!process.stdout.isTTY) {
 // 開く処理はオフライン安全（ネットワーク I/O なし）。
 const identity = resolveLocalIdentity();
 const { db, sync } = await openDb(identity);
+// E2E 暗号は Phase 5 ではオプトイン（ZAKKI_ENCRYPTION=1）。Phase 6 でアンロック UI
+// による正式機能にする。有効時は keyfile の KEK で DEK 封筒を開き（無ければ生成）、
+// 既存平文があればその場で暗号化してから（initCrypto 内）データアクセスに入る。
+if (process.env["ZAKKI_ENCRYPTION"] === "1") {
+  const kek = await loadOrCreateKeyfile();
+  await initCrypto(db, kek);
+}
 // 起動時の同期はベストエフォート。オフラインや未設定は正常系なので、失敗しても
 // 起動は続行する（ローカルレプリカでそのまま動く）。
 await sync();

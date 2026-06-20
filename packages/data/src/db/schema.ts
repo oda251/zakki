@@ -59,10 +59,36 @@ export const conversionCache = sqliteTable("conversion_cache", {
   updatedAt: text("updated_at").notNull(),
 });
 
-/** 自動付与されるタグ（docs/CONCEPT.md §3）。名前で一意 */
-export const tags = sqliteTable("tags", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
+/**
+ * 自動付与されるタグ（docs/CONCEPT.md §3）。
+ *
+ * E2E 暗号（Phase 5b）対応のため、一意制約は平文 `name` ではなく
+ * `name_fingerprint`（ブラインドインデックス）に置く。暗号 OFF では
+ * fingerprint = 平文名（重複排除の挙動は従来どおり）。暗号 ON では
+ * `name` = 暗号文 base64、`name_fingerprint` = 鍵付きハッシュ。
+ */
+export const tags = sqliteTable(
+  "tags",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    /** ブラインドインデックス。暗号 OFF は平文名、ON は fingerprint(name) */
+    nameFingerprint: text("name_fingerprint").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("tags_name_fingerprint_unique").on(t.nameFingerprint)],
+);
+
+/**
+ * E2E 暗号のメタデータ（Phase 5b）。単一行（id=1）で、封筒（wrapped DEK）を保管する。
+ * `wrapped_dek` は KEK で AEAD した `nonce || ciphertext`。`kek_salt` は Phase 6 の
+ * パスフレーズ KDF 用（キーファイル KEK では null）。
+ */
+export const cryptoMeta = sqliteTable("crypto_meta", {
+  id: integer("id").primaryKey(),
+  version: integer("version").notNull(),
+  wrappedDek: blob("wrapped_dek", { mode: "buffer" }).notNull(),
+  kekSalt: blob("kek_salt", { mode: "buffer" }),
   createdAt: text("created_at").notNull(),
 });
 

@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
+import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunks, chunkTags, links, tags } from "@zakki/data/db/schema.ts";
@@ -23,8 +24,14 @@ const nounCache = new Map<string, string[]>();
  * （デバウンスされたバックグラウンド処理）で呼ぶ。
  */
 export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
+  const crypto = getCrypto(db);
   return tryDbAsync(async () => {
-    const allChunks = await db.select({ id: chunks.id, content: chunks.content }).from(chunks);
+    const rawChunks = await db.select({ id: chunks.id, content: chunks.content }).from(chunks);
+    // 解析（名詞抽出・極性）は平文に対して行う。暗号 ON は復号した content を使う。
+    const allChunks = rawChunks.map((c) => ({
+      id: c.id,
+      content: crypto === undefined ? c.content : crypto.decString(c.content, "chunk.content"),
+    }));
 
     const nounsByChunk = new Map<number, string[]>();
     for (const chunk of allChunks) {
@@ -42,10 +49,21 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
 
     await db.transaction(async (tx) => {
       const names = new Set([...tagsByChunk.values()].flat().map((t) => t.name));
+      // タグは平文名で一意化するが、格納は name=暗号文 / name_fingerprint=ブラインド
+      // インデックス。暗号 OFF は fingerprint=平文名で従来どおりの重複排除になる。
+      const fpOf = (name: string) => (crypto === undefined ? name : crypto.fingerprint(name));
       for (const name of names) {
-        await tx.insert(tags).values({ name, createdAt: now }).onConflictDoNothing();
+        const stored = crypto === undefined ? name : crypto.encString(name, "tag.name");
+        await tx
+          .insert(tags)
+          .values({ name: stored, nameFingerprint: fpOf(name), createdAt: now })
+          .onConflictDoNothing({ target: tags.nameFingerprint });
       }
-      const idByName = new Map((await tx.select().from(tags)).map((r) => [r.name, r.id]));
+      // 平文タグ名 → id を引けるよう fingerprint で突き合わせる
+      const idByFingerprint = new Map(
+        (await tx.select().from(tags)).map((r) => [r.nameFingerprint, r.id]),
+      );
+      const idByName = new Map([...names].map((name) => [name, idByFingerprint.get(fpOf(name))]));
 
       await tx.delete(chunkTags);
       for (const [chunkId, tagList] of tagsByChunk) {

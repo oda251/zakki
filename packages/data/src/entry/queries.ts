@@ -2,6 +2,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import { NEUTRAL_BAND } from "@zakki/core/analysis/sentiment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
+import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunks, chunkTags, entries, links, tags } from "@zakki/data/db/schema.ts";
@@ -18,8 +19,9 @@ export interface ChunkWithDate {
 }
 
 export function listChunksWithDate(db: Db): ResultAsync<ChunkWithDate[], DbError> {
-  return tryDbAsync(() =>
-    db
+  const crypto = getCrypto(db);
+  return tryDbAsync(async () => {
+    const rows = await db
       .select({
         id: chunks.id,
         entryId: chunks.entryId,
@@ -30,8 +32,10 @@ export function listChunksWithDate(db: Db): ResultAsync<ChunkWithDate[], DbError
       })
       .from(chunks)
       .innerJoin(entries, eq(chunks.entryId, entries.id))
-      .orderBy(asc(entries.date), asc(chunks.position)),
-  );
+      .orderBy(asc(entries.date), asc(chunks.position));
+    if (crypto === undefined) return rows;
+    return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
+  });
 }
 
 /**
@@ -68,6 +72,7 @@ export function countTags(
 
 /** chunk id → タグ名（スコア降順） */
 export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbError> {
+  const crypto = getCrypto(db);
   return tryDbAsync(async () => {
     const rows = await db
       .select({
@@ -80,8 +85,9 @@ export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbEr
     rows.sort((a, b) => b.score - a.score);
     const result = new Map<number, string[]>();
     for (const row of rows) {
+      const name = crypto === undefined ? row.name : crypto.decString(row.name, "tag.name");
       const list = result.get(row.chunkId) ?? [];
-      list.push(row.name);
+      list.push(name);
       result.set(row.chunkId, list);
     }
     return result;

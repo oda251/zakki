@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
+import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunkTags, tags } from "@zakki/data/db/schema.ts";
@@ -119,13 +120,19 @@ export function applyTagMerges(
   db: Db,
   proposals: MergeProposal[],
 ): ResultAsync<{ merged: number }, DbError> {
+  const crypto = getCrypto(db);
   return tryDbAsync(async () => {
     await db.transaction(async (tx) => {
       const rows = await tx.select().from(tags);
-      const idByName = new Map(rows.map((r) => [r.name, r.id]));
+      // proposals は平文タグ名。暗号 ON では r.name が暗号文なので、平文名 → id は
+      // fingerprint（= ブラインドインデックス）で突き合わせる。OFF は fingerprint=平文名。
+      const idByName = new Map(
+        rows.map((r) => [crypto === undefined ? r.name : r.nameFingerprint, r.id]),
+      );
+      const keyOf = (name: string) => (crypto === undefined ? name : crypto.fingerprint(name));
       for (const proposal of proposals) {
-        const fromId = idByName.get(proposal.from);
-        const toId = idByName.get(proposal.to);
+        const fromId = idByName.get(keyOf(proposal.from));
+        const toId = idByName.get(keyOf(proposal.to));
         if (fromId === undefined || toId === undefined) continue;
         const existing = new Set(
           (await tx.select().from(chunkTags).where(eq(chunkTags.tagId, toId))).map(
