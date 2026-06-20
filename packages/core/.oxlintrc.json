@@ -1,0 +1,69 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["../*", "../**"],
+            "message": "Use the @zakki/* path alias instead of parent-relative imports"
+          },
+          {
+            "group": [
+              "node:*",
+              "bun:*",
+              "@opentui/*",
+              "drizzle-orm",
+              "drizzle-orm/*",
+              "@huggingface/*",
+              "lindera-wasm-nodejs-ipadic"
+            ],
+            "message": "@zakki/core must stay runtime-agnostic: no node/bun/opentui/drizzle/huggingface/lindera imports"
+          }
+        ]
+      }
+    ],
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "Bun",
+        "message": "@zakki/core must stay runtime-agnostic: Bun is not allowed"
+      },
+      {
+        "name": "Buffer",
+        "message": "@zakki/core must stay runtime-agnostic: Buffer is not allowed"
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["../*", "../**"],
+                "message": "Use the @zakki/* path alias instead of parent-relative imports"
+              },
+              {
+                "group": [
+                  "node:*",
+                  "@opentui/*",
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "@huggingface/*",
+                  "lindera-wasm-nodejs-ipadic"
+                ],
+                "message": "@zakki/core must stay runtime-agnostic: no node/opentui/drizzle/huggingface/lindera imports"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

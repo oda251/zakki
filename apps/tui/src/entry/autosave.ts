@@ -1,0 +1,26 @@
+import type { Result } from "neverthrow";
+import { chunkText } from "@zakki/core/chunk/chunker.ts";
+import type { Db } from "@zakki/data/db/client.ts";
+import type { DbError } from "@zakki/data/db/error.ts";
+import type { SavedEntry } from "@zakki/data/entry/repository.ts";
+import { saveSnapshot } from "@zakki/data/entry/repository.ts";
+
+/** ローカルタイムゾーンの YYYY-MM-DD */
+export function localDate(d: Date = new Date()): string {
+  const y = String(d.getFullYear()).padStart(4, "0");
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * 自動保存の入口。converted を句点・改行の決定的区切りでチャンク化して永続化する
+ * （記録モデル, docs/RECORDS.md）。話題グルーピング（二次区切り）は廃止。
+ * デバウンスは呼び出し側（UI 層）の責務。
+ */
+export function persistEntry(
+  db: Db,
+  input: { date: string; raw: string; converted: string },
+): Result<SavedEntry, DbError> {
+  return saveSnapshot(db, { ...input, chunks: chunkText(input.converted) });
+}

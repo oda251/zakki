@@ -1,0 +1,14 @@
+{
+  "name": "@zakki/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "minisearch": "^7.2.0",
+    "negaposi": "^1.3.3",
+    "neverthrow": "^8.2.0"
+  }
+}

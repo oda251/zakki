@@ -1,0 +1,6 @@
+[install]
+# monorepo のワークスペース間 import（@zakki/*）を node_modules 経由でも
+# 解決できるよう、isolated linker で各パッケージへ symlink を張る。
+# これがないと Bun ランタイムは解決できてもエディタの TS Language Server や
+# 単体 tsc / oxlint がパッケージ間 import を解決できない。
+linker = "isolated"

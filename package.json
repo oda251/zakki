@@ -2,33 +2,23 @@
   "name": "zakki",
   "version": "0.0.0",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "type": "module",
   "scripts": {
-    "start": "bun src/index.tsx",
-    "digest": "bun src/cli/digest.ts",
-    "stats": "bun src/cli/stats.ts",
-    "tags": "bun src/cli/normalize-tags.ts",
+    "start": "bun apps/tui/src/index.tsx",
+    "digest": "bun apps/tui/src/cli/digest.ts",
+    "stats": "bun apps/tui/src/cli/stats.ts",
+    "tags": "bun apps/tui/src/cli/normalize-tags.ts",
     "test": "bun test",
     "lint": "oxlint --type-check --type-aware",
     "fmt": "oxfmt",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
-    "@opentui/core": "^0.4.1",
-    "@opentui/react": "^0.4.1",
-    "drizzle-orm": "^0.45.2",
-    "lindera-wasm-nodejs-ipadic": "^2.0.0",
-    "minisearch": "^7.2.0",
-    "negaposi": "^1.3.3",
-    "neverthrow": "^8.2.0",
-    "react": "^19.2.7",
-    "valibot": "^1.4.1"
-  },
   "devDependencies": {
     "@types/bun": "^1.3.14",
-    "@types/react": "^19.2.17",
-    "drizzle-kit": "^0.31.10",
     "lefthook": "^2.1.9",
     "oxfmt": "^0.54.0",
     "oxlint": "^1.69.0",

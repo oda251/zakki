@@ -20,7 +20,7 @@
         "patterns": [
           {
             "group": ["../*", "../**"],
-            "message": "Use the @/ path alias instead of parent-relative imports"
+            "message": "Use the @zakki/* path alias instead of parent-relative imports"
           }
         ]
       }

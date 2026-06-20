@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    "paths": {
+      "@zakki/core/*": ["./packages/core/src/*"],
+      "@zakki/data/*": ["./packages/data/src/*"],
+      "@zakki/tui/*": ["./apps/tui/src/*"]
+    }
+  }
+}
