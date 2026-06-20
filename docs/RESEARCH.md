@@ -124,6 +124,97 @@ Mozc の DX 再評価: `sudo apt install emacs-mozc-bin` のみで `mozc_emacs_h
 
 実装方針（2026-06-13 確定）: LLM クライアントは特定ランタイムの独自 REST ではなく **OpenAI 互換 API（`/v1/chat/completions` + `/v1/models`）** を喋る。これにより LM Studio（:1234、[公式ドキュメント](https://lmstudio.ai/docs/app/api/endpoints/openai)）・Ollama（:11434、[OpenAI 互換ドキュメント](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx)）・llama.cpp server・LiteLLM 等を無改修で差し替えられる。LiteLLM（Python の OpenAI 互換ゲートウェイ）は zakki に組み込まず、使いたい場合は前段に立てる構成にできる（本体は Bun/TS・依存追加なしを維持）。
 
+## 6. クラウド同期 / マルチユーザ（2026-06-18 調査・設計決定）
+
+現状は `bun:sqlite`（同期）＋ローカルファイル＋総当たりコサイン（[`src/db/schema.ts`](../src/db/schema.ts) §embeddings）。「ローカルファーストのまま複数端末で同期したい」要件を受けて方式を調査。
+
+### 候補比較（無料枠は 2026-06 時点の一次情報）
+
+| 方式                          | ベクトル                 | ローカル維持        | 無料枠（読/書/容量）                                                                        | 所見                                                                                                                                                                                                            |
+| ----------------------------- | ------------------------ | ------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 現状維持（SQLite + 総当たり） | 総当たりコサイン         | ✅                  | —                                                                                           | ~数万件まで十分                                                                                                                                                                                                 |
+| sqlite-vec                    | ANN（拡張）              | ✅                  | —                                                                                           | `bun:sqlite` の `loadExtension` で同期のまま。`§2` で一度見送り                                                                                                                                                 |
+| **Turso / libSQL（採用）**    | ネイティブ ANN           | ✅ embedded replica | 500M/月・10M/月・5GB・100 DB・3GB sync（[pricing](https://turso.tech/pricing)）             | SQLite フォーク・後方互換。embedded replica で「読み・ベクトルはローカル、書きはクラウド正本へ同期」（[docs](https://docs.turso.tech/features/embedded-replicas/introduction)）。多 DB 前提＝DB-per-user に最適 |
+| Cloudflare D1 + Vectorize     | Vectorize 必須（別製品） | ❌ クラウド         | 5M/日・100k/日・5GB（[D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/)） | D1 単体はベクトル/ sqlite-vec 非対応。embedded replica が無く local-first 不適                                                                                                                                  |
+
+**結論: Turso / libSQL embedded replica を採用。** 無料枠最大（D1 比で読み書き約 3 倍・月次）かつ唯一ローカル replica を持てる。移行動機は「クラウド同期」であり、ベクトルはおまけ（下記の暗号化により native ANN は使わず総当たり継続）。
+
+### 設計決定
+
+1. **同期**: 書き込みはローカル優先（offline 書き込み）、`sync()` は**起動時＋終了時**（既存 `exit()` に追加）。打鍵 300ms autosave をリモート往復させない。primary を正本とし競合は後勝ち（単一ユーザ前提で低リスク）。
+2. **暗号化（E2E）**: **アプリ層 AEAD**（XChaCha20-Poly1305 等、行ごとにランダム nonce）で content 系（`entries.raw`/`converted`、`chunks.content`）＋ `tags` ＋ embeddings ベクトルを暗号化。クラウドは暗号文のみ。復号はメモリ内だけ（検索 index は既に in-memory `buildIndex`、ベクトルも `loadVectors` でメモリ展開＝既存パターンと整合）。
+   - 暗号化すると native vector index（`libsql_vector_idx`）は平文前提で使えない → **ベクトルは総当たりコサイン継続**（個人規模で十分）。
+
+   **鍵管理＝封筒方式（DEK＋複数封筒）**。鍵は「誰が持つか」を E2E（自分だけ）に決定。サーバ管理鍵（OAuth で解錠）は非 E2E になるため不採用。
+   - **DEK（Data Encryption Key, ランダム32B）が実データを暗号化**。DEK 本体はサーバに出さない。
+   - DEK を**複数の開け方で wrap した封筒（wrapped DEK = 暗号文）を Turso DB に保存**（salt/KDF パラメータと共に。いずれも秘密でない）。封筒は後から足し引きでき、データの再暗号化は不要。
+     - **主: パスキー + WebAuthn PRF**（パスワードレス・スマホ単体で会員登録完結。認証器から決定的 32B を取り出し KEK にする。Apple/Google 同期パスキーで多端末、サーバはシークレットを見ない＝E2E）。出典: [Corbado](https://www.corbado.com/blog/passkeys-prf-webauthn)、[Bitwarden](https://bitwarden.com/blog/prf-webauthn-and-its-role-in-passkeys/)。
+     - **必須: リカバリコード封筒**（高エントロピー・オフライン保管。E2E は運営リセットが無いため）。
+     - **TUI/端末: パスフレーズ封筒（Argon2id）** または端末ペアリングで DEK 受け渡し。WebAuthn はブラウザ/プラットフォーム前提で素の TUI から直接叩けないため、パスキー会員登録はスマホ/Web クライアント側の機能とする。パスワード派を残すなら OPAQUE（aPAKE, RFC 9807, [Cloudflare](https://blog.cloudflare.com/opaque-oblivious-passwords/)）でサーバにパスワードを渡さず堅くできる。
+   - **すべての開け方を失う＝復号不能**（真の E2E のトレードオフ）。リカバリコード保管を初期フローで強制する。
+
+3. **ユーザ概念 / 認証**: 「将来マルチユーザに開くかも」だが**実装は後回し**。データ分離は **DB-per-user**（ユーザごとに別 Turso DB、各 DB をそのユーザ鍵で暗号化）。
+   - **ジャーナル DB には user 概念を持たない**（`users` テーブルも `user_id` 列も作らない）。user＝「どの DB に繋ぎ・どの鍵で開くか」。
+   - 認証は薄い `Identity` インターフェース（`userId` / `tursoUrl` / `tursoToken` / `encKey`）に隔離。今は `LocalIdentity`（ローカル設定＋パスフレーズ）の1実装のみ。将来 `RemoteIdentity`（OAuth→自前バックエンドが scoped Turso トークンを発行）を**追加するだけ**で DB/暗号/sync 層は無改修。
+   - 本物の「users 台帳」は将来のコントロールプレーン DB（バックエンド所有）にだけ現れる。account→{dbUrl, token, メタ} の対応のみで、本文・鍵は持たない（E2E）。
+   - CLI の OAuth は device flow（RFC 8628）/ PKCE で可能だが、scoped トークン発行のためのバックエンド運用が本コスト。OAuth は ID を解決するだけで暗号鍵は別途パスフレーズが必要（E2E のため）。
+
+### 実装観点（移行時）
+
+- **最大コスト＝DB 層の sync→async 化**: `@libsql/client` / `drizzle-orm/libsql` は Promise ベース。`queries.ts` / `store.ts` / `repository.ts` / `autosave.ts` と Result 層が async に。
+- **起動を sync に依存させない**: オフライン／sync 失敗でも既存ローカル replica で起動継続。
+- マイグレーションは primary に対して実行（drizzle-kit libsql）、replica へは sync で伝播。テストは libSQL のローカル/in-memory へ切替。単一クライアント経由で扱う（同期中に同ファイルを別途開かない＝破損対策）。
+
+## 7. リポジトリ構成・バックエンド（2026-06-21 設計決定）
+
+将来の Web クライアント／バックエンドと TUI で共通ロジックを再利用するため **monorepo 化（Bun workspaces）**。Web は今後の拡張で現時点は対象外、構造だけ先に用意する。
+
+### レイアウト
+
+```
+apps/
+  tui/          現 TUI（opentui）。今すぐ動かす本体
+  api/          将来: Cloudflare Worker + Hono（コントロールプレーン）
+  web/          将来
+packages/
+  core/         純ドメイン・ランタイム非依存。TUI/Worker/Web で共有
+  data/         drizzle schema + queries/repository（libsql 抽象越し）
+```
+
+### pure / adapter 境界（現コードのスキャン実測）
+
+- **core 候補（純・移せる）**: `chunk`、`entry/records`、`romaji`、`conversion/segment`、`analysis/sentiment`、`search/index`(minisearch)、`embedding/semantic`(cosine)
+- **adapter（プラットフォーム結合・core に入れない）**: `db/client`(bun:sqlite,node:fs)、`conversion/anco`(Bun.spawn,fs)、`embedding/embedder`(transformers)、`export/obsidian`(fs)、`util/paths`(node:os)、`tui/*`(opentui)
+
+### 重要制約: `packages/core` はランタイム非依存
+
+Cloudflare Workers は Node/Bun と別ランタイム（Web 標準 API のみ、`node:fs`/`Bun.spawn` 不可）。core を Worker・Web・TUI で共有するため、**core 内で `node:*`/`Bun.*` を禁止し、Web 標準（fetch / Web Crypto）＋ wasm のみ**に限定する。
+
+- 暗号（Argon2id / libsodium）は **Workers で動く wasm ビルド**を選ぶ。
+- `anco` 変換（subprocess）は Workers/ブラウザ不可 ＝ **TUI/サーバ専用 adapter** に隔離（Web は将来バックエンド or wasm 経由）。
+
+### バックエンド（将来のコントロールプレーン）
+
+- スタック: **Cloudflare Workers + Hono + Turso**（`@libsql/client` は HTTP で Worker 動作）。
+- 役割（薄く・**E2E 維持**）: パスキー/OAuth 検証、ユーザごと Turso DB のプロビジョニング、scoped Turso トークン発行、`account→{dbUrl, …}` 台帳。
+- **持たない**: DEK・本文・暗号鍵（wrapped DEK はユーザ自身の Turso DB に置くためバックエンドは復号不能）。
+- `packages/core`（＋ schema）を再利用。
+
+### インフラ（IaC: Pulumi）
+
+インフラは **Pulumi（TypeScript）**で管理。`infra/` をリポジトリ直下の独立プロジェクトに置く（実行時コードでないので `apps/`/`packages/` と分離）。
+
+- **Cloudflare**: 公式プロバイダ `pulumi/pulumi-cloudflare`（Worker・Routes・DNS・secrets。[Cloudflare の Pulumi ガイド](https://developers.cloudflare.com/pulumi/)）。
+- **Turso**: ネイティブ無し → **Terraform ブリッジ**（`pulumi package add terraform-provider celest-dev/turso`、`TURSO_API_TOKEN`、[Pulumi Registry: turso](https://www.pulumi.com/registry/packages/turso/)）。コミュニティ製で成熟度は要注意。
+- **Pulumi で管理（静的）**: Cloudflare Worker（`apps/api`）/routes/DNS/secrets、Turso org/group・**コントロールプレーン DB**・API トークン。
+- **Pulumi で管理しない（ランタイム）**: **ユーザごとの Turso DB**。会員登録時にバックエンドが Turso Platform API で動的生成（数が可変・無限）。IaC state には載せない。
+- Worker 配備は Pulumi `WorkerScript` か Wrangler（Cloudflare 推奨は「リソース=Pulumi、マイグレーション=Wrangler」併用）。
+- タイミング: 主に Phase 6 以降。単一ユーザ期は Turso DB ＋ secrets の小さなスタックから型を作る。
+
+### 順序
+
+`packages/` の価値は 2 つ目の利用者（Web/api）が出て初めて顕在化する。今は利用者が TUI 1 つなので**まず境界を正しく引く**: `packages/core`（ランタイム非依存）＋ `apps/tui` への機械的分割（挙動不変・テスト担保、`@/` エイリアス→ワークスペース名の置換）。cloud 移行（libsql/暗号）は `packages/data`・`core` に載せ、`apps/api`（Worker+Hono）は認証/Web 着手時に追加する。インフラ（`infra/` Pulumi）は `apps/api` と同時期に立ち上げる。
+
 ## 調査を受けた選定変更（FEATURES.md 反映済み）
 
 1. **TUI: Ink → OpenTUI**。Ink は Bun 非対応（公式 "not planned"）。Bun 継続なら OpenTUI 一択。Ink を使うなら Node ランタイムへ変更
