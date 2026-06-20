@@ -3,6 +3,8 @@ pre-commit:
   jobs:
     - name: lint
       glob: "*.{ts,tsx}"
+      exclude:
+        - "infra/**"
       run: bunx oxlint --type-check --type-aware {staged_files}
     - name: fmt
       glob: "*.{ts,tsx}"

@@ -1,0 +1,13 @@
+{
+  "name": "zakki-infra",
+  "private": true,
+  "description": "zakki のクラウドインフラ（Pulumi / Turso）",
+  "main": "index.ts",
+  "dependencies": {
+    "@pulumi/pulumi": "^3.140.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

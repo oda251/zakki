@@ -1,0 +1,7 @@
+config:
+  # Turso 組織名（自分の組織に置き換える）。平文で可。
+  turso:organization: your-turso-org
+  # turso:apiToken は秘匿情報。コミットせず CLI で設定する:
+  #   pulumi config set --secret turso:apiToken <token>
+  zakki-infra:dbName: zakki-prod
+  zakki-infra:primaryLocation: nrt

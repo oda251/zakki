@@ -1,0 +1,11 @@
+name: zakki-infra
+runtime: nodejs
+description: >-
+  zakki のクラウドインフラ（Phase 3: Turso DB + secrets）。
+  静的インフラのみを宣言的に管理する。ユーザごとの Turso DB は実行時に
+  Turso Platform API で生成するため、ここでは管理しない（Phase 7 / RESEARCH.md §7）。
+
+# Turso プロバイダは Terraform ブリッジのローカルパッケージとして導入する。
+# 初回のみ次を実行して SDK を生成する（生成物は package.json / sdks/ に入る）:
+#   pulumi package add terraform-provider celest-dev/turso
+# 生成されるパッケージ名に合わせて index.ts の import を調整すること（未検証: 既定は turso）。

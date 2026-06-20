@@ -2,3 +2,8 @@ node_modules/
 *.sqlite
 *.sqlite-journal
 *.db
+
+# Pulumi (infra/)
+infra/bin/
+infra/sdks/
+infra/.pulumi/
