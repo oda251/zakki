@@ -23,6 +23,7 @@
         "@zakki/core": "workspace:*",
         "@zakki/data": "workspace:*",
         "drizzle-orm": "^0.45.2",
+        "get-east-asian-width": "^1.6.0",
         "lindera-wasm-nodejs-ipadic": "^2.0.0",
         "minisearch": "^7.2.0",
         "neverthrow": "^8.2.0",

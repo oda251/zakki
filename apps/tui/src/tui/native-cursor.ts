@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { EditBuffer, EditorView, type CliRenderer, type ScrollBoxRenderable } from "@opentui/core";
+import { globalDisplayCol, visualPosition } from "./width.ts";
 
 /**
  * 端末ネイティブの縦棒カーソル（docs/PANES.md §3）の描画対象。
@@ -23,8 +24,8 @@ const MEASURE_HEIGHT = 4096;
  * 文字オフセットを折り返し後の画面セルへ写し、端末の line（縦棒）カーソルを置く。
  *
  * 通常の `<text>` にはオフセット→セルの公開 API が無いため、表示と同じテキストを
- * 計測用 EditorView に流し込み、getVisualCursor() で (visualRow, visualCol) を得る
- * （折り返し・全角幅の計算を opentui 本体に委ねる）。要素の screenX/screenY は
+ * 計測用 EditorView に流し込み、getLineInfo() で折り返しレイアウトを取得する。
+ * カーソル列は自前の globalDisplayCol / visualPosition で算出する（全角幅対応）。要素の screenX/screenY は
  * scrollbox のスクロール量を織り込み済みなので、補正なしでそのまま使える。
  * 表示窓の外（スクロールで隠れた行）に来たらカーソルを隠す。
  */
@@ -71,16 +72,17 @@ export function useBarCursor(
         buffer.setText(t.text);
         lastText = t.text;
       }
-      view.setCursorByOffset(Math.max(0, Math.min(t.text.length, t.offset)));
-      const vc = view.getVisualCursor();
-      const cursorY = node.screenY + vc.visualRow;
+      const li = view.getLineInfo();
+      const g = globalDisplayCol(t.text, Math.max(0, Math.min(t.text.length, t.offset)));
+      const { row, cellCol } = visualPosition(li.lineStartCols, g);
+      const cursorY = node.screenY + row;
       // scrollbox の表示窓（縦）から外れていれば隠す
       if (cursorY < sb.screenY || cursorY >= sb.screenY + sb.height) {
         hide();
         return;
       }
       // setCursorPosition は 1-based 絶対セル（index-07zpr2dg.js:6134 と同じ +1）
-      renderer.setCursorPosition(node.screenX + vc.visualCol + 1, cursorY + 1, true);
+      renderer.setCursorPosition(node.screenX + cellCol + 1, cursorY + 1, true);
     };
 
     renderer.setFrameCallback(onFrame);
