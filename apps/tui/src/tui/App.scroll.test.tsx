@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
 import { testRender } from "@opentui/react/test-utils";
-import { identityEngine } from "@zakki/tui/conversion/engine.ts";
+import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { createDb } from "@zakki/data/db/client.ts";
 import { App } from "./App.tsx";

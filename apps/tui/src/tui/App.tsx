@@ -7,9 +7,9 @@ import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { fmtPolarity, moodColor, scoreSentiment } from "@zakki/core/analysis/sentiment.ts";
 import { saveConversion } from "@zakki/tui/conversion/cache.ts";
 import { saveCorrection } from "@zakki/tui/conversion/corrections.ts";
-import type { KanaKanjiEngine } from "@zakki/tui/conversion/engine.ts";
+import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import { stripPasteMarkers, wrapPaste } from "@zakki/core/conversion/paste.ts";
-import { ConversionPipeline } from "@zakki/tui/conversion/pipeline.ts";
+import { ConversionPipeline } from "@zakki/core/conversion/pipeline.ts";
 import { segmentKana } from "@zakki/core/conversion/segment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
@@ -34,7 +34,7 @@ import { convertRomaji } from "@zakki/core/romaji/convert.ts";
 import type { SearchIndex } from "@zakki/tui/search/index.ts";
 import { buildIndex, searchChunks } from "@zakki/tui/search/index.ts";
 import { searchSemantic } from "@zakki/tui/search/semantic.ts";
-import type { Cursor, CursorState, ScreenLens } from "./controller.ts";
+import type { Cursor, CursorState, ScreenLens } from "@zakki/core/input/controller.ts";
 import {
   applyCursorKey,
   applyDialogKey,
@@ -43,10 +43,10 @@ import {
   applyMenuKey,
   applySearchKey,
   clampCursor,
-} from "./controller.ts";
+} from "@zakki/core/input/controller.ts";
 import { Chunk } from "./chunk.tsx";
 import { Dialog } from "./dialog.tsx";
-import { matchesAction } from "./keymap.ts";
+import { matchesAction } from "@zakki/core/input/keymap.ts";
 import { useBarCursor, type BarCursorTarget } from "./native-cursor.ts";
 
 /** キーストローク単位の永続化（docs/CONCEPT.md）。打鍵停止後この時間で保存する */

@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { AncoEngine, defaultAncoPath, defaultZenzPath } from "@zakki/tui/conversion/anco/engine.ts";
 import { loadConversionCache } from "@zakki/tui/conversion/cache.ts";
 import { loadCorrections } from "@zakki/tui/conversion/corrections.ts";
-import { identityEngine } from "@zakki/tui/conversion/engine.ts";
+import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { createRuriEmbedder } from "@zakki/tui/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
 import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";

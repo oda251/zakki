@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { join } from "node:path";
 import { errAsync, ResultAsync } from "neverthrow";
-import type { EngineError, KanaKanjiEngine } from "@zakki/tui/conversion/engine.ts";
+import type { EngineError, KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
 import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
