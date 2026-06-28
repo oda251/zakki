@@ -63,6 +63,11 @@ export const chunkWeb: ChunkPresentation<string> = {
 `opentui` と DOM を 1 モジュールに混ぜないため、`chunk.tui` は `apps/tui`、`chunk.web` は
 `apps/web` に置く（バンドル分離）。core は型のみ。
 
+web のスタイルは **Tailwind v4**（`chunk.web` の値は意味クラス名＝`base:"chunk"` 等にし、
+ユーティリティは CSS 側に `@apply` で寄せる）。`@theme` 変数は **web 専用・Tailwind ネイティブの
+token** であり、opentui と CSS の両方へ写す横断 token レイヤは作らない（`chunk.tui` の opentui
+style とは独立。実値は cell/px で別物のため共有しない）。`apps/web` 構築時は `@tailwindcss/vite`。
+
 ### 軸2: コアロジック＝機能切り分け（差し替え可能）
 
 機能単位の純粋モジュールを `packages/core` に置き、**各機能を interface 化して DI で差し替え**。
