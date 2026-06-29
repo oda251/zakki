@@ -1,4 +1,4 @@
-import type { KanaKanjiEngine } from "@zakki/tui/conversion/engine.ts";
+import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { nearestChunks } from "@zakki/data/embedding/semantic.ts";
