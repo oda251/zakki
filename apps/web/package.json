@@ -6,15 +6,29 @@
   "exports": {
     "./*": "./src/*"
   },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
   "dependencies": {
     "@zakki/backend": "workspace:*",
     "@zakki/core": "workspace:*",
     "@zakki/data": "workspace:*",
     "hono": "^4.9.12",
     "neverthrow": "^8.2.0",
-    "valibot": "^1.4.1"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-force-graph-2d": "^1.29.1",
+    "valibot": "^1.4.1",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14"
+    "@tailwindcss/vite": "^4.3.2",
+    "@types/bun": "^1.3.14",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "tailwindcss": "^4.3.2",
+    "vite": "^8.1.3"
   }
 }
