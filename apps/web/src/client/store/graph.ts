@@ -19,6 +19,8 @@ export interface GraphFilter {
   sessionIds: ReadonlySet<number>;
   /** 自動タグ名（完全一致）。null = フィルタなし */
   tag: string | null;
+  /** セッションタグ（ユーザ明示タグ）。null = フィルタなし */
+  sessionTag: string | null;
 }
 
 interface GraphState {
@@ -30,13 +32,14 @@ interface GraphState {
   toggleSession: (id: number) => void;
   clearSessionFilter: () => void;
   setTagFilter: (tag: string | null) => void;
+  setSessionTagFilter: (tag: string | null) => void;
   selectNode: (id: number | null) => void;
 }
 
 export const useGraphStore = create<GraphState>((set) => ({
   data: null,
   error: null,
-  filter: { sessionIds: new Set<number>(), tag: null },
+  filter: { sessionIds: new Set<number>(), tag: null, sessionTag: null },
   selectedNodeId: null,
 
   load: async () => {
@@ -68,6 +71,10 @@ export const useGraphStore = create<GraphState>((set) => ({
     set((s) => ({ filter: { ...s.filter, tag } }));
   },
 
+  setSessionTagFilter: (tag) => {
+    set((s) => ({ filter: { ...s.filter, sessionTag: tag } }));
+  },
+
   selectNode: (id) => {
     set({ selectedNodeId: id });
   },
@@ -91,9 +98,17 @@ export function visibleGraph(
   filter: GraphFilter,
 ): { nodes: GraphNode[]; edges: GraphData["edges"] } {
   const bySession = filter.sessionIds.size > 0;
+  // セッションタグはセッション単位のフィルタ: タグを持つセッションの id 集合に落とす
+  const taggedSessions =
+    filter.sessionTag === null
+      ? null
+      : new Set(
+          data.sessions.filter((s) => s.tags.includes(filter.sessionTag ?? "")).map((s) => s.id),
+        );
   const nodes = data.nodes.filter(
     (n) =>
       (!bySession || filter.sessionIds.has(n.sessionId)) &&
+      (taggedSessions === null || taggedSessions.has(n.sessionId)) &&
       (filter.tag === null || n.tags.includes(filter.tag)),
   );
   const visible = new Set(nodes.map((n) => n.id));

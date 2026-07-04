@@ -97,7 +97,25 @@ body,
 }
 
 .session-item__dot {
-  @apply inline-block h-2.5 w-2.5 shrink-0 rounded-full;
+  @apply inline-block h-2.5 w-2.5 shrink-0 cursor-pointer rounded-full border-0 p-0;
+}
+
+.session-item__dot--on {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+}
+
+.session-item__tags {
+  @apply pl-6;
+}
+
+.session-item__actions {
+  @apply flex flex-wrap gap-1 py-1 pl-6;
+}
+
+.sidebar__input {
+  @apply w-full rounded border bg-transparent px-2 py-1 text-sm text-ink outline-none;
+  border-color: var(--accent);
 }
 
 .session-item__name {
