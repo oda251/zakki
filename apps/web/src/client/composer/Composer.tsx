@@ -13,6 +13,7 @@ import { applyKey } from "@zakki/core/input/controller.ts";
 import { createEditorStore } from "@zakki/core/input/store.ts";
 import { api } from "@zakki/web/client/api/client.ts";
 import { chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
+import { chainLinks, newChunkIds } from "@zakki/web/client/composer/auto-link.ts";
 import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
@@ -28,6 +29,8 @@ type SaveState = "saved" | "dirty" | "error";
 interface ComposerProps {
   sessionId: number;
   initialRaw: string;
+  /** ロード時点の既存チャンク id（初回保存で全チャンクが「新規」扱いになるのを防ぐ） */
+  initialChunkIds: readonly number[];
   /** ConversionPipeline のシード（サーバの conversion/state から） */
   corrections: ReadonlyMap<string, string>;
   conversionCache: ReadonlyMap<string, string>;
@@ -43,7 +46,13 @@ interface ComposerProps {
  * ほぼ composition イベント経由で入力されるため上記 2 ルートで吸収できる。物理キーボード
  * 接続のモバイル等で挙動を分けたくなったら UA 判定を足す。
  */
-export function Composer({ sessionId, initialRaw, corrections, conversionCache }: ComposerProps) {
+export function Composer({
+  sessionId,
+  initialRaw,
+  initialChunkIds,
+  corrections,
+  conversionCache,
+}: ComposerProps) {
   const [store] = useState(() =>
     createEditorStore({
       raw: initialRaw,
@@ -61,6 +70,8 @@ export function Composer({ sessionId, initialRaw, corrections, conversionCache }
   const reloadGraph = useGraphStore((s) => s.load);
   const ambientTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+  // 自動リンク（数珠繋ぎ）の「新規」判定基準。保存応答のたびに更新する
+  const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();
 
@@ -124,8 +135,18 @@ export function Composer({ sessionId, initialRaw, corrections, conversionCache }
       const converted = conversion.convertRaw(current).text;
       api
         .saveEntry(sessionId, current, converted)
-        .then(() => {
+        .then(async (saved) => {
           setSaveState("saved");
+          // 新規チャンクは「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す
+          const fresh = newChunkIds(knownChunkIds.current, saved.chunks);
+          knownChunkIds.current = saved.chunks.map((c) => c.id);
+          if (fresh.length > 0) {
+            const anchor = useGraphStore.getState().selectedNodeId;
+            for (const link of chainLinks(anchor, fresh)) {
+              await api.addLink(link.from, link.to).catch(() => setMessage("リンク作成に失敗"));
+            }
+            useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
+          }
           if (ambientTimer.current !== null) clearTimeout(ambientTimer.current);
           ambientTimer.current = setTimeout(() => {
             void refreshRelated();

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { clampText } from "@zakki/web/client/graph/clamp.ts";
 import type { GraphNode } from "@zakki/web/shared/api-types.ts";
 import {
   SERIES_SLOTS,
@@ -28,8 +29,6 @@ interface ForceNode {
   y?: number;
 }
 
-/** ラベルを描き始めるズーム倍率（引きの絵ではノード色のみ、寄ったらタイトル） */
-const LABEL_MIN_SCALE = 1.6;
 const NODE_RADIUS = 4;
 
 export function GraphView() {
@@ -113,13 +112,13 @@ export function GraphView() {
               ctx.strokeStyle = "#ffffff";
               ctx.stroke();
             }
-            if (globalScale >= LABEL_MIN_SCALE) {
-              ctx.font = `${Math.max(10 / globalScale, 3)}px system-ui, sans-serif`;
-              ctx.fillStyle = palette.ink;
-              ctx.textAlign = "center";
-              ctx.textBaseline = "top";
-              ctx.fillText(makeTitle(node.content), x, y + NODE_RADIUS + 1);
-            }
+            // 本文の clamp ラベルを常時表示（セッション単位表示でノード数は絞られている前提）
+            const fontSize = Math.min(Math.max(10 / globalScale, 3), 8);
+            ctx.font = `${fontSize}px system-ui, sans-serif`;
+            ctx.fillStyle = palette.ink;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            ctx.fillText(clampText(node.content), x, y + NODE_RADIUS + 1);
           }}
           onNodeClick={(n) => selectNode((n as ForceNode).id)}
           onBackgroundClick={() => selectNode(null)}

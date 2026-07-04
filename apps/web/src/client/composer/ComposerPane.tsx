@@ -15,6 +15,7 @@ interface ConversionSeed {
 export function ComposerPane() {
   const current = useSessionStore((s) => s.current);
   const initialRaw = useSessionStore((s) => s.initialRaw);
+  const initialChunkIds = useSessionStore((s) => s.initialChunkIds);
   const error = useSessionStore((s) => s.error);
   const [seed, setSeed] = useState<ConversionSeed | null>(null);
 
@@ -46,6 +47,7 @@ export function ComposerPane() {
         key={current.id}
         sessionId={current.id}
         initialRaw={initialRaw}
+        initialChunkIds={initialChunkIds}
         corrections={seed.corrections}
         conversionCache={seed.cache}
       />

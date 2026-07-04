@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { api } from "@zakki/web/client/api/client.ts";
+import { sessionTitle } from "@zakki/web/client/layout/session-title.ts";
 import { seriesSlotBySession, sessionColor, useGraphStore } from "@zakki/web/client/store/graph.ts";
 import { useSessionStore } from "@zakki/web/client/store/session.ts";
 import type { SessionWithTags } from "@zakki/web/shared/api-types.ts";
@@ -172,9 +173,11 @@ export function LeftSidebar() {
                       onBlur={() => void renameSession(session)}
                     />
                   ) : (
-                    <span className="session-item__name">{session.name ?? "（日次）"}</span>
+                    <span className="session-item__name">{sessionTitle(session)}</span>
                   )}
-                  <span className="session-item__date">{session.date.slice(5)}</span>
+                  {session.name !== null && (
+                    <span className="session-item__date">{session.date.slice(5)}</span>
+                  )}
                 </div>
                 {session.tags.length > 0 && (
                   <div className="session-item__tags">

@@ -12,6 +12,8 @@ interface SessionState {
   current: Session | null;
   /** 現セッションの entry.raw（Composer の初期値。ロード完了まで null） */
   initialRaw: string | null;
+  /** ロード時点の既存チャンク id（自動リンクの「新規」判定の基準） */
+  initialChunkIds: number[];
   related: RelatedChunk[];
   error: string | null;
   /** 当日のデフォルトセッションを開く（起動時） */
@@ -24,7 +26,12 @@ interface SessionState {
 export const useSessionStore = create<SessionState>((set, get) => {
   const load = async (session: Session): Promise<void> => {
     const entry = await api.sessionEntry(session.id);
-    set({ current: session, initialRaw: entry.entry?.raw ?? "", error: null });
+    set({
+      current: session,
+      initialRaw: entry.entry?.raw ?? "",
+      initialChunkIds: entry.chunks.map((c) => c.id),
+      error: null,
+    });
     // グラフはセッション単位表示: 開いたセッションだけにフィルタをリセットする
     useGraphStore.getState().focusSession(session.id);
     await get().refreshRelated();
@@ -32,6 +39,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
   return {
     current: null,
     initialRaw: null,
+    initialChunkIds: [],
     related: [],
     error: null,
 
