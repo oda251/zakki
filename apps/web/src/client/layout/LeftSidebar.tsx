@@ -1,10 +1,5 @@
-import { useState } from "react";
-import {
-  NODE_NEUTRAL,
-  seriesSlotBySession,
-  sessionColor,
-  useGraphStore,
-} from "@zakki/web/client/store/graph.ts";
+import { useMemo, useState } from "react";
+import { seriesSlotBySession, sessionColor, useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /** 折り畳み可能な左メニュー: セッション一覧（色凡例を兼ねる）とフィルタ */
 export function LeftSidebar() {
@@ -15,10 +10,13 @@ export function LeftSidebar() {
   const clearSessionFilter = useGraphStore((s) => s.clearSessionFilter);
   const setTagFilter = useGraphStore((s) => s.setTagFilter);
 
-  const sessions = data?.sessions ?? [];
-  const slots = seriesSlotBySession(sessions);
+  const sessions = data?.sessions;
+  const slots = useMemo(() => seriesSlotBySession(sessions ?? []), [sessions]);
   // 新しい日付が上（同日はデフォルト→名前付きの順で id 昇順）
-  const ordered = [...sessions].toSorted((a, b) => b.date.localeCompare(a.date) || a.id - b.id);
+  const ordered = useMemo(
+    () => (sessions ?? []).toSorted((a, b) => b.date.localeCompare(a.date) || a.id - b.id),
+    [sessions],
+  );
 
   return (
     <nav className={collapsed ? "sidebar sidebar--collapsed" : "sidebar"}>
@@ -56,12 +54,7 @@ export function LeftSidebar() {
               >
                 <span
                   className="session-item__dot"
-                  style={{
-                    background:
-                      slots.get(session.id) === undefined
-                        ? NODE_NEUTRAL
-                        : sessionColor(slots.get(session.id)),
-                  }}
+                  style={{ background: sessionColor(slots.get(session.id)) }}
                 />
                 <span className="session-item__name">{session.name ?? "（日次）"}</span>
                 <span className="session-item__date">{session.date.slice(5)}</span>

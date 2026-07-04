@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { serveStatic } from "hono/bun";
 import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
@@ -45,14 +46,12 @@ const app = createApp({ db, engine, embedder, analysis });
 
 // ビルド済み SPA（vite build → apps/web/dist）があれば配信する（SPA フォールバック付き）。
 // 開発時は dist が無くてもよい（vite dev サーバが /api を proxy する）。
+// serveStatic の root は cwd 相対のため、import.meta.url 起点で cwd 非依存に解決する。
 const distDir = fileURLToPath(new URL("../../dist", import.meta.url));
 if (existsSync(join(distDir, "index.html"))) {
-  app.get("*", async (c) => {
-    const { pathname } = new URL(c.req.url);
-    const file = Bun.file(join(distDir, pathname === "/" ? "index.html" : `.${pathname}`));
-    const target = (await file.exists()) ? file : Bun.file(join(distDir, "index.html"));
-    return new Response(target);
-  });
+  const root = relative(process.cwd(), distDir);
+  app.get("/assets/*", serveStatic({ root }));
+  app.get("*", serveStatic({ root, path: "index.html" }));
 }
 
 const port = Number(process.env["ZAKKI_WEB_PORT"] ?? 3777);

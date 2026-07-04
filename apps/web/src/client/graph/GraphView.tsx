@@ -2,14 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import type { GraphNode } from "@zakki/web/shared/api-types.ts";
-import { seriesSlotBySession, useGraphStore, visibleGraph } from "@zakki/web/client/store/graph.ts";
+import {
+  SERIES_SLOTS,
+  seriesSlotBySession,
+  useGraphStore,
+  visibleGraph,
+} from "@zakki/web/client/store/graph.ts";
 
 /** canvas は CSS 変数を解決できないため、実色は computed style から一度だけ読む */
 function resolvePalette(): { series: string[]; neutral: string; ink: string; hairline: string } {
   const style = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
   return {
-    series: Array.from({ length: 8 }, (_, i) => read(`--series-${i + 1}`, "#3987e5")),
+    series: Array.from({ length: SERIES_SLOTS }, (_, i) => read(`--series-${i + 1}`, "#3987e5")),
     neutral: read("--node-neutral", "#6b6a64"),
     ink: read("--text-secondary", "#c3c2b7"),
     hairline: read("--baseline", "#383835"),
@@ -49,11 +54,24 @@ export function GraphView() {
     return () => observer.disconnect();
   }, []);
 
+  // force-graph は graphData が変わるとシミュレーションを再加熱する。ノードラッパーを
+  // id で使い回して座標（x/y）を引き継ぎ、フィルタ切り替えでレイアウトが最初から
+  // やり直しになるのを避ける。
+  const nodeCache = useRef(new Map<number, ForceNode>());
   const graphData = useMemo(() => {
     if (data === null) return { nodes: [], links: [] };
     const { nodes, edges } = visibleGraph(data, filter);
     return {
-      nodes: nodes.map((node): ForceNode => ({ id: node.id, node })),
+      nodes: nodes.map((node): ForceNode => {
+        const cached = nodeCache.current.get(node.id);
+        if (cached !== undefined) {
+          cached.node = node;
+          return cached;
+        }
+        const created: ForceNode = { id: node.id, node };
+        nodeCache.current.set(node.id, created);
+        return created;
+      }),
       links: edges.map((e) => ({ source: e.from, target: e.to, score: e.score })),
     };
   }, [data, filter]);

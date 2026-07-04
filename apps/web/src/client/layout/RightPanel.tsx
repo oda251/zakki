@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { chunkDigestWeb, chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /**
@@ -12,23 +13,21 @@ export function RightPanel() {
   const selectNode = useGraphStore((s) => s.selectNode);
   const setTagFilter = useGraphStore((s) => s.setTagFilter);
 
-  const selected = useMemo(
-    () => data?.nodes.find((n) => n.id === selectedNodeId) ?? null,
-    [data, selectedNodeId],
-  );
+  const nodesById = useMemo(() => new Map((data?.nodes ?? []).map((n) => [n.id, n])), [data]);
+
+  const selected = selectedNodeId === null ? null : (nodesById.get(selectedNodeId) ?? null);
 
   // グラフの links から選択ノードの隣接を引く（双方向）
   const neighbors = useMemo(() => {
     if (data === null || selected === null) return [];
-    const ids = data.edges
+    return data.edges
       .filter((e) => e.from === selected.id || e.to === selected.id)
-      .map((e) => (e.from === selected.id ? e.to : e.from));
-    const byId = new Map(data.nodes.map((n) => [n.id, n]));
-    return ids.flatMap((id) => {
-      const node = byId.get(id);
-      return node === undefined ? [] : [node];
-    });
-  }, [data, selected]);
+      .map((e) => (e.from === selected.id ? e.to : e.from))
+      .flatMap((id) => {
+        const node = nodesById.get(id);
+        return node === undefined ? [] : [node];
+      });
+  }, [data, selected, nodesById]);
 
   return (
     <aside className="right-panel">
@@ -38,11 +37,11 @@ export function RightPanel() {
           <div className="empty-note">グラフのノードをクリックすると内容を表示します</div>
         ) : (
           <div>
-            <div className="chunk-digest__date">
+            <div className={chunkDigestWeb.date}>
               {selected.date}
               {selected.sessionName !== null && ` / ${selected.sessionName}`}
             </div>
-            <p className="chunk chunk--selected">{selected.content}</p>
+            <p className={`${chunkWeb.base} ${chunkWeb.selected}`}>{selected.content}</p>
             <div>
               {selected.tags.map((tag) => (
                 <button
@@ -68,10 +67,10 @@ export function RightPanel() {
               <button
                 key={node.id}
                 type="button"
-                className="chunk-digest"
+                className={chunkDigestWeb.base}
                 onClick={() => selectNode(node.id)}
               >
-                <span className="chunk-digest__date">{node.date}</span>
+                <span className={chunkDigestWeb.date}>{node.date}</span>
                 {makeTitle(node.content)}
               </button>
             ))

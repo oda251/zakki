@@ -144,6 +144,10 @@ body,
   color: var(--text-primary);
 }
 
+.chunk--pending {
+  color: var(--text-muted);
+}
+
 .chunk-digest {
   @apply block w-full cursor-pointer rounded border-0 bg-transparent px-2 py-1.5 text-left text-sm text-ink-secondary;
 }
