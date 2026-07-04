@@ -68,6 +68,8 @@ const DELETE_CONFIRM_MESSAGE = "このチャンクを削除しますか？";
 export interface AppProps {
   db: Db;
   date: string;
+  /** 起動時に解決済みの当日デフォルトセッション。保存のたびの再解決を省く */
+  sessionId: number;
   initialRaw: string;
   vaultDir: string;
   engine: KanaKanjiEngine;
@@ -105,6 +107,7 @@ function anchorChildToTop(sb: ScrollBoxRenderable, childId: string): void {
 export function App({
   db,
   date,
+  sessionId,
   initialRaw,
   vaultDir,
   engine,
@@ -292,6 +295,7 @@ export function App({
     // raw が正本なので未確定セグメントの変換完了は待たない（次回起動で回収）。
     const snapshot = {
       date,
+      sessionId,
       raw: store.getState().raw,
       converted: convertRaw(store.getState().raw, true).text,
     };
@@ -308,7 +312,7 @@ export function App({
       await sync();
       finish();
     }, finish);
-  }, [db, date, renderer, engine, convertRaw, exportCurrent, sync, store]);
+  }, [db, date, sessionId, renderer, engine, convertRaw, exportCurrent, sync, store]);
 
   /** 関連の詳細を閉じる（一覧表示へ戻す） */
   const closeExpand = useCallback(() => {
@@ -781,7 +785,7 @@ export function App({
       const current = store.getState().raw;
       // 2. 永続化（converted から決定的チャンク化）
       const converted = convertRaw(current).text;
-      void persistEntry(db, { date, raw: current, converted }).match(
+      void persistEntry(db, { date, sessionId, raw: current, converted }).match(
         (saved) => {
           setSaveState("saved");
           setChunkCount(saved.chunks.length);
@@ -798,7 +802,7 @@ export function App({
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // conversionVersion: 非同期変換が確定したら再保存・再凍結する
-  }, [db, date, raw, conversionVersion, convertRaw, convertSettled, runBackgroundPass]);
+  }, [db, date, sessionId, raw, conversionVersion, convertRaw, convertSettled, runBackgroundPass]);
 
   // セマンティック検索（docs/FEATURES.md 候補8）。実体は search/semantic.ts に委譲する
   useEffect(() => {

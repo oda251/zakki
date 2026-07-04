@@ -88,6 +88,7 @@ createRoot(renderer).render(
   <App
     db={db}
     date={date}
+    sessionId={entry.sessionId}
     initialRaw={entry.raw}
     vaultDir={defaultVaultDir()}
     engine={engine}

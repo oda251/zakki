@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
 import { saveSnapshot } from "@zakki/data/entry/repository.ts";
 import { dailySentiment, listLinksByChunk, listTagsByChunk } from "@zakki/data/entry/queries.ts";
+import { createSession, listSessions, setSessionTags } from "@zakki/data/session/repository.ts";
 import { analyzeAll } from "./service.ts";
 
 let db: Db;
@@ -77,5 +78,16 @@ describe("analyzeAll", () => {
     for (const names of tags.values()) {
       expect(names).not.toContain("ペンギン");
     }
+  });
+
+  test("セッションタグ（ユーザ明示）は解析の全消し再挿入・孤立削除に干渉されない", async () => {
+    const session = (await createSession(db, { name: "調査", date: "2026-06-12" }))._unsafeUnwrap();
+    (await setSessionTags(db, session.id, ["web", "設計"]))._unsafeUnwrap();
+
+    await seed("2026-06-12", ["変換辞書の話。"]);
+    (await analyzeAll(db))._unsafeUnwrap();
+
+    const [loaded] = (await listSessions(db))._unsafeUnwrap();
+    expect(loaded?.tags).toEqual(["web", "設計"]);
   });
 });

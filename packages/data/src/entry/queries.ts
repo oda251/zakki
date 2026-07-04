@@ -11,6 +11,7 @@ import { chunks, chunkTags, entries, links, tags } from "@zakki/data/db/schema.t
 export interface ChunkWithDate {
   id: number;
   entryId: number;
+  sessionId: number;
   position: number;
   content: string;
   date: string;
@@ -25,6 +26,7 @@ export function listChunksWithDate(db: Db): ResultAsync<ChunkWithDate[], DbError
       .select({
         id: chunks.id,
         entryId: chunks.entryId,
+        sessionId: entries.sessionId,
         position: chunks.position,
         content: chunks.content,
         date: entries.date,

@@ -1,19 +1,79 @@
+import { sql } from "drizzle-orm";
 import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
- * 1 セッション（日付単位）の生入力ログ（docs/CONCEPT.md データモデル素案）。
+ * 記録の入れ物（スペース）。デフォルトセッション（name = NULL）は日付ベース管理
+ * （1 日 1 件、TUI が使う従来挙動）で、名前付きセッションは同日に複数持てる。
+ *
+ * E2E 暗号（ZAKKI_ENCRYPTION）では `name` を暗号化する（AAD "session.name"）。
+ * ただし NULL は NULL のまま格納する — デフォルトセッション判定
+ * （`name IS NULL`）を SQL で行うため。「名前付きか否か」がメタデータとして
+ * 見える点は `date` が平文である現行方針と同水準として受容する。
+ */
+export const sessions = sqliteTable(
+  "sessions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    /** NULL = デフォルトセッション（日付ベース）。名前付きは暗号 ON で暗号文 */
+    name: text("name"),
+    /** ローカル日付 YYYY-MM-DD（平文。entries.date と同方針） */
+    date: text("date").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [
+    // デフォルトセッションは 1 日 1 件（名前付きには効かない部分 unique）
+    uniqueIndex("sessions_default_date")
+      .on(t.date)
+      .where(sql`"name" IS NULL`),
+  ],
+);
+
+/**
+ * セッションへのユーザ明示タグ。自動付与タグ（{@link tags}）とは独立の
+ * 名前空間で、解析パス（analyzeAll の全消し再挿入・孤立タグ削除）の
+ * ライフサイクルに干渉しない。一意制約は tags と同じく fingerprint
+ * （ブラインドインデックス）に置く。暗号 OFF は fingerprint = 平文名。
+ */
+export const sessionTags = sqliteTable(
+  "session_tags",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** ブラインドインデックス。暗号 OFF は平文名、ON は fingerprint(name) */
+    nameFingerprint: text("name_fingerprint").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("session_tags_unique").on(t.sessionId, t.nameFingerprint)],
+);
+
+/**
+ * 1 セッションの生入力ログ（docs/CONCEPT.md データモデル素案）。
  * raw（ローマ字/かな）と converted を分離して保持する。変換・チャンク化は
  * 非可逆な自動処理であり、再処理（エンジン差し替え時の再変換）に原文が必要。
+ *
+ * entry ↔ session は 1:1（unique index）。`date` はセッションの日付の複製で、
+ * 日付 join（listChunksWithDate / dailySentiment / digest）を無変更で保つために残す。
  */
-export const entries = sqliteTable("entries", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  /** ローカル日付 YYYY-MM-DD */
-  date: text("date").notNull().unique(),
-  raw: text("raw").notNull().default(""),
-  converted: text("converted").notNull().default(""),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-});
+export const entries = sqliteTable(
+  "entries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    /** ローカル日付 YYYY-MM-DD（sessions.date と同値） */
+    date: text("date").notNull(),
+    raw: text("raw").notNull().default(""),
+    converted: text("converted").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("entries_session_unique").on(t.sessionId)],
+);
 
 /**
  * 自動分割された意味単位。決定的チャンク化により entry のテキストから
@@ -168,6 +228,8 @@ export const embeddings = sqliteTable("embeddings", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export type Session = typeof sessions.$inferSelect;
+export type SessionTag = typeof sessionTags.$inferSelect;
 export type Entry = typeof entries.$inferSelect;
 export type Chunk = typeof chunks.$inferSelect;
 export type Correction = typeof corrections.$inferSelect;

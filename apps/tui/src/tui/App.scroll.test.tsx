@@ -4,6 +4,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { createDb } from "@zakki/data/db/client.ts";
+import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
 import { App } from "./App.tsx";
 
 /**
@@ -13,11 +14,13 @@ import { App } from "./App.tsx";
  */
 async function setup(rawChunks: string[], width = 20, height = 6) {
   const db = await createDb(":memory:");
+  const entry = (await getOrCreateEntry(db, "2026-06-14"))._unsafeUnwrap();
   const initialRaw = rawChunks.map((c) => wrapPaste(c)).join("");
   const t = await testRender(
     <App
       db={db}
       date="2026-06-14"
+      sessionId={entry.sessionId}
       initialRaw={initialRaw}
       vaultDir="/tmp/zakki-test-vault"
       engine={identityEngine}
