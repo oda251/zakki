@@ -17,10 +17,13 @@ export function localDate(d: Date = new Date()): string {
  * 自動保存の入口。converted を句点・改行の決定的区切りでチャンク化して永続化する
  * （記録モデル, docs/RECORDS.md）。話題グルーピング（二次区切り）は廃止。
  * デバウンスは呼び出し側（UI 層）の責務。
+ *
+ * `sessionId` は起動時に解決済みならそれを渡す（保存のたびのデフォルト
+ * セッション解決 SELECT を省く）。省略時は date のデフォルトセッションへ。
  */
 export function persistEntry(
   db: Db,
-  input: { date: string; raw: string; converted: string },
+  input: { date: string; sessionId?: number; raw: string; converted: string },
 ): ResultAsync<SavedEntry, DbError> {
   return saveSnapshot(db, { ...input, chunks: chunkText(input.converted) });
 }

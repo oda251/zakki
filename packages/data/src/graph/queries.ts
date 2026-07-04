@@ -1,11 +1,9 @@
-import { asc, eq } from "drizzle-orm";
 import { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
-import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
-import { chunks, entries, links, sessions } from "@zakki/data/db/schema.ts";
-import { listTagsByChunk } from "@zakki/data/entry/queries.ts";
+import { links } from "@zakki/data/db/schema.ts";
+import { listChunksWithDate, listTagsByChunk } from "@zakki/data/entry/queries.ts";
 import type { SessionWithTags } from "@zakki/data/session/repository.ts";
 import { listSessions } from "@zakki/data/session/repository.ts";
 
@@ -40,32 +38,23 @@ export interface GraphData {
  * セッション一覧を添える。数千ノード規模を想定し、絞り込みはクライアント側で行う。
  */
 export function getGraph(db: Db): ResultAsync<GraphData, DbError> {
-  const crypto = getCrypto(db);
-  const nodesResult = tryDbAsync(async () => {
-    const rows = await db
-      .select({
-        id: chunks.id,
-        content: chunks.content,
-        polarity: chunks.polarity,
-        date: entries.date,
-        sessionId: entries.sessionId,
-        sessionName: sessions.name,
-      })
-      .from(chunks)
-      .innerJoin(entries, eq(chunks.entryId, entries.id))
-      .innerJoin(sessions, eq(entries.sessionId, sessions.id))
-      .orderBy(asc(entries.date), asc(chunks.position));
-    if (crypto === undefined) return rows;
-    return rows.map((r) => ({
-      ...r,
-      content: crypto.decString(r.content, "chunk.content"),
-      sessionName: r.sessionName === null ? null : crypto.decString(r.sessionName, "session.name"),
-    }));
-  });
-  const edgesResult = tryDbAsync(() => db.select().from(links));
-  return ResultAsync.combine([nodesResult, edgesResult, listTagsByChunk(db), listSessions(db)]).map(
-    ([nodes, edgeRows, tagsByChunk, sessionList]) => ({
-      nodes: nodes.map((n) => ({ ...n, tags: tagsByChunk.get(n.id) ?? [] })),
+  return ResultAsync.combine([
+    listChunksWithDate(db),
+    tryDbAsync(() => db.select().from(links)),
+    listTagsByChunk(db),
+    listSessions(db),
+  ]).map(([chunkList, edgeRows, tagsByChunk, sessionList]) => {
+    const nameBySession = new Map(sessionList.map((s) => [s.id, s.name]));
+    return {
+      nodes: chunkList.map((c) => ({
+        id: c.id,
+        content: c.content,
+        date: c.date,
+        sessionId: c.sessionId,
+        sessionName: nameBySession.get(c.sessionId) ?? null,
+        polarity: c.polarity,
+        tags: tagsByChunk.get(c.id) ?? [],
+      })),
       edges: edgeRows.map((e) => ({
         from: e.fromChunkId,
         to: e.toChunkId,
@@ -73,6 +62,6 @@ export function getGraph(db: Db): ResultAsync<GraphData, DbError> {
         origin: e.origin,
       })),
       sessions: sessionList,
-    }),
-  );
+    };
+  });
 }

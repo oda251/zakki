@@ -35,8 +35,32 @@ export interface SessionWithTags extends Session {
   tags: string[];
 }
 
+/** 名前の trim + 空チェック。空はデフォルトセッション（name = NULL）専用のため拒否 */
+function requireSessionName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed === "") {
+    throw new Error("セッション名は空にできません（デフォルトセッションは name = NULL）");
+  }
+  return trimmed;
+}
+
 /**
- * 当日のデフォルトセッション（name = NULL、1 日 1 件）を取得・なければ作成する。
+ * 日付のデフォルトセッション（name = NULL、1 日 1 件）を読む。無ければ null。
+ * 「デフォルトセッションとは何か」（name IS NULL）の判定はここに封じる。
+ */
+export function getDefaultSession(db: Db, date: string): ResultAsync<Session | null, DbError> {
+  return tryDbAsync(async () => {
+    const [existing] = await db
+      .select()
+      .from(sessions)
+      .where(and(eq(sessions.date, date), isNull(sessions.name)))
+      .limit(1);
+    return existing ?? null;
+  });
+}
+
+/**
+ * 当日のデフォルトセッションを取得・なければ作成する。
  * TUI の日付ベース管理の実体。冪等。
  */
 export function getOrCreateDefaultSession(
@@ -44,22 +68,19 @@ export function getOrCreateDefaultSession(
   date: string,
   now: string = new Date().toISOString(),
 ): ResultAsync<Session, DbError> {
-  return tryDbAsync(async () => {
-    const [existing] = await db
-      .select()
-      .from(sessions)
-      .where(and(eq(sessions.date, date), isNull(sessions.name)))
-      .limit(1);
-    if (existing !== undefined) return existing;
-    const [created] = await db
-      .insert(sessions)
-      .values({ name: null, date, createdAt: now, updatedAt: now })
-      .returning();
-    if (created === undefined) {
-      throw new Error("デフォルトセッションの作成に失敗しました");
-    }
-    return created;
-  });
+  return getDefaultSession(db, date).andThen((existing) =>
+    tryDbAsync(async () => {
+      if (existing !== null) return existing;
+      const [created] = await db
+        .insert(sessions)
+        .values({ name: null, date, createdAt: now, updatedAt: now })
+        .returning();
+      if (created === undefined) {
+        throw new Error("デフォルトセッションの作成に失敗しました");
+      }
+      return created;
+    }),
+  );
 }
 
 /** 名前付きセッションを作成する。同日に複数持てる。name は空にできない */
@@ -70,10 +91,7 @@ export function createSession(
 ): ResultAsync<Session, DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
-    const name = input.name.trim();
-    if (name === "") {
-      throw new Error("セッション名は空にできません（デフォルトセッションは name = NULL）");
-    }
+    const name = requireSessionName(input.name);
     const [created] = await db
       .insert(sessions)
       .values({ name: encName(crypto, name), date: input.date, createdAt: now, updatedAt: now })
@@ -119,13 +137,9 @@ export function renameSession(
 ): ResultAsync<void, DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
-    const trimmed = name.trim();
-    if (trimmed === "") {
-      throw new Error("セッション名は空にできません");
-    }
     await db
       .update(sessions)
-      .set({ name: encName(crypto, trimmed), updatedAt: now })
+      .set({ name: encName(crypto, requireSessionName(name)), updatedAt: now })
       .where(eq(sessions.id, id));
   });
 }

@@ -1,13 +1,18 @@
-import { and, asc, eq, gte, isNull } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
+import { err, ok, okAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
-import { tryDbAsync } from "@zakki/data/db/error.ts";
+import { dbError, tryDbAsync } from "@zakki/data/db/error.ts";
 import type { Chunk, Entry, Session } from "@zakki/data/db/schema.ts";
-import { chunks, entries, sessions } from "@zakki/data/db/schema.ts";
-import { getOrCreateDefaultSession, getSession } from "@zakki/data/session/repository.ts";
+import { chunks, entries } from "@zakki/data/db/schema.ts";
+import {
+  getDefaultSession,
+  getOrCreateDefaultSession,
+  getSession,
+} from "@zakki/data/session/repository.ts";
 
 /** 暗号 ON なら復号して平文 Entry を返す。OFF はそのまま */
 function decEntry(crypto: CryptoContext | undefined, e: Entry): Entry {
@@ -55,12 +60,7 @@ function resolveSession(
     return getOrCreateDefaultSession(db, snapshot.date, now);
   }
   return getSession(db, sessionId).andThen((session) =>
-    tryDbAsync(async () => {
-      if (session === null) {
-        throw new Error(`セッションが存在しません: id=${sessionId}`);
-      }
-      return session;
-    }),
+    session === null ? err(dbError(`セッションが存在しません: id=${sessionId}`)) : ok(session),
   );
 }
 
@@ -193,18 +193,9 @@ async function readEntryChunks(db: Db, entry: Entry): Promise<SavedEntry> {
  * 名前付きセッションの entry は {@link getSessionEntryWithChunks} で読む。
  */
 export function getEntryWithChunks(db: Db, date: string): ResultAsync<SavedEntry | null, DbError> {
-  return tryDbAsync(async () => {
-    const [row] = await db
-      .select({ entry: entries })
-      .from(entries)
-      .innerJoin(sessions, eq(entries.sessionId, sessions.id))
-      .where(and(eq(entries.date, date), isNull(sessions.name)))
-      .limit(1);
-    if (row === undefined) {
-      return null;
-    }
-    return readEntryChunks(db, row.entry);
-  });
+  return getDefaultSession(db, date).andThen((session) =>
+    session === null ? okAsync(null) : getSessionEntryWithChunks(db, session.id),
+  );
 }
 
 /** セッション指定で entry を読む（web 用。デフォルト・名前付きの区別なし） */
