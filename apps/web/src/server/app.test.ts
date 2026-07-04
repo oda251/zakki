@@ -154,6 +154,27 @@ describe("変換 API", () => {
   });
 });
 
+describe("POST /api/links（手動リンク）", () => {
+  test("作成した manual リンクが graph に反映される", async () => {
+    const def = await json<Session>(await app.request(post("/api/sessions/default", {})));
+    const saved = await json<SessionEntryResponse>(
+      await app.request(put(`/api/sessions/${def.id}/entry`, { raw: "", converted: "一。二。" })),
+    );
+    const [a, b] = saved.chunks.map((c) => c.id);
+    if (a === undefined || b === undefined) throw new Error("seed 不足");
+
+    await json(await app.request(post("/api/links", { from: b, to: a })));
+
+    const graph = await json<GraphData>(await app.request("/api/graph"));
+    expect(graph.edges).toEqual([{ from: a, to: b, score: 1, origin: "manual" }]);
+  });
+
+  test("不正 body は 400", async () => {
+    expect((await app.request(post("/api/links", { from: 1 }))).status).toBe(400);
+    expect((await app.request(post("/api/links", { from: "x", to: 2 }))).status).toBe(400);
+  });
+});
+
 describe("グラフとセッション関連", () => {
   test("graph はノード・エッジ・セッションを返す（空 DB は空）", async () => {
     const graph = await json<GraphData>(await app.request("/api/graph"));
