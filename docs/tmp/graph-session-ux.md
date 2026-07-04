@@ -16,6 +16,7 @@
 その手前で情報を捨てている。TUI も同経路（`persistEntry`）で同じバグを持つ。
 
 修正方針（深い側で直す）:
+
 - `createConversionSession.convertRaw` はマーカーを **温存** して返す（表示用の `convertLive` は strip のまま）
 - `persistEntry` / `saveSessionEntry` は「チャンク化はマーカー付きで、`entries.converted` の保存値は strip して」行う
   （strip 済み入力には no-op なので後方互換）
