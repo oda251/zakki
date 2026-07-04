@@ -25,6 +25,8 @@ function resolvePalette(): { series: string[]; neutral: string; ink: string; hai
 interface ForceNode {
   id: number;
   node: GraphNode;
+  /** clamp 済みラベル（毎フレームの Segmenter 実行を避けるため生成時に計算） */
+  label: string;
   x?: number;
   y?: number;
 }
@@ -64,10 +66,13 @@ export function GraphView() {
       nodes: nodes.map((node): ForceNode => {
         const cached = nodeCache.current.get(node.id);
         if (cached !== undefined) {
-          cached.node = node;
+          if (cached.node !== node) {
+            cached.node = node;
+            cached.label = clampText(node.content);
+          }
           return cached;
         }
-        const created: ForceNode = { id: node.id, node };
+        const created: ForceNode = { id: node.id, node, label: clampText(node.content) };
         nodeCache.current.set(node.id, created);
         return created;
       }),
@@ -101,7 +106,7 @@ export function GraphView() {
             return `${node.date}${node.sessionName === null ? "" : ` / ${node.sessionName}`}<br/>${makeTitle(node.content)}`;
           }}
           nodeCanvasObject={(n, ctx, globalScale) => {
-            const { node, x, y } = n as ForceNode;
+            const { node, label, x, y } = n as ForceNode;
             if (x === undefined || y === undefined) return;
             ctx.beginPath();
             ctx.arc(x, y, NODE_RADIUS, 0, 2 * Math.PI);
@@ -118,7 +123,7 @@ export function GraphView() {
             ctx.fillStyle = palette.ink;
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
-            ctx.fillText(clampText(node.content), x, y + NODE_RADIUS + 1);
+            ctx.fillText(label, x, y + NODE_RADIUS + 1);
           }}
           onNodeClick={(n) => selectNode((n as ForceNode).id)}
           onBackgroundClick={() => selectNode(null)}

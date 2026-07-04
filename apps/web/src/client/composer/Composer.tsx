@@ -73,6 +73,20 @@ export function Composer({
   // 自動リンク（数珠繋ぎ）の「新規」判定基準。保存応答のたびに更新する
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
+  // 新規チャンクを「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す
+  const linkNewChunks = useCallback(async (savedChunks: readonly { id: number }[]) => {
+    const fresh = newChunkIds(knownChunkIds.current, savedChunks);
+    knownChunkIds.current = savedChunks.map((c) => c.id);
+    if (fresh.length === 0) return;
+    const anchor = useGraphStore.getState().selectedNodeId;
+    await Promise.all(
+      chainLinks(anchor, fresh).map((link) =>
+        api.addLink(link.from, link.to).catch(() => setMessage("リンク作成に失敗")),
+      ),
+    );
+    useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
+  }, []);
+
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();
 
   // 変換合成（機能ロジック）は core と共有し、副作用（永続化・エラー表示）だけ注入する
@@ -137,16 +151,7 @@ export function Composer({
         .saveEntry(sessionId, current, converted)
         .then(async (saved) => {
           setSaveState("saved");
-          // 新規チャンクは「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す
-          const fresh = newChunkIds(knownChunkIds.current, saved.chunks);
-          knownChunkIds.current = saved.chunks.map((c) => c.id);
-          if (fresh.length > 0) {
-            const anchor = useGraphStore.getState().selectedNodeId;
-            for (const link of chainLinks(anchor, fresh)) {
-              await api.addLink(link.from, link.to).catch(() => setMessage("リンク作成に失敗"));
-            }
-            useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
-          }
+          await linkNewChunks(saved.chunks);
           if (ambientTimer.current !== null) clearTimeout(ambientTimer.current);
           ambientTimer.current = setTimeout(() => {
             void refreshRelated();
@@ -159,7 +164,17 @@ export function Composer({
         });
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [raw, conversionVersion, sessionId, store, setRaw, conversion, refreshRelated, reloadGraph]);
+  }, [
+    raw,
+    conversionVersion,
+    sessionId,
+    store,
+    setRaw,
+    conversion,
+    linkNewChunks,
+    refreshRelated,
+    reloadGraph,
+  ]);
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
   const openEdit = useCallback(
