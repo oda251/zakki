@@ -30,6 +30,8 @@ interface GraphState {
   selectedNodeId: number | null;
   load: () => Promise<void>;
   toggleSession: (id: number) => void;
+  /** グラフをこのセッションだけの表示にする（セッションを開いたときのリセット） */
+  focusSession: (id: number) => void;
   clearSessionFilter: () => void;
   setTagFilter: (tag: string | null) => void;
   setSessionTagFilter: (tag: string | null) => void;
@@ -61,6 +63,10 @@ export const useGraphStore = create<GraphState>((set) => ({
       }
       return { filter: { ...s.filter, sessionIds: next } };
     });
+  },
+
+  focusSession: (id) => {
+    set((s) => ({ filter: { ...s.filter, sessionIds: new Set([id]) } }));
   },
 
   clearSessionFilter: () => {

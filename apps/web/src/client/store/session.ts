@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "@zakki/web/client/api/client.ts";
+import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 import type { RelatedChunk, Session } from "@zakki/web/shared/api-types.ts";
 
 /**
@@ -24,6 +25,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
   const load = async (session: Session): Promise<void> => {
     const entry = await api.sessionEntry(session.id);
     set({ current: session, initialRaw: entry.entry?.raw ?? "", error: null });
+    // グラフはセッション単位表示: 開いたセッションだけにフィルタをリセットする
+    useGraphStore.getState().focusSession(session.id);
     await get().refreshRelated();
   };
   return {
