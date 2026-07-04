@@ -38,6 +38,30 @@ describe("persistEntry（自動保存の入口）", () => {
     expect(saved.entry.converted).toBe("ぶにちぶんい");
   });
 
+  test("E2E: Enter 区切りの2文が凍結→保存で2チャンクになる（結合されない）", async () => {
+    db = await createDb(":memory:");
+    const { createConversionSession } = await import("@zakki/core/conversion/compose.ts");
+    const { identityEngine } = await import("@zakki/core/conversion/engine.ts");
+    const { freezeLiveTail } = await import("@zakki/core/entry/records.ts");
+    const conv = createConversionSession(identityEngine, {
+      onUpdate: () => {},
+      onError: () => {},
+      onChosen: () => {},
+      onConverted: () => {},
+    });
+    const frozen = freezeLiveTail("bunichi\nbunni\n", conv.convertSettled);
+    const saved = (
+      await persistEntry(db, {
+        date: "2026-06-12",
+        raw: frozen.raw,
+        converted: conv.convertRaw(frozen.raw).text,
+      })
+    )._unsafeUnwrap();
+
+    expect(saved.chunks).toHaveLength(2);
+    expect(saved.chunks.map((c) => c.content)).toEqual(["ぶにち", "ぶんい"]);
+  });
+
   test("saveSessionEntry も同様にマーカー境界で分割し、保存値は strip される（web 経路）", async () => {
     db = await createDb(":memory:");
     const session = (await getOrCreateDefaultSession(db, "2026-06-12"))._unsafeUnwrap();

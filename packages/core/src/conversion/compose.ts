@@ -36,9 +36,11 @@ export function createConversionSession(
   const { onUpdate, onError, onChosen, ...pipelineOptions } = options;
   const pipeline = new ConversionPipeline(engine, onUpdate, onError, pipelineOptions);
 
+  // マーカー（凍結リテラル境界）は温存して返す。保存経路（persistEntry/saveSessionEntry）が
+  // チャンク境界として解釈し、entries.converted への格納時に strip する。表示は convertLive 側。
   const convertRaw = (input: string, flush = false) => {
     const applied = pipeline.apply(convertRomaji(input, { flush }).converted);
-    return { text: stripPasteMarkers(applied.text), converting: applied.converting };
+    return { text: applied.text, converting: applied.converting };
   };
 
   return {

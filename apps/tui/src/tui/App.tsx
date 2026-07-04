@@ -9,7 +9,7 @@ import { saveConversion } from "@zakki/data/conversion/cache.ts";
 import { saveCorrection } from "@zakki/data/conversion/corrections.ts";
 import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import { createConversionSession } from "@zakki/core/conversion/compose.ts";
-import { wrapPaste } from "@zakki/core/conversion/paste.ts";
+import { stripPasteMarkers, wrapPaste } from "@zakki/core/conversion/paste.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
@@ -896,7 +896,8 @@ export function App({
 
   // フッターの気分（当日エントリ全体のネガポジ極性）。converted の純粋な導出
   const entryMood = useMemo(() => {
-    const text = convertRaw(raw).text;
+    // convertRaw はマーカー温存になったため、解析（表示系）ではここで strip する
+    const text = stripPasteMarkers(convertRaw(raw).text);
     return text.trim() === "" ? null : scoreSentiment(text);
   }, [raw, conversionVersion, convertRaw]);
 
