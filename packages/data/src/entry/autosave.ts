@@ -1,6 +1,7 @@
 import type { ResultAsync } from "neverthrow";
 import { okAsync } from "neverthrow";
 import { chunkText } from "@zakki/core/chunk/chunker.ts";
+import { stripPasteMarkers } from "@zakki/core/conversion/paste.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { SavedEntry } from "@zakki/data/entry/repository.ts";
@@ -27,7 +28,13 @@ export function persistEntry(
   db: Db,
   input: { date: string; sessionId?: number; raw: string; converted: string },
 ): ResultAsync<SavedEntry, DbError> {
-  return saveSnapshot(db, { ...input, chunks: chunkText(input.converted) });
+  // チャンク化はマーカー付きで行い（凍結リテラル境界を保つ）、保存値は strip する。
+  // strip 済み入力には no-op（後方互換）
+  return saveSnapshot(db, {
+    ...input,
+    converted: stripPasteMarkers(input.converted),
+    chunks: chunkText(input.converted),
+  });
 }
 
 /**
@@ -46,7 +53,7 @@ export function saveSessionEntry(
           date: session.date,
           sessionId: session.id,
           raw: input.raw,
-          converted: input.converted,
+          converted: stripPasteMarkers(input.converted),
           chunks: chunkText(input.converted),
         }),
   );
