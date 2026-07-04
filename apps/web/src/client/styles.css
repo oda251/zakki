@@ -162,3 +162,70 @@ body,
 .empty-note {
   @apply px-2 py-4 text-sm text-ink-muted;
 }
+
+/* ---- Composer.Web（docs/COMPOSER.md） ---- */
+
+.composer {
+  @apply cursor-text rounded border px-2 py-1.5 outline-none;
+  border-color: var(--hairline);
+  min-height: 6rem;
+}
+
+.composer--focused {
+  border-color: var(--accent);
+}
+
+.composer .chunk {
+  @apply relative pr-6;
+}
+
+.composer .chunk:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.composer__delete {
+  @apply absolute right-1 top-1 hidden cursor-pointer rounded border-0 bg-transparent px-1 text-xs text-ink-muted;
+}
+
+.composer .chunk:hover .composer__delete {
+  display: inline;
+}
+.composer__delete:hover {
+  color: var(--text-primary);
+}
+
+.composer__live {
+  white-space: pre-wrap;
+}
+
+.composer__edit {
+  @apply w-full rounded border bg-transparent px-2 py-1.5 text-sm text-ink outline-none;
+  border-color: var(--accent);
+  font-family: inherit;
+}
+
+.composer__caret {
+  @apply ml-0.5 inline-block align-text-bottom;
+  width: 2px;
+  height: 1.1em;
+  background: var(--accent);
+  animation: composer-caret-blink 1.1s steps(1) infinite;
+}
+
+.composer--focused .composer__caret {
+  background: var(--text-primary);
+}
+
+@keyframes composer-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.composer__status {
+  @apply mt-1 text-right text-xs text-ink-muted;
+}
+
+.composer__session {
+  @apply mb-1 text-xs text-ink-muted;
+}
