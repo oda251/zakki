@@ -80,6 +80,21 @@ describe("analyzeAll", () => {
     }
   });
 
+  test("manual リンク（自動リンク機能で付与）は analyzeAll の auto 張り替え後も残る", async () => {
+    await seed("2026-06-12", ["最初の話。", "全然関係ない別の話。"]);
+    const { listChunksWithDate } = await import("@zakki/data/entry/queries.ts");
+    const { addManualLink } = await import("@zakki/data/link/repository.ts");
+    const chunks = (await listChunksWithDate(db))._unsafeUnwrap();
+    const [a, b] = chunks.map((c) => c.id);
+    if (a === undefined || b === undefined) throw new Error("seed 不足");
+
+    (await addManualLink(db, a, b))._unsafeUnwrap();
+    (await analyzeAll(db))._unsafeUnwrap();
+
+    const links = (await listLinksByChunk(db))._unsafeUnwrap();
+    expect(links.get(a)).toContain(b);
+  });
+
   test("セッションタグ（ユーザ明示）は解析の全消し再挿入・孤立削除に干渉されない", async () => {
     const session = (await createSession(db, { name: "調査", date: "2026-06-12" }))._unsafeUnwrap();
     (await setSessionTags(db, session.id, ["web", "設計"]))._unsafeUnwrap();
