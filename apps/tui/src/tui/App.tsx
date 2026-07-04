@@ -8,9 +8,8 @@ import { fmtPolarity, moodColor, scoreSentiment } from "@zakki/core/analysis/sen
 import { saveConversion } from "@zakki/data/conversion/cache.ts";
 import { saveCorrection } from "@zakki/data/conversion/corrections.ts";
 import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
-import { stripPasteMarkers, wrapPaste } from "@zakki/core/conversion/paste.ts";
-import { ConversionPipeline } from "@zakki/core/conversion/pipeline.ts";
-import { segmentKana } from "@zakki/core/conversion/segment.ts";
+import { createConversionSession } from "@zakki/core/conversion/compose.ts";
+import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
@@ -168,53 +167,33 @@ export function App({
   // setCursor は「取りこぼし防止＋表示更新」の意味で moveCursor と呼ぶ。
   const { setRaw, setEditing, bumpConversion: bump, setCursor: moveCursor } = store.getState();
 
-  const pipeline = useMemo(
+  // 変換合成（機能ロジック）は core と共有し、副作用（永続化・エラー表示）だけ注入する
+  const conversion = useMemo(
     () =>
-      new ConversionPipeline(engine, bump, (m) => setMessage(`変換エラー: ${m}`), {
+      createConversionSession(engine, {
         corrections,
         cache: conversionCache,
+        onUpdate: bump,
+        onError: (m) => setMessage(`変換エラー: ${m}`),
         // 確定した変換を永続化し、次回起動時にシードして全文再変換を避ける
         onConverted: (kana, conv) => {
           void saveConversion(db, kana, conv).mapErr((e) => setMessage(`変換保存: ${e.message}`));
         },
+        onChosen: (kana, chosen) => {
+          void saveCorrection(db, kana, chosen).match(
+            () => {},
+            (e) => setMessage(`学習エラー: ${e.message}`),
+          );
+        },
       }),
     [engine, corrections, conversionCache, db, bump],
   );
-
-  /** raw（凍結リテラル込み）を確定テキストへ変換する共通処理（保存・確定・凍結で共有） */
-  const convertRaw = useCallback(
-    (input: string, flush = false) => {
-      const applied = pipeline.apply(convertRomaji(input, { flush }).converted);
-      return { text: stripPasteMarkers(applied.text), converting: applied.converting };
-    },
-    [pipeline],
-  );
-
-  /** ローマ字 1 文を確定テキストへ変換し、変換が settled かを返す（凍結判定用） */
-  const convertSettled = useCallback(
-    (sentenceRomaji: string) => {
-      const { text, converting } = convertRaw(sentenceRomaji, true);
-      return { text, settled: converting === 0 };
-    },
-    [convertRaw],
-  );
-
+  const { convertRaw, convertSettled } = conversion;
   // Tab: 直前の変換単位の候補ローテーション。選択は corrections に学習する
-  const rotateLastSegment = useCallback(() => {
-    const kana = convertRomaji(store.getState().raw).converted;
-    const target = segmentKana(kana)
-      .filter((s) => s.complete && !s.separator)
-      .at(-1);
-    if (target === undefined) {
-      return;
-    }
-    pipeline.rotate(target.text, (chosen) => {
-      void saveCorrection(db, target.text, chosen).match(
-        () => {},
-        (e) => setMessage(`学習エラー: ${e.message}`),
-      );
-    });
-  }, [db, pipeline, store]);
+  const rotateLastSegment = useCallback(
+    () => conversion.rotateLastSegment(store.getState().raw),
+    [conversion, store],
+  );
 
   // タグ・関連の鮮度は前回解析時点でよい（次回の解析で追いつく）。
   // 任意の日付を再エクスポートする（過去チャンク編集後の反映に使う）。
@@ -817,11 +796,10 @@ export function App({
   // ライブ末尾は分解済みブロックから取る（末尾ブロックが非凍結ならそれ）
   const lastBlock = blocks.at(-1);
   const liveRaw = lastBlock !== undefined && !lastBlock.frozen ? lastBlock.text : "";
-  const live = useMemo(() => {
-    const { converted, pending } = convertRomaji(liveRaw);
-    const applied = pipeline.apply(converted);
-    return { text: applied.text, pending, converting: applied.converting };
-  }, [liveRaw, conversionVersion, pipeline]);
+  const live = useMemo(
+    () => conversion.convertLive(liveRaw),
+    [liveRaw, conversionVersion, conversion],
+  );
   // 現在のレンズ（メイン / 関連 / 詳細）でカーソルを有効域へ補正する
   // （New 追従・チャンク削除時のフォールバック）。
   const lens = useMemo<ScreenLens>(
