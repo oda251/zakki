@@ -4,6 +4,7 @@ import * as v from "valibot";
 import { loadConversionCache, saveConversion } from "@zakki/data/conversion/cache.ts";
 import { loadCorrections, saveCorrection } from "@zakki/data/conversion/corrections.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
+import { parseBody } from "@zakki/web/server/parse.ts";
 import { respond } from "@zakki/web/server/respond.ts";
 
 const ConvertSchema = v.object({
@@ -13,15 +14,6 @@ const ConvertSchema = v.object({
 const SaveConversionSchema = v.object({ kana: v.string(), converted: v.string() });
 const SaveCorrectionSchema = v.object({ kana: v.string(), chosen: v.string() });
 
-async function parseBody<T extends v.GenericSchema>(
-  req: Request,
-  schema: T,
-): Promise<v.InferOutput<T> | null> {
-  const body: unknown = await req.json().catch(() => null);
-  const parsed = v.safeParse(schema, body);
-  return parsed.success ? parsed.output : null;
-}
-
 export function conversionRoutes(deps: AppDeps): Hono {
   const { db, engine } = deps;
   const app = new Hono();
@@ -30,9 +22,9 @@ export function conversionRoutes(deps: AppDeps): Hono {
   app.post("/convert", async (c) => {
     const body = await parseBody(c.req.raw, ConvertSchema);
     if (body === null) return c.json({ error: "invalid body" }, 400);
-    return engine.convert(body.kana, body.leftContext).match(
-      (candidates) => c.json({ candidates }),
-      (e) => c.json({ error: e.message }, 500),
+    return respond(
+      c,
+      engine.convert(body.kana, body.leftContext).map((candidates) => ({ candidates })),
     );
   });
 

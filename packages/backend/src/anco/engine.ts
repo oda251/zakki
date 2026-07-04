@@ -1,7 +1,9 @@
 import type { Subprocess } from "bun";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { errAsync, ResultAsync } from "neverthrow";
 import type { EngineError, KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
+import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
 import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
@@ -22,6 +24,17 @@ export function defaultZenzPath(): string {
     process.env["ZAKKI_ZENZ_PATH"] ??
     join(xdgDataHome(), "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf")
   );
+}
+
+/**
+ * 環境からのエンジン解決（TUI / web サーバの合成点が共有）。
+ * anco 未導入なら identity（かな素通し）へフォールバックし、zenz GGUF があれば文脈校正を有効化。
+ */
+export function resolveDefaultEngine(): KanaKanjiEngine {
+  const ancoPath = defaultAncoPath();
+  if (!existsSync(ancoPath)) return identityEngine;
+  const zenzPath = defaultZenzPath();
+  return new AncoEngine(ancoPath, existsSync(zenzPath) ? zenzPath : undefined);
 }
 
 const toEngineError = (cause: unknown): EngineError => ({

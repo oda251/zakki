@@ -5,8 +5,9 @@
 import type { GraphData } from "@zakki/data/graph/queries.ts";
 import type { SessionWithTags } from "@zakki/data/session/repository.ts";
 import type { Chunk, Entry, Session } from "@zakki/data/db/schema.ts";
+import type { RelatedChunk } from "@zakki/data/embedding/semantic.ts";
 
-export type { GraphData, SessionWithTags };
+export type { GraphData, SessionWithTags, RelatedChunk };
 export type { GraphEdge, GraphNode } from "@zakki/data/graph/queries.ts";
 export type { Chunk, Entry, Session };
 
@@ -67,13 +68,6 @@ export interface SaveConversionRequest {
 export interface SaveCorrectionRequest {
   kana: string;
   chosen: string;
-}
-
-export interface RelatedChunk {
-  chunkId: number;
-  date: string;
-  content: string;
-  score: number;
 }
 
 export interface RelatedResponse {

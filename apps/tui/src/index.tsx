@@ -1,11 +1,9 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { existsSync } from "node:fs";
-import { AncoEngine, defaultAncoPath, defaultZenzPath } from "@zakki/backend/anco/engine.ts";
+import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { loadConversionCache } from "@zakki/data/conversion/cache.ts";
 import { loadCorrections } from "@zakki/data/conversion/corrections.ts";
-import { identityEngine } from "@zakki/core/conversion/engine.ts";
-import { createRuriEmbedder } from "@zakki/backend/embedding/embedder.ts";
+import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
 import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
@@ -69,11 +67,7 @@ const entry = await getOrCreateEntry(db, date).match(
 // anco 未導入（scripts/install-anco.sh 未実行）の環境では、かなのまま
 // 動作する identity エンジンにフォールバックする（docs/FEATURES.md §変換エンジン）。
 // zenz GGUF（scripts/install-zenz.sh）があれば文脈校正を有効化する
-const ancoPath = defaultAncoPath();
-const zenzPath = defaultZenzPath();
-const engine = existsSync(ancoPath)
-  ? new AncoEngine(ancoPath, existsSync(zenzPath) ? zenzPath : undefined)
-  : identityEngine;
+const engine = resolveDefaultEngine();
 
 const corrections = await loadCorrections(db).unwrapOr(new Map());
 // 永続化済みの自動変換キャッシュをシードし、毎起動の全文再変換を避ける
@@ -81,7 +75,7 @@ const conversionCache = await loadConversionCache(db).unwrapOr(new Map());
 
 // embedding は遅延ロード（初回 embed 時にモデル取得）のため起動をブロックしない。
 // ZAKKI_NO_EMBEDDING=1 で無効化できる（完全決定的動作）
-const embedder = process.env["ZAKKI_NO_EMBEDDING"] === "1" ? null : createRuriEmbedder();
+const embedder = resolveDefaultEmbedder();
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(

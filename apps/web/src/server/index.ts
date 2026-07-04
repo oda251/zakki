@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
-import { AncoEngine, defaultAncoPath, defaultZenzPath } from "@zakki/backend/anco/engine.ts";
-import { createRuriEmbedder } from "@zakki/backend/embedding/embedder.ts";
-import { identityEngine } from "@zakki/core/conversion/engine.ts";
+import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
+import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
 import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
@@ -36,13 +34,8 @@ if (process.env["ZAKKI_ENCRYPTION"] === "1") {
 
 await sync();
 
-const ancoPath = defaultAncoPath();
-const zenzPath = defaultZenzPath();
-const engine = existsSync(ancoPath)
-  ? new AncoEngine(ancoPath, existsSync(zenzPath) ? zenzPath : undefined)
-  : identityEngine;
-
-const embedder = process.env["ZAKKI_NO_EMBEDDING"] === "1" ? null : createRuriEmbedder();
+const engine = resolveDefaultEngine();
+const embedder = resolveDefaultEmbedder();
 
 const analysis = createAnalysisScheduler(db, embedder, (m) => console.error(`zakki-web: ${m}`));
 const app = createApp({ db, engine, embedder, analysis });

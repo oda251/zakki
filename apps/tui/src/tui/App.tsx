@@ -2,7 +2,7 @@ import { decodePasteBytes } from "@opentui/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
-import { analyzeAll } from "@zakki/backend/analysis/service.ts";
+import { runAnalysisPass } from "@zakki/backend/analysis/pass.ts";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { fmtPolarity, moodColor, scoreSentiment } from "@zakki/core/analysis/sentiment.ts";
 import { saveConversion } from "@zakki/data/conversion/cache.ts";
@@ -14,8 +14,7 @@ import { segmentKana } from "@zakki/core/conversion/segment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
-import { addSemanticLinks, nearestChunks } from "@zakki/data/embedding/semantic.ts";
-import { loadVectors, syncChunkEmbeddings } from "@zakki/data/embedding/store.ts";
+import { nearestChunks } from "@zakki/data/embedding/semantic.ts";
 import { persistEntry } from "@zakki/data/entry/autosave.ts";
 import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
 import { getChunkContext, listChunksWithDate } from "@zakki/data/entry/queries.ts";
@@ -263,31 +262,17 @@ export function App({
 
   /** 保存より粗い周期で走るバックグラウンド処理: 解析 → 埋め込み → エクスポート */
   const runBackgroundPass = useCallback(() => {
-    void analyzeAll(db).mapErr((e) => setMessage(`解析: ${e.message}`));
-    const finish = () => {
-      void exportCurrent().then((result) => {
-        result?.mapErr((e) => setMessage(`export: ${e.message}`));
+    void runAnalysisPass(db, embedder, setMessage)
+      .then((vectors) => {
+        if (vectors !== null) {
+          refreshAmbient(vectors);
+        }
+      })
+      .finally(() => {
+        void exportCurrent().then((result) => {
+          result?.mapErr((e) => setMessage(`export: ${e.message}`));
+        });
       });
-    };
-    if (embedder === null) {
-      finish();
-      return;
-    }
-    void syncChunkEmbeddings(db, embedder)
-      .then((synced) =>
-        synced
-          .asyncAndThen(() => loadVectors(db))
-          .match(
-            (vectors) => {
-              void addSemanticLinks(db, vectors).mapErr((e) =>
-                setMessage(`関連付け: ${e.message}`),
-              );
-              refreshAmbient(vectors);
-            },
-            (e) => setMessage(`埋め込み: ${e.message}`),
-          ),
-      )
-      .finally(finish);
   }, [db, embedder, exportCurrent, refreshAmbient]);
 
   const exit = useCallback(() => {

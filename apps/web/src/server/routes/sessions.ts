@@ -1,19 +1,17 @@
 import { Hono } from "hono";
-import { okAsync } from "neverthrow";
 import * as v from "valibot";
-import { chunkText } from "@zakki/core/chunk/chunker.ts";
-import { localDate } from "@zakki/data/entry/autosave.ts";
-import { getSessionEntryWithChunks, saveSnapshot } from "@zakki/data/entry/repository.ts";
+import { localDate, saveSessionEntry } from "@zakki/data/entry/autosave.ts";
+import { getSessionEntryWithChunks } from "@zakki/data/entry/repository.ts";
 import {
   createSession,
   deleteSession,
   getOrCreateDefaultSession,
-  getSession,
   listSessions,
   renameSession,
   setSessionTags,
 } from "@zakki/data/session/repository.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
+import { intParam, parseBody } from "@zakki/web/server/parse.ts";
 import { respond } from "@zakki/web/server/respond.ts";
 
 const CreateSessionSchema = v.object({
@@ -26,16 +24,6 @@ const DefaultSessionSchema = v.object({
 const RenameSchema = v.object({ name: v.pipe(v.string(), v.minLength(1)) });
 const TagsSchema = v.object({ names: v.array(v.string()) });
 const SaveEntrySchema = v.object({ raw: v.string(), converted: v.string() });
-
-/** JSON ボディを valibot で検証する。失敗は null（呼び出し側で 400） */
-async function parseBody<T extends v.GenericSchema>(
-  req: Request,
-  schema: T,
-): Promise<v.InferOutput<T> | null> {
-  const body: unknown = await req.json().catch(() => null);
-  const parsed = v.safeParse(schema, body);
-  return parsed.success ? parsed.output : null;
-}
 
 export function sessionRoutes(deps: AppDeps): Hono {
   const { db, analysis } = deps;
@@ -57,9 +45,9 @@ export function sessionRoutes(deps: AppDeps): Hono {
   });
 
   app.patch("/:id", async (c) => {
-    const id = Number(c.req.param("id"));
+    const id = intParam(c, "id");
     const body = await parseBody(c.req.raw, RenameSchema);
-    if (!Number.isInteger(id) || body === null) return c.json({ error: "invalid request" }, 400);
+    if (id === null || body === null) return c.json({ error: "invalid request" }, 400);
     return respond(
       c,
       renameSession(db, id, body.name).map(() => ({ ok: true })),
@@ -67,8 +55,8 @@ export function sessionRoutes(deps: AppDeps): Hono {
   });
 
   app.delete("/:id", (c) => {
-    const id = Number(c.req.param("id"));
-    if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+    const id = intParam(c, "id");
+    if (id === null) return c.json({ error: "invalid id" }, 400);
     return respond(
       c,
       deleteSession(db, id).map(() => ({ ok: true })),
@@ -76,9 +64,9 @@ export function sessionRoutes(deps: AppDeps): Hono {
   });
 
   app.put("/:id/tags", async (c) => {
-    const id = Number(c.req.param("id"));
+    const id = intParam(c, "id");
     const body = await parseBody(c.req.raw, TagsSchema);
-    if (!Number.isInteger(id) || body === null) return c.json({ error: "invalid request" }, 400);
+    if (id === null || body === null) return c.json({ error: "invalid request" }, 400);
     return respond(
       c,
       setSessionTags(db, id, body.names).map(() => ({ ok: true })),
@@ -86,8 +74,8 @@ export function sessionRoutes(deps: AppDeps): Hono {
   });
 
   app.get("/:id/entry", (c) => {
-    const id = Number(c.req.param("id"));
-    if (!Number.isInteger(id)) return c.json({ error: "invalid id" }, 400);
+    const id = intParam(c, "id");
+    if (id === null) return c.json({ error: "invalid id" }, 400);
     return respond(
       c,
       getSessionEntryWithChunks(db, id).map((saved) => ({
@@ -99,29 +87,17 @@ export function sessionRoutes(deps: AppDeps): Hono {
 
   // 保存（クライアント側 300ms デバウンス想定）。成功したら解析を予約する
   app.put("/:id/entry", async (c) => {
-    const id = Number(c.req.param("id"));
+    const id = intParam(c, "id");
     const body = await parseBody(c.req.raw, SaveEntrySchema);
-    if (!Number.isInteger(id) || body === null) return c.json({ error: "invalid request" }, 400);
-    return getSession(db, id)
-      .andThen((session) =>
-        session === null
-          ? okAsync(null)
-          : saveSnapshot(db, {
-              date: session.date,
-              sessionId: session.id,
-              raw: body.raw,
-              converted: body.converted,
-              chunks: chunkText(body.converted),
-            }),
-      )
-      .match(
-        (saved) => {
-          if (saved === null) return c.json({ error: `セッションが存在しません: id=${id}` }, 404);
-          analysis.schedule();
-          return c.json({ entry: saved.entry, chunks: saved.chunks });
-        },
-        (e) => c.json({ error: e.message }, 500),
-      );
+    if (id === null || body === null) return c.json({ error: "invalid request" }, 400);
+    return saveSessionEntry(db, id, body).match(
+      (saved) => {
+        if (saved === null) return c.json({ error: `セッションが存在しません: id=${id}` }, 404);
+        analysis.schedule();
+        return c.json({ entry: saved.entry, chunks: saved.chunks });
+      },
+      (e) => c.json({ error: e.message }, 500),
+    );
   });
 
   return app;

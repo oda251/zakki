@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import { NEUTRAL_BAND } from "@zakki/core/analysis/sentiment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
@@ -35,6 +35,32 @@ export function listChunksWithDate(db: Db): ResultAsync<ChunkWithDate[], DbError
       .from(chunks)
       .innerJoin(entries, eq(chunks.entryId, entries.id))
       .orderBy(asc(entries.date), asc(chunks.position));
+    if (crypto === undefined) return rows;
+    return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
+  });
+}
+
+/**
+ * id 指定でチャンクを読む（日付付き・復号済み）。近傍ハイドレート等、
+ * 少数の対象だけ復号したいときに listChunksWithDate の全量復号を避ける。
+ */
+export function listChunksByIds(db: Db, ids: number[]): ResultAsync<ChunkWithDate[], DbError> {
+  const crypto = getCrypto(db);
+  return tryDbAsync(async () => {
+    if (ids.length === 0) return [];
+    const rows = await db
+      .select({
+        id: chunks.id,
+        entryId: chunks.entryId,
+        sessionId: entries.sessionId,
+        position: chunks.position,
+        content: chunks.content,
+        date: entries.date,
+        polarity: chunks.polarity,
+      })
+      .from(chunks)
+      .innerJoin(entries, eq(chunks.entryId, entries.id))
+      .where(inArray(chunks.id, ids));
     if (crypto === undefined) return rows;
     return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
   });

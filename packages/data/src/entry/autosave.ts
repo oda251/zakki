@@ -1,9 +1,11 @@
 import type { ResultAsync } from "neverthrow";
+import { okAsync } from "neverthrow";
 import { chunkText } from "@zakki/core/chunk/chunker.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { SavedEntry } from "@zakki/data/entry/repository.ts";
 import { saveSnapshot } from "@zakki/data/entry/repository.ts";
+import { getSession } from "@zakki/data/session/repository.ts";
 
 /** ローカルタイムゾーンの YYYY-MM-DD */
 export function localDate(d: Date = new Date()): string {
@@ -26,4 +28,26 @@ export function persistEntry(
   input: { date: string; sessionId?: number; raw: string; converted: string },
 ): ResultAsync<SavedEntry, DbError> {
   return saveSnapshot(db, { ...input, chunks: chunkText(input.converted) });
+}
+
+/**
+ * セッション指定の自動保存（web サーバの PUT entry 用）。チャンク化を内包し、
+ * セッション未存在は Err でなく null で返す（呼び出し側が 404 に写せるように）。
+ */
+export function saveSessionEntry(
+  db: Db,
+  sessionId: number,
+  input: { raw: string; converted: string },
+): ResultAsync<SavedEntry | null, DbError> {
+  return getSession(db, sessionId).andThen((session) =>
+    session === null
+      ? okAsync(null)
+      : saveSnapshot(db, {
+          date: session.date,
+          sessionId: session.id,
+          raw: input.raw,
+          converted: input.converted,
+          chunks: chunkText(input.converted),
+        }),
+  );
 }

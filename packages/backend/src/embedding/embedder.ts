@@ -16,6 +16,14 @@ type FeatureExtractor = Awaited<ReturnType<typeof pipeline<"feature-extraction">
  * 遅延ロードの ruri embedder。モデルロード（初回はダウンロード）は
  * 最初の embed() まで発生しないため、起動をブロックしない。
  */
+/**
+ * 環境からの embedder 解決（TUI / web サーバの合成点が共有）。
+ * ZAKKI_NO_EMBEDDING=1 なら null（関連・セマンティック機能を無効化し完全決定的動作）。
+ */
+export function resolveDefaultEmbedder(): Embedder | null {
+  return process.env["ZAKKI_NO_EMBEDDING"] === "1" ? null : createRuriEmbedder();
+}
+
 export function createRuriEmbedder(): Embedder {
   let loading: Promise<FeatureExtractor> | null = null;
   const load = (): Promise<FeatureExtractor> => {
