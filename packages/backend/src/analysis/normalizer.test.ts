@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
-import { analyzeAll } from "@zakki/tui/analysis/service.ts";
+import { analyzeAll } from "@zakki/backend/analysis/service.ts";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
 import { saveSnapshot } from "@zakki/data/entry/repository.ts";
 import { listTagsByChunk } from "@zakki/data/entry/queries.ts";
-import type { TextGenerator } from "@zakki/tui/llm/client.ts";
+import type { TextGenerator } from "@zakki/backend/llm/client.ts";
 import {
   applyTagMerges,
   filterProposalsWithLlm,

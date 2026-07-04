@@ -5,7 +5,7 @@ import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunkTags, tags } from "@zakki/data/db/schema.ts";
-import type { TextGenerator } from "@zakki/tui/llm/client.ts";
+import type { TextGenerator } from "@zakki/backend/llm/client.ts";
 
 /**
  * タグのオントロジー整理（docs/FEATURES.md 候補6）。

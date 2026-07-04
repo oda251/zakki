@@ -7,7 +7,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { analyzeAll } from "@zakki/tui/analysis/service.ts";
+import { analyzeAll } from "@zakki/backend/analysis/service.ts";
 import { fmtPolarity, moodLabel } from "@zakki/core/analysis/sentiment.ts";
 import { createDb } from "@zakki/data/db/client.ts";
 import { dailySentiment } from "@zakki/data/entry/queries.ts";

@@ -1,6 +1,6 @@
 import { fmtPolarity, moodLabel, moodOf, scoreSentiment } from "@zakki/core/analysis/sentiment.ts";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
-import type { TextGenerator } from "@zakki/tui/llm/client.ts";
+import type { TextGenerator } from "@zakki/backend/llm/client.ts";
 
 /**
  * デイリー / ウィークリーダイジェスト（docs/FEATURES.md 候補4）。

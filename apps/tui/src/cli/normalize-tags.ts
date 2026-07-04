@@ -10,12 +10,12 @@ import {
   filterProposalsWithLlm,
   proposeTagMerges,
   type TagWithCount,
-} from "@zakki/tui/analysis/normalizer.ts";
+} from "@zakki/backend/analysis/normalizer.ts";
 import { createDb } from "@zakki/data/db/client.ts";
 import { cosine } from "@zakki/data/embedding/vector.ts";
-import { createRuriEmbedder } from "@zakki/tui/embedding/embedder.ts";
+import { createRuriEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { countTags, listTagsByChunk } from "@zakki/data/entry/queries.ts";
-import { detectLlm } from "@zakki/tui/llm/client.ts";
+import { detectLlm } from "@zakki/backend/llm/client.ts";
 
 const apply = process.argv.includes("--apply");
 const db = await createDb();
