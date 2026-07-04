@@ -13,10 +13,11 @@
     "stats": "bun apps/tui/src/cli/stats.ts",
     "tags": "bun apps/tui/src/cli/normalize-tags.ts",
     "passphrase": "bun apps/tui/src/cli/passphrase.ts",
+    "web": "bun apps/web/src/server/index.ts",
     "test": "bun test",
     "lint": "oxlint --type-check --type-aware",
     "fmt": "oxfmt",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/web"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
