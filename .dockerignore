@@ -1,0 +1,9 @@
+node_modules
+apps/web/dist
+infra
+.git
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.db

@@ -31,6 +31,31 @@ bun run digest          # 当日のふりかえりを vault へ書き出し（--
 bun run tags            # タグの統合提案（--apply で適用）
 ```
 
+## Web UI
+
+グラフビュー（ノード=チャンク、エッジ=関連リンク）を中心にした Web 版。右サイドバーに TUI と同じ入力モデル（ローマ字→自動かな漢字変換、raw 正本・凍結リテラル）の入力欄と関連表示、左に折り畳みメニュー（セッション一覧・作成・タグ）を持つ。
+
+日付ベースの管理は「セッション」に一般化されている。デフォルトは当日のセッション（TUI と同一）で、名前を付けたセッションを同日に複数作成できる。セッションにはユーザが明示的にタグを付けられ（自動タグとは別系統）、グラフをセッションやタグで絞り込める。
+
+```sh
+bun run web:build   # クライアント（Vite）をビルド
+bun run web         # http://localhost:3777 （API + SPA 配信。ZAKKI_WEB_PORT で変更可）
+
+bun run web:dev     # 開発時: vite dev サーバ（:5173）。別途 bun run web で API を起動
+```
+
+Docker で動かす場合（DB は `zakki-data` volume に永続化）:
+
+```sh
+docker compose up --build
+# zenz 込みでビルドする場合: docker compose build --build-arg WITH_ZENZ=1
+```
+
+留意:
+
+- **TUI と Web サーバの同時起動は非推奨**（同一 SQLite への複数ライターとなり、解析パスが競合しうる）。どちらか一方を使う。
+- E2E 暗号（`ZAKKI_ENCRYPTION=1`）の Web サーバはキーファイルによる無言アンロックのみ対応。初回セットアップ・パスフレーズ操作は TUI（`bun start` / `bun run passphrase`）で行う。
+
 どちらも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.cpp server 等）が起動していれば強化される（要約文・類義判定）。未指定時は LM Studio → Ollama の順に自動検出し、`ZAKKI_LLM_BASE_URL` / `ZAKKI_LLM_MODEL` で明示指定もできる。LLM がなければ決定的な集計・編集距離 + embedding のみで動く。
 
 ## ドキュメント
