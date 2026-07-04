@@ -2,21 +2,19 @@ import { decodePasteBytes } from "@opentui/core";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
-import { analyzeAll } from "@zakki/tui/analysis/service.ts";
+import { runAnalysisPass } from "@zakki/backend/analysis/pass.ts";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { fmtPolarity, moodColor, scoreSentiment } from "@zakki/core/analysis/sentiment.ts";
-import { saveConversion } from "@zakki/tui/conversion/cache.ts";
-import { saveCorrection } from "@zakki/tui/conversion/corrections.ts";
+import { saveConversion } from "@zakki/data/conversion/cache.ts";
+import { saveCorrection } from "@zakki/data/conversion/corrections.ts";
 import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
+import { createConversionSession } from "@zakki/core/conversion/compose.ts";
 import { stripPasteMarkers, wrapPaste } from "@zakki/core/conversion/paste.ts";
-import { ConversionPipeline } from "@zakki/core/conversion/pipeline.ts";
-import { segmentKana } from "@zakki/core/conversion/segment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
-import { addSemanticLinks, nearestChunks } from "@zakki/data/embedding/semantic.ts";
-import { loadVectors, syncChunkEmbeddings } from "@zakki/data/embedding/store.ts";
-import { persistEntry } from "@zakki/tui/entry/autosave.ts";
+import { nearestChunks } from "@zakki/data/embedding/semantic.ts";
+import { persistEntry } from "@zakki/data/entry/autosave.ts";
 import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
 import { getChunkContext, listChunksWithDate } from "@zakki/data/entry/queries.ts";
 import {
@@ -169,53 +167,33 @@ export function App({
   // setCursor は「取りこぼし防止＋表示更新」の意味で moveCursor と呼ぶ。
   const { setRaw, setEditing, bumpConversion: bump, setCursor: moveCursor } = store.getState();
 
-  const pipeline = useMemo(
+  // 変換合成（機能ロジック）は core と共有し、副作用（永続化・エラー表示）だけ注入する
+  const conversion = useMemo(
     () =>
-      new ConversionPipeline(engine, bump, (m) => setMessage(`変換エラー: ${m}`), {
+      createConversionSession(engine, {
         corrections,
         cache: conversionCache,
+        onUpdate: bump,
+        onError: (m) => setMessage(`変換エラー: ${m}`),
         // 確定した変換を永続化し、次回起動時にシードして全文再変換を避ける
         onConverted: (kana, conv) => {
           void saveConversion(db, kana, conv).mapErr((e) => setMessage(`変換保存: ${e.message}`));
         },
+        onChosen: (kana, chosen) => {
+          void saveCorrection(db, kana, chosen).match(
+            () => {},
+            (e) => setMessage(`学習エラー: ${e.message}`),
+          );
+        },
       }),
     [engine, corrections, conversionCache, db, bump],
   );
-
-  /** raw（凍結リテラル込み）を確定テキストへ変換する共通処理（保存・確定・凍結で共有） */
-  const convertRaw = useCallback(
-    (input: string, flush = false) => {
-      const applied = pipeline.apply(convertRomaji(input, { flush }).converted);
-      return { text: stripPasteMarkers(applied.text), converting: applied.converting };
-    },
-    [pipeline],
-  );
-
-  /** ローマ字 1 文を確定テキストへ変換し、変換が settled かを返す（凍結判定用） */
-  const convertSettled = useCallback(
-    (sentenceRomaji: string) => {
-      const { text, converting } = convertRaw(sentenceRomaji, true);
-      return { text, settled: converting === 0 };
-    },
-    [convertRaw],
-  );
-
+  const { convertRaw, convertSettled } = conversion;
   // Tab: 直前の変換単位の候補ローテーション。選択は corrections に学習する
-  const rotateLastSegment = useCallback(() => {
-    const kana = convertRomaji(store.getState().raw).converted;
-    const target = segmentKana(kana)
-      .filter((s) => s.complete && !s.separator)
-      .at(-1);
-    if (target === undefined) {
-      return;
-    }
-    pipeline.rotate(target.text, (chosen) => {
-      void saveCorrection(db, target.text, chosen).match(
-        () => {},
-        (e) => setMessage(`学習エラー: ${e.message}`),
-      );
-    });
-  }, [db, pipeline, store]);
+  const rotateLastSegment = useCallback(
+    () => conversion.rotateLastSegment(store.getState().raw),
+    [conversion, store],
+  );
 
   // タグ・関連の鮮度は前回解析時点でよい（次回の解析で追いつく）。
   // 任意の日付を再エクスポートする（過去チャンク編集後の反映に使う）。
@@ -263,31 +241,17 @@ export function App({
 
   /** 保存より粗い周期で走るバックグラウンド処理: 解析 → 埋め込み → エクスポート */
   const runBackgroundPass = useCallback(() => {
-    void analyzeAll(db).mapErr((e) => setMessage(`解析: ${e.message}`));
-    const finish = () => {
-      void exportCurrent().then((result) => {
-        result?.mapErr((e) => setMessage(`export: ${e.message}`));
+    void runAnalysisPass(db, embedder, setMessage)
+      .then((vectors) => {
+        if (vectors !== null) {
+          refreshAmbient(vectors);
+        }
+      })
+      .finally(() => {
+        void exportCurrent().then((result) => {
+          result?.mapErr((e) => setMessage(`export: ${e.message}`));
+        });
       });
-    };
-    if (embedder === null) {
-      finish();
-      return;
-    }
-    void syncChunkEmbeddings(db, embedder)
-      .then((synced) =>
-        synced
-          .asyncAndThen(() => loadVectors(db))
-          .match(
-            (vectors) => {
-              void addSemanticLinks(db, vectors).mapErr((e) =>
-                setMessage(`関連付け: ${e.message}`),
-              );
-              refreshAmbient(vectors);
-            },
-            (e) => setMessage(`埋め込み: ${e.message}`),
-          ),
-      )
-      .finally(finish);
   }, [db, embedder, exportCurrent, refreshAmbient]);
 
   const exit = useCallback(() => {
@@ -832,11 +796,10 @@ export function App({
   // ライブ末尾は分解済みブロックから取る（末尾ブロックが非凍結ならそれ）
   const lastBlock = blocks.at(-1);
   const liveRaw = lastBlock !== undefined && !lastBlock.frozen ? lastBlock.text : "";
-  const live = useMemo(() => {
-    const { converted, pending } = convertRomaji(liveRaw);
-    const applied = pipeline.apply(converted);
-    return { text: applied.text, pending, converting: applied.converting };
-  }, [liveRaw, conversionVersion, pipeline]);
+  const live = useMemo(
+    () => conversion.convertLive(liveRaw),
+    [liveRaw, conversionVersion, conversion],
+  );
   // 現在のレンズ（メイン / 関連 / 詳細）でカーソルを有効域へ補正する
   // （New 追従・チャンク削除時のフォールバック）。
   const lens = useMemo<ScreenLens>(
@@ -933,7 +896,8 @@ export function App({
 
   // フッターの気分（当日エントリ全体のネガポジ極性）。converted の純粋な導出
   const entryMood = useMemo(() => {
-    const text = convertRaw(raw).text;
+    // convertRaw はマーカー温存になったため、解析（表示系）ではここで strip する
+    const text = stripPasteMarkers(convertRaw(raw).text);
     return text.trim() === "" ? null : scoreSentiment(text);
   }, [raw, conversionVersion, convertRaw]);
 

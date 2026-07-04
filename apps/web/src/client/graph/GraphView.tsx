@@ -1,0 +1,134 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import ForceGraph2D from "react-force-graph-2d";
+import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { clampText } from "@zakki/web/client/graph/clamp.ts";
+import type { GraphNode } from "@zakki/web/shared/api-types.ts";
+import {
+  SERIES_SLOTS,
+  seriesSlotBySession,
+  useGraphStore,
+  visibleGraph,
+} from "@zakki/web/client/store/graph.ts";
+
+/** canvas は CSS 変数を解決できないため、実色は computed style から一度だけ読む */
+function resolvePalette(): { series: string[]; neutral: string; ink: string; hairline: string } {
+  const style = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+  return {
+    series: Array.from({ length: SERIES_SLOTS }, (_, i) => read(`--series-${i + 1}`, "#3987e5")),
+    neutral: read("--node-neutral", "#6b6a64"),
+    ink: read("--text-secondary", "#c3c2b7"),
+    hairline: read("--baseline", "#383835"),
+  };
+}
+
+interface ForceNode {
+  id: number;
+  node: GraphNode;
+  /** clamp 済みラベル（毎フレームの Segmenter 実行を避けるため生成時に計算） */
+  label: string;
+  x?: number;
+  y?: number;
+}
+
+const NODE_RADIUS = 4;
+
+export function GraphView() {
+  const data = useGraphStore((s) => s.data);
+  const filter = useGraphStore((s) => s.filter);
+  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
+  const selectNode = useGraphStore((s) => s.selectNode);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const palette = useMemo(resolvePalette, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el === null) return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry !== undefined) {
+        setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // force-graph は graphData が変わるとシミュレーションを再加熱する。ノードラッパーを
+  // id で使い回して座標（x/y）を引き継ぎ、フィルタ切り替えでレイアウトが最初から
+  // やり直しになるのを避ける。
+  const nodeCache = useRef(new Map<number, ForceNode>());
+  const graphData = useMemo(() => {
+    if (data === null) return { nodes: [], links: [] };
+    const { nodes, edges } = visibleGraph(data, filter);
+    return {
+      nodes: nodes.map((node): ForceNode => {
+        const cached = nodeCache.current.get(node.id);
+        if (cached !== undefined) {
+          if (cached.node !== node) {
+            cached.node = node;
+            cached.label = clampText(node.content);
+          }
+          return cached;
+        }
+        const created: ForceNode = { id: node.id, node, label: clampText(node.content) };
+        nodeCache.current.set(node.id, created);
+        return created;
+      }),
+      links: edges.map((e) => ({ source: e.from, target: e.to, score: e.score })),
+    };
+  }, [data, filter]);
+
+  const slotBySession = useMemo(
+    () => (data === null ? new Map<number, number>() : seriesSlotBySession(data.sessions)),
+    [data],
+  );
+
+  const colorOf = (node: GraphNode): string => {
+    const slot = slotBySession.get(node.sessionId);
+    return slot === undefined ? palette.neutral : (palette.series[slot] ?? palette.neutral);
+  };
+
+  return (
+    <div ref={containerRef} className="main-pane">
+      {size.width > 0 && (
+        <ForceGraph2D
+          width={size.width}
+          height={size.height}
+          graphData={graphData}
+          backgroundColor="transparent"
+          linkColor={() => palette.hairline}
+          linkWidth={(l) => Math.max(1, ((l as { score: number }).score - 0.8) * 10)}
+          nodeRelSize={NODE_RADIUS}
+          nodeLabel={(n) => {
+            const { node } = n as ForceNode;
+            return `${node.date}${node.sessionName === null ? "" : ` / ${node.sessionName}`}<br/>${makeTitle(node.content)}`;
+          }}
+          nodeCanvasObject={(n, ctx, globalScale) => {
+            const { node, label, x, y } = n as ForceNode;
+            if (x === undefined || y === undefined) return;
+            ctx.beginPath();
+            ctx.arc(x, y, NODE_RADIUS, 0, 2 * Math.PI);
+            ctx.fillStyle = colorOf(node);
+            ctx.fill();
+            if (node.id === selectedNodeId) {
+              ctx.lineWidth = 1.5;
+              ctx.strokeStyle = "#ffffff";
+              ctx.stroke();
+            }
+            // 本文の clamp ラベルを常時表示（セッション単位表示でノード数は絞られている前提）
+            const fontSize = Math.min(Math.max(10 / globalScale, 3), 8);
+            ctx.font = `${fontSize}px system-ui, sans-serif`;
+            ctx.fillStyle = palette.ink;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            ctx.fillText(label, x, y + NODE_RADIUS + 1);
+          }}
+          onNodeClick={(n) => selectNode((n as ForceNode).id)}
+          onBackgroundClick={() => selectNode(null)}
+        />
+      )}
+    </div>
+  );
+}

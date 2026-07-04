@@ -2,6 +2,7 @@ node_modules/
 *.sqlite
 *.sqlite-journal
 *.db
+apps/web/dist/
 
 # Pulumi (infra/)
 infra/bin/

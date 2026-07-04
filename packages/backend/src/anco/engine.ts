@@ -1,7 +1,9 @@
 import type { Subprocess } from "bun";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { errAsync, ResultAsync } from "neverthrow";
 import type { EngineError, KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
+import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
 import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
@@ -11,12 +13,28 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** 候補ローテーション（手動修正 UX）に使う n-best の数 */
 const CANDIDATE_COUNT = 5;
 
+/** anco バイナリの場所。ZAKKI_ANCO_PATH で上書き可能（Docker 等で /opt に焼く用） */
 export function defaultAncoPath(): string {
-  return join(xdgDataHome(), "zakki", "anco", "anco");
+  return process.env["ZAKKI_ANCO_PATH"] ?? join(xdgDataHome(), "zakki", "anco", "anco");
 }
 
+/** zenz GGUF の場所。ZAKKI_ZENZ_PATH で上書き可能 */
 export function defaultZenzPath(): string {
-  return join(xdgDataHome(), "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf");
+  return (
+    process.env["ZAKKI_ZENZ_PATH"] ??
+    join(xdgDataHome(), "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf")
+  );
+}
+
+/**
+ * 環境からのエンジン解決（TUI / web サーバの合成点が共有）。
+ * anco 未導入なら identity（かな素通し）へフォールバックし、zenz GGUF があれば文脈校正を有効化。
+ */
+export function resolveDefaultEngine(): KanaKanjiEngine {
+  const ancoPath = defaultAncoPath();
+  if (!existsSync(ancoPath)) return identityEngine;
+  const zenzPath = defaultZenzPath();
+  return new AncoEngine(ancoPath, existsSync(zenzPath) ? zenzPath : undefined);
 }
 
 const toEngineError = (cause: unknown): EngineError => ({

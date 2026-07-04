@@ -18,8 +18,10 @@
     "types": ["bun"],
     "paths": {
       "@zakki/core/*": ["./packages/core/src/*"],
+      "@zakki/backend/*": ["./packages/backend/src/*"],
       "@zakki/data/*": ["./packages/data/src/*"],
-      "@zakki/tui/*": ["./apps/tui/src/*"]
+      "@zakki/tui/*": ["./apps/tui/src/*"],
+      "@zakki/web/*": ["./apps/web/src/*"]
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": ["infra/**"],
+  "ignorePatterns": ["infra/**", "apps/web/dist/**"],
   "categories": {
     "correctness": "error",
     "suspicious": "warn"

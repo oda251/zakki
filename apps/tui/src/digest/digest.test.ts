@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
-import type { TextGenerator } from "@zakki/tui/llm/client.ts";
+import type { TextGenerator } from "@zakki/backend/llm/client.ts";
 import { deterministicDigest, generateDigest } from "./digest.ts";
 
 const input = {
