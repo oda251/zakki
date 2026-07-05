@@ -52,6 +52,12 @@ export async function openClient(
       : createClient({ url, syncUrl: sync.syncUrl, authToken: sync.authToken });
   // FK cascade に依存する（store.ts はチャンク削除で embeddings を連鎖削除する）
   await client.execute("PRAGMA foreign_keys = ON");
+  if (sync === undefined) {
+    // 書き込み（保存・解析パス）中も読み（graph/related）をブロックしないよう WAL にする。
+    // embedded replica は libsql 側が WAL 前提で管理するため触らない。
+    await client.execute("PRAGMA journal_mode = WAL");
+    await client.execute("PRAGMA busy_timeout = 5000");
+  }
   const db = drizzle(client, { schema });
   await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
   return { client, db };
