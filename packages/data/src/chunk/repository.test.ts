@@ -66,6 +66,42 @@ describe("saveChildren", () => {
     expect(await db.select().from(chunks)).toHaveLength(1); // 日付チャンクのみ残る
   });
 
+  test("上の行の削除で position がずれてもコンテナの id とサブツリーを保つ", async () => {
+    const root = (await getOrCreateDateChunk(db, "2026-07-06"))._unsafeUnwrap();
+    const [a, b, container] = (
+      await saveChildren(db, root.id, [{ content: "A。" }, { content: "B。" }, { content: "調査" }])
+    )._unsafeUnwrap();
+    if (a === undefined || b === undefined || container === undefined) throw new Error("seed 不足");
+    (await saveChildren(db, container.id, [{ content: "中身。" }]))._unsafeUnwrap();
+
+    // A。 を削除 → 残る行は content 一致で既存 id に紐付き、コンテナは生き残る
+    const after = (
+      await saveChildren(db, root.id, [{ content: "B。" }, { content: "調査" }])
+    )._unsafeUnwrap();
+    expect(after.map((c) => [c.id, c.content, c.position])).toEqual([
+      [b.id, "B。", 0],
+      [container.id, "調査", 1],
+    ]);
+    expect((await listChildren(db, container.id))._unsafeUnwrap().map((c) => c.content)).toEqual([
+      "中身。",
+    ]);
+  });
+
+  test("行の編集は content 不一致でも位置対応で id を保つ", async () => {
+    const root = (await getOrCreateDateChunk(db, "2026-07-06"))._unsafeUnwrap();
+    const [a, b] = (
+      await saveChildren(db, root.id, [{ content: "A。" }, { content: "B。" }])
+    )._unsafeUnwrap();
+    if (a === undefined || b === undefined) throw new Error("seed 不足");
+    const after = (
+      await saveChildren(db, root.id, [{ content: "A改。" }, { content: "B。" }])
+    )._unsafeUnwrap();
+    expect(after.map((c) => [c.id, c.content])).toEqual([
+      [a.id, "A改。"],
+      [b.id, "B。"],
+    ]);
+  });
+
   test("別の親のチャンクには影響しない", async () => {
     const a = (await getOrCreateDateChunk(db, "2026-07-05"))._unsafeUnwrap();
     const b = (await getOrCreateDateChunk(db, "2026-07-06"))._unsafeUnwrap();
