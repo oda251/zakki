@@ -119,6 +119,39 @@ describe("analyzeChanged（増分解析）", () => {
     expect(third).toEqual({ taggedChunks: 0, links: 0 });
   });
 
+  test("エントリ中間へのチャンク挿入（position シフトが固定 id の content 変更として検出される）", async () => {
+    // chunks は (entry_id, position) で upsert されるため、中間へのチャンク挿入は
+    // 後続 position の行 id はそのままに content だけが後ろへシフトして書き換わる。
+    // updatedAt + 格納値比較の増分検出がこれを正しく「変更」として拾えるかを見る。
+    const inc = await createDb(":memory:");
+    const full = await createDb(":memory:");
+    const seedBoth = async (date: string, contents: string[]) => {
+      await seed(inc, date, contents);
+      await seed(full, date, contents);
+    };
+
+    await seedBoth("2026-06-10", [
+      "最初のチャンク。散歩の話。",
+      "二番目のチャンク。天気の話。",
+      "三番目のチャンク。辞書の話。",
+    ]);
+    (await analyzeChanged(inc))._unsafeUnwrap();
+    (await analyzeAll(full))._unsafeUnwrap();
+    expect(await readState(inc)).toEqual(await readState(full));
+
+    // position 1 に新しいチャンクを挿入 → 既存 position 1, 2 の id は
+    // そのままシフトした内容で上書きされ、position 3 は新規行になる
+    await seedBoth("2026-06-10", [
+      "最初のチャンク。散歩の話。",
+      "挿入された新しいチャンク。辞書の話。",
+      "二番目のチャンク。天気の話。",
+      "三番目のチャンク。辞書の話。",
+    ]);
+    (await analyzeChanged(inc))._unsafeUnwrap();
+    (await analyzeAll(full))._unsafeUnwrap();
+    expect(await readState(inc)).toEqual(await readState(full));
+  });
+
   test("manual リンクは変更チャンクが関与しても増分パスで消えない", async () => {
     const db = await createDb(":memory:");
     await seed(db, "2026-06-10", ["最初の話。", "全然関係ない別の話。"]);

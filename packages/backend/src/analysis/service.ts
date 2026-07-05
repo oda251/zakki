@@ -40,11 +40,9 @@ interface ChunkState {
 }
 
 /**
- * 前回解析のプロセス内スナップショット（issue #24）。
- *
- * DB 側に解析メタを持たせず（スキーマ変更・同期トラフィックを増やさず）、
- * プロセスごとに「起動後初回は全量、以降は増分」で運用する。tags は
- * 前回 chunk_tags に書いた内容（平文名 + スコア）で、差分書き込みの基準。
+ * 前回解析のプロセス内スナップショット（issue #24）。プロセスごとに
+ * 「起動後初回は全量、以降は増分」で運用する（DB 側に解析メタは持たない）。
+ * tags は前回 chunk_tags に書いた内容（平文名 + スコア）で、差分書き込みの基準。
  */
 interface AnalysisSnapshot {
   chunks: Map<number, ChunkState>;
@@ -165,21 +163,12 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
 }
 
 /**
- * 変更されたチャンクだけを再解析する増分パス（issue #24）。
+ * 変更されたチャンクだけを再解析する増分パス（issue #24）。適用後の DB 状態は
+ * {@link analyzeAll} の全量再計算と一致する（差分書き込みのみで達成）。
+ * スナップショットが無い（起動後初回）は analyzeAll に委譲する。
  *
- * プロセス内スナップショットとの updatedAt + 格納値比較で変更を検出し、
- * 復号・名詞抽出・リンク再計算を変更分（とその影響範囲）に限定する。
- * スナップショットが無い（起動後初回）は {@link analyzeAll} に委譲する。
- *
- * 適用後の DB 状態は analyzeAll の全量再計算と一致する:
- * - タグ選定（TF-IDF）はコーパス全体の DF・文書数に依存するため、スコアは
- *   メモリ上で全チャンク分を再計算し（名詞列はスナップショット再利用で
- *   トークナイズ不要）、書き込みは「前回書いた内容と変わったチャンク」に
- *   絞る。チャンク数が変わったパスではスコアが全体に動くため書き込みは
- *   増えるが、復号・トークナイズ・O(N^2) リンク計算は常に変更分に限る。
- * - リンクはスコアが両端の名詞集合のみで決まるため、変更チャンクが関与する
- *   ペアだけ delete → insert で差し替える（{@link computeLinksFor}）。
- * - 極性は content のみの関数なので変更チャンクだけ更新する。
+ * 前提: 本プロセス・本 Db インスタンスが唯一のライタであること。外部書き込み
+ * （将来の Turso 同期など）を取り込んだ後は analyzeAll で正を回復すること。
  *
  * @returns taggedChunks = 再解析した変更チャンク数、links = 張り替えたリンク数
  */
@@ -190,37 +179,55 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
   }
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
-    const rawChunks = await db
-      .select({ id: chunks.id, content: chunks.content, updatedAt: chunks.updatedAt })
-      .from(chunks);
+    // 第 1 段: id + updatedAt だけを取得し、スナップショットとの比較で「動いた候補」を
+    // 絞る。updatedAt が一致する行は content を取得しない（変更ゼロのパスでは
+    // content 転送が一切発生しない）
+    const idRows = await db.select({ id: chunks.id, updatedAt: chunks.updatedAt }).from(chunks);
+    const candidateIds = idRows
+      .filter((row) => {
+        const prev = snapshot.chunks.get(row.id);
+        return prev === undefined || prev.updatedAt !== row.updatedAt;
+      })
+      .map((row) => row.id);
+
+    // 第 2 段: 候補行だけ content を追加取得する
+    const storedById = new Map<number, string>();
+    for (const ids of batched(candidateIds, 200)) {
+      const rows = await db
+        .select({ id: chunks.id, content: chunks.content })
+        .from(chunks)
+        .where(inArray(chunks.id, ids));
+      for (const row of rows) storedById.set(row.id, row.content);
+    }
 
     const states = new Map<number, ChunkState>();
     const changed = new Set<number>();
-    for (const row of rawChunks) {
+    for (const row of idRows) {
       const prev = snapshot.chunks.get(row.id);
-      // 格納値まで一致すれば復号もスキップ（暗号 ON の再保存は暗号文が変わるため通らない）
-      if (prev !== undefined && prev.updatedAt === row.updatedAt && prev.stored === row.content) {
-        states.set(row.id, prev);
+      const stored = storedById.get(row.id);
+      if (stored === undefined) {
+        // 候補外 = updatedAt 一致。単一ライタ前提の下では内容も不変とみなす
+        if (prev !== undefined) states.set(row.id, prev);
         continue;
       }
-      const content =
-        crypto === undefined ? row.content : crypto.decString(row.content, "chunk.content");
-      if (prev !== undefined && prev.content === content) {
-        // 再保存で updatedAt だけ進んだ（内容は同一）。名詞列を引き継ぎ変更扱いにしない
+      // stored 比較（候補に対する第二の変化検知）。updatedAt は動いたが格納バイト列が
+      // 一致するなら内容は不変（暗号 OFF での同一内容再保存など）で復号もスキップ
+      if (prev !== undefined && prev.stored === stored) {
         states.set(row.id, {
           updatedAt: row.updatedAt,
-          stored: row.content,
-          content,
+          stored,
+          content: prev.content,
           nouns: prev.nouns,
         });
         continue;
       }
-      states.set(row.id, {
-        updatedAt: row.updatedAt,
-        stored: row.content,
-        content,
-        nouns: nounsOf(content),
-      });
+      const content = crypto === undefined ? stored : crypto.decString(stored, "chunk.content");
+      if (prev !== undefined && prev.content === content) {
+        // 再保存で updatedAt だけ進んだ（内容は同一）。名詞列を引き継ぎ変更扱いにしない
+        states.set(row.id, { updatedAt: row.updatedAt, stored, content, nouns: prev.nouns });
+        continue;
+      }
+      states.set(row.id, { updatedAt: row.updatedAt, stored, content, nouns: nounsOf(content) });
       changed.add(row.id);
     }
     let removedCount = 0;
