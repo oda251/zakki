@@ -14,7 +14,7 @@ export interface AnalysisScheduler {
 
 /**
  * runAnalysisPass（TUI の runBackgroundPass と共有）のデバウンス + 直列化。
- * chain で直列化する（analyzeAll の並走による tags 全消し再挿入の競合を避ける）。
+ * chain で直列化する（解析パスの並走による chunk_tags 差し替えの競合を避ける）。
  * Obsidian エクスポートはサーバでは行わない（TUI 側の責務のまま）。
  */
 export function createAnalysisScheduler(
