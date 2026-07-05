@@ -2,12 +2,12 @@
  * サーバ（Hono ルート）とクライアント（fetch ラッパ）で共有する API の型。
  * DB 由来の型は @zakki/data から type-only で再輸出する（JSON 直列化可能なもののみ）。
  */
-import type { GraphData } from "@zakki/data/graph/queries.ts";
+import type { GraphData, GraphDelta } from "@zakki/data/graph/queries.ts";
 import type { SessionWithTags } from "@zakki/data/session/repository.ts";
 import type { Chunk, Entry, Session } from "@zakki/data/db/schema.ts";
 import type { RelatedChunk } from "@zakki/data/embedding/semantic.ts";
 
-export type { GraphData, SessionWithTags, RelatedChunk };
+export type { GraphData, GraphDelta, SessionWithTags, RelatedChunk };
 export type { GraphEdge, GraphNode } from "@zakki/data/graph/queries.ts";
 export type { Chunk, Entry, Session };
 

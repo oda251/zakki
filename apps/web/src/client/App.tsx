@@ -21,12 +21,12 @@ export function App() {
     void openToday();
   }, [load, openToday]);
 
-  // サーバ解析（タグ・極性・意味リンク）の完了を SSE で受け、その時だけ再取得する。
+  // サーバ解析（タグ・極性・意味リンク）の完了を SSE で受け、その時だけ差分取得する。
   // 新規ノード自体は保存応答の楽観的更新（Composer → applySaved）で即時反映済み
   useEffect(
     () =>
       subscribeAnalysis(() => {
-        void useGraphStore.getState().load();
+        void useGraphStore.getState().loadDelta();
         void useSessionStore.getState().refreshRelated();
       }),
     [],

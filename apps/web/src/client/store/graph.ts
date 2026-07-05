@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "@zakki/web/client/api/client.ts";
 import type {
   GraphData,
+  GraphDelta,
   GraphEdge,
   GraphNode,
   SessionWithTags,
@@ -41,6 +42,8 @@ interface GraphState {
   filter: GraphFilter;
   selectedNodeId: number | null;
   load: () => Promise<void>;
+  /** SSE（解析完了）後の再取得。前回 version からの差分だけを受けてマージする。初回は全量 */
+  loadDelta: () => Promise<void>;
   /**
    * 保存応答のチャンク列をグラフへ即時反映する（楽観的更新）。
    * サーバ解析（タグ・極性・意味リンク）は待たず、既存ノードの解析結果は温存する。
@@ -58,7 +61,7 @@ interface GraphState {
   selectNode: (id: number | null) => void;
 }
 
-export const useGraphStore = create<GraphState>((set) => ({
+export const useGraphStore = create<GraphState>((set, get) => ({
   data: null,
   error: null,
   filter: { sessionIds: new Set<number>(), tag: null, sessionTag: null },
@@ -68,6 +71,18 @@ export const useGraphStore = create<GraphState>((set) => ({
     try {
       const data = await api.graph();
       set({ data, error: null });
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  loadDelta: async () => {
+    const { data, load } = get();
+    if (data === null) return load();
+    try {
+      const delta = await api.graphDelta(data.version);
+      // マージ基準は応答受信時点の data（取得中の applySaved 等の楽観的更新を上書きしない）
+      set((s) => (s.data === null ? s : { data: mergeDelta(s.data, delta), error: null }));
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
     }
@@ -148,6 +163,26 @@ export const useGraphStore = create<GraphState>((set) => ({
     set({ selectedNodeId: id });
   },
 }));
+
+/**
+ * 差分応答を全量データへマージする純関数（差分適用後 = 全量取得後、が不変条件）。
+ * - nodes: 変更分は置換・aliveNodeIds に無い id は削除・残りは温存（id 昇順に正規化）
+ * - sessionName はノードに非正規化されているため、全量で届く sessions から引き直す（改名反映）
+ * - edges / sessions / version は差分側で全置換
+ */
+export function mergeDelta(data: GraphData, delta: GraphDelta): GraphData {
+  const changed = new Map(delta.nodes.map((n) => [n.id, n]));
+  const alive = new Set(delta.aliveNodeIds);
+  const nameBySession = new Map(delta.sessions.map((s) => [s.id, s.name]));
+  const kept = data.nodes.filter((n) => alive.has(n.id) && !changed.has(n.id));
+  const nodes = [...kept, ...delta.nodes]
+    .toSorted((a, b) => a.id - b.id)
+    .map((n) => {
+      const sessionName = nameBySession.get(n.sessionId) ?? null;
+      return n.sessionName === sessionName ? n : { ...n, sessionName };
+    });
+  return { version: delta.version, nodes, edges: delta.edges, sessions: delta.sessions };
+}
 
 /** セッション id → series スロット（作成順で固定割当。SERIES_SLOTS 超は undefined = neutral） */
 export function seriesSlotBySession(sessions: SessionWithTags[]): Map<number, number> {

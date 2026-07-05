@@ -1,4 +1,4 @@
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import { NEUTRAL_BAND } from "@zakki/core/analysis/sentiment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
@@ -19,10 +19,14 @@ export interface ChunkWithDate {
   polarity: number | null;
 }
 
-export function listChunksWithDate(db: Db): ResultAsync<ChunkWithDate[], DbError> {
+/**
+ * @param since 指定時は `chunks.updatedAt >= since` のみ返す（グラフ差分取得用）。
+ *   同一ミリ秒の書き込みを取りこぼさないよう境界は含める（過剰送信側に倒す）。
+ */
+export function listChunksWithDate(db: Db, since?: string): ResultAsync<ChunkWithDate[], DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
-    const rows = await db
+    const base = db
       .select({
         id: chunks.id,
         entryId: chunks.entryId,
@@ -33,8 +37,9 @@ export function listChunksWithDate(db: Db): ResultAsync<ChunkWithDate[], DbError
         polarity: chunks.polarity,
       })
       .from(chunks)
-      .innerJoin(entries, eq(chunks.entryId, entries.id))
-      .orderBy(asc(entries.date), asc(chunks.position));
+      .innerJoin(entries, eq(chunks.entryId, entries.id));
+    const filtered = since === undefined ? base : base.where(gte(chunks.updatedAt, since));
+    const rows = await filtered.orderBy(asc(entries.date), asc(chunks.position));
     if (crypto === undefined) return rows;
     return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
   });

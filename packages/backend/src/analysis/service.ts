@@ -111,8 +111,14 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
     const rawChunks = await db
-      .select({ id: chunks.id, content: chunks.content, updatedAt: chunks.updatedAt })
+      .select({
+        id: chunks.id,
+        content: chunks.content,
+        updatedAt: chunks.updatedAt,
+        polarity: chunks.polarity,
+      })
       .from(chunks);
+    const oldPolarity = new Map(rawChunks.map((c) => [c.id, c.polarity]));
     // 解析（名詞抽出・極性）は平文に対して行う。暗号 ON は復号した content を使う。
     const states = new Map<number, ChunkState>();
     for (const c of rawChunks) {
@@ -135,13 +141,32 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
       const names = new Set([...tagsByChunk.values()].flat().map((t) => t.name));
       const idByName = await ensureTagIds(tx, crypto, names, now);
 
+      // タグ変化の検出（差分取得が chunks.updatedAt を頼るため）。ペイロードに現れるのは
+      // 「スコア降順のタグ名列」なので、順序付き tagId 列で比較する（スコア値だけの変化は
+      // 表示に影響せず、bump しない）。名前比較と違い復号が不要。
+      const oldTagIds = new Map<number, number[]>();
+      for (const row of await tx
+        .select()
+        .from(chunkTags)
+        .orderBy(sql`rowid`)) {
+        const list = oldTagIds.get(row.chunkId) ?? [];
+        list.push(row.tagId);
+        oldTagIds.set(row.chunkId, list);
+      }
+
       await tx.delete(chunkTags);
+      const tagsChanged = new Set<number>();
       for (const [chunkId, tagList] of tagsByChunk) {
+        const newIds: number[] = [];
         for (const tag of tagList) {
           const tagId = idByName.get(tag.name);
           if (tagId !== undefined) {
             await tx.insert(chunkTags).values({ chunkId, tagId, score: tag.score });
+            newIds.push(tagId);
           }
+        }
+        if (newIds.join(",") !== (oldTagIds.get(chunkId) ?? []).join(",")) {
+          tagsChanged.add(chunkId);
         }
       }
       // どのチャンクにも付かなくなったタグは削除する（乱立防止）
@@ -155,12 +180,14 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
           .onConflictDoNothing();
       }
 
-      // ネガポジ極性（決定的, docs/FEATURES.md §整理・想起系 7）を算出して永続化する
+      // ネガポジ極性（決定的, docs/FEATURES.md §整理・想起系 7）を算出して永続化する。
+      // 解析結果（極性・タグ列）が変わったチャンクだけ updatedAt を進める:
+      // 差分取得（getGraphDelta）が「変更ノード = updatedAt >= since」で拾えるように。
+      // 変化が無ければ書かない（冪等再実行で全ノード再送になるのを防ぐ）。
       for (const [chunkId, state] of states) {
-        await tx
-          .update(chunks)
-          .set({ polarity: scoreSentiment(state.content) })
-          .where(eq(chunks.id, chunkId));
+        const polarity = scoreSentiment(state.content);
+        if (polarity === oldPolarity.get(chunkId) && !tagsChanged.has(chunkId)) continue;
+        await tx.update(chunks).set({ polarity, updatedAt: now }).where(eq(chunks.id, chunkId));
       }
     });
 
@@ -291,14 +318,33 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
           .onConflictDoNothing();
       }
 
-      // 極性は content のみの関数なので変更チャンクだけ更新する
+      // 極性は content のみの関数なので変更チャンクだけ再計算する。差分取得
+      // （getGraphDelta）が「変更ノード = updatedAt >= since」で拾えるよう、
+      // 極性またはタグ列が実際に変わったチャンクだけ updatedAt を進める（analyzeAll と同じ基準）。
+      const dirtyTagSet = new Set(dirtyTagChunks);
+      const oldPolarity = new Map<number, number | null>();
+      for (const ids of batched([...changed], 200)) {
+        const rows = await tx
+          .select({ id: chunks.id, polarity: chunks.polarity })
+          .from(chunks)
+          .where(inArray(chunks.id, ids));
+        for (const row of rows) oldPolarity.set(row.id, row.polarity);
+      }
       for (const chunkId of changed) {
         const state = states.get(chunkId);
         if (state === undefined) continue;
-        await tx
-          .update(chunks)
-          .set({ polarity: scoreSentiment(state.content) })
-          .where(eq(chunks.id, chunkId));
+        const polarity = scoreSentiment(state.content);
+        if (polarity === oldPolarity.get(chunkId) && !dirtyTagSet.has(chunkId)) {
+          await tx.update(chunks).set({ polarity }).where(eq(chunks.id, chunkId));
+          continue;
+        }
+        await tx.update(chunks).set({ polarity, updatedAt: now }).where(eq(chunks.id, chunkId));
+      }
+      // content 自体は不変でも corpus 変動でタグ列だけ変わったチャンクは、極性ループの
+      // 対象外（changed に含まれない）なので別途 updatedAt を進める
+      for (const chunkId of dirtyTagSet) {
+        if (changed.has(chunkId)) continue;
+        await tx.update(chunks).set({ updatedAt: now }).where(eq(chunks.id, chunkId));
       }
     });
 

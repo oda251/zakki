@@ -2,6 +2,7 @@ import type {
   ConversionStateResponse,
   ConvertResponse,
   GraphData,
+  GraphDelta,
   RelatedResponse,
   Session,
   SessionEntryResponse,
@@ -39,6 +40,8 @@ const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
 export const api = {
   graph: () => request<GraphData>("/api/graph"),
+  graphDelta: (since: string) =>
+    request<GraphDelta>(`/api/graph?since=${encodeURIComponent(since)}`),
   sessions: () => request<SessionWithTags[]>("/api/sessions"),
   defaultSession: (date?: string) =>
     request<Session>("/api/sessions/default", { method: "POST", ...json({ date }) }),

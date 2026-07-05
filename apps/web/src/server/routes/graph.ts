@@ -4,7 +4,7 @@ import * as v from "valibot";
 import { getSessionEntryWithChunks } from "@zakki/data/entry/repository.ts";
 import type { RelatedChunk } from "@zakki/data/embedding/semantic.ts";
 import { relatedChunks } from "@zakki/data/embedding/semantic.ts";
-import { getGraph } from "@zakki/data/graph/queries.ts";
+import { getGraph, getGraphDelta } from "@zakki/data/graph/queries.ts";
 import { addManualLink } from "@zakki/data/link/repository.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
 import { intParam, parseBody } from "@zakki/web/server/parse.ts";
@@ -21,7 +21,16 @@ export function graphRoutes(deps: AppDeps): Hono {
   const { db } = deps;
   const app = new Hono();
 
-  app.get("/graph", (c) => respond(c, getGraph(db)));
+  // ?since=<ISO> で差分取得（version は応答に含まれ、次回の since に使う）。
+  // 不正な since は取りこぼし（過小送信）になり得るので 400 で弾く。
+  app.get("/graph", (c) => {
+    const since = c.req.query("since");
+    if (since === undefined) return respond(c, getGraph(db));
+    if (!v.is(v.pipe(v.string(), v.isoTimestamp()), since)) {
+      return c.json({ error: "invalid since" }, 400);
+    }
+    return respond(c, getGraphDelta(db, since));
+  });
 
   // 手動リンク（web の数珠繋ぎ自動リンクが叩く）。from<to 正規化・重複 no-op は data 層
   app.post("/links", async (c) => {
