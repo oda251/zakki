@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { chunkText, makeTitle } from "./chunker.ts";
 
-describe("chunkText", () => {
+describe("chunkText（改行のみを区切りとする）", () => {
   test("改行で分割する", () => {
     expect(chunkText("きょうははれ\nさんぽした")).toEqual([
       { content: "きょうははれ" },
@@ -15,14 +15,9 @@ describe("chunkText", () => {
     expect(drafts.map((d) => d.content)).toEqual(["ひとつめ", "ふたつめ"]);
   });
 
-  test("句点（。！？）で分割し、句点は前の文に残す", () => {
+  test("句点（。！？）では分割しない（Enter だけが区切り）", () => {
     const drafts = chunkText("はれ。さんぽした！たのしかった？おわり");
-    expect(drafts.map((d) => d.content)).toEqual([
-      "はれ。",
-      "さんぽした！",
-      "たのしかった？",
-      "おわり",
-    ]);
+    expect(drafts.map((d) => d.content)).toEqual(["はれ。さんぽした！たのしかった？おわり"]);
   });
 
   test("半角ピリオドでは分割しない", () => {
@@ -39,14 +34,21 @@ describe("chunkText", () => {
     expect(chunkText(input)).toEqual(chunkText(input));
   });
 
-  test("ペースト領域は内部の句点・改行で分割せず 1 チャンクにする", () => {
-    const input = `まえ。${wrapPaste("いち。に。\nさん")}あと`;
+  test("ペースト領域は内部の句点・改行を含んでも分割しない", () => {
+    const input = `${wrapPaste("いち。に。\nさん")}`;
+    expect(chunkText(input)).toEqual([{ content: "いち。に。\nさん" }]);
+  });
+
+  test("同一行のペースト領域と地の文は 1 チャンクへマージする", () => {
+    const input = `まえ。${wrapPaste("いち。に。")}あと\nつぎ`;
     const drafts = chunkText(input);
-    expect(drafts).toEqual([
-      { content: "まえ。" },
-      { content: "いち。に。\nさん" },
-      { content: "あと" },
-    ]);
+    expect(drafts).toEqual([{ content: "まえ。いち。に。あと" }, { content: "つぎ" }]);
+  });
+
+  test("凍結リテラル（行単位）が改行で並ぶときは行ごとのチャンクになる", () => {
+    const input = `${wrapPaste("きょうははれ。")}\n${wrapPaste("さんぽした")}\nkumori`;
+    const drafts = chunkText(input);
+    expect(drafts.map((d) => d.content)).toEqual(["きょうははれ。", "さんぽした", "kumori"]);
   });
 });
 

@@ -6,83 +6,45 @@ export interface ChunkDraft {
 
 const TITLE_MAX_LENGTH = 40;
 
-// 一次区切り（docs/CONCEPT.md §2）: 改行・空行・句点による決定的分割。
-// 句点は全角（。！？）のみを境界とする。半角 . は "3.14" や URL、
-// 英単語パススルー後の英文ピリオドを壊すため境界にしない。
+// タイトル用の一文抽出にのみ使う（チャンク区切りには使わない）。
+// 半角 . は "3.14" や URL を壊すため境界にしない。
 const SENTENCE_BOUNDARY = /(?<=[。！？])/;
 
-interface Span {
-  /** 元テキストの部分文字列（マーカー込み） */
-  text: string;
-  /** ペースト領域（原子チャンク）か */
-  paste: boolean;
-}
-
 /**
- * テキストを「改行・句点」の一次区切りで分割する。ただしペースト領域
- * （PASTE_OPEN…PASTE_CLOSE）は内部を分割せず 1 スパンとして取り出す。
- * 各スパンは元テキストの部分文字列で、連結すると元に戻る（lossless）。
+ * 変換済みテキストをチャンク（投稿単位）へ決定的に分割する。
+ * 区切りは「ペースト領域の外にある改行」のみ（docs/CONCEPT.md §2）。
+ * 句点では分割しない（Enter だけが投稿の区切り）。ペースト／凍結リテラル領域は
+ * 内部に改行があっても分割せず、同一行の地の文とは 1 チャンクへマージする。
  */
-function splitChunkSpans(text: string): Span[] {
-  const spans: Span[] = [];
+export function chunkText(text: string): ChunkDraft[] {
+  const drafts: ChunkDraft[] = [];
   let buf = "";
   const flush = () => {
-    if (buf !== "") {
-      spans.push({ text: buf, paste: false });
-      buf = "";
+    const content = buf.trim();
+    buf = "";
+    if (content !== "") {
+      drafts.push({ content });
     }
   };
 
   let i = 0;
   while (i < text.length) {
     const ch = text.charAt(i);
-
     if (ch === PASTE_OPEN) {
       const end = pasteBlockEnd(text, i);
-      flush();
-      spans.push({ text: text.slice(i, end), paste: true });
+      buf += stripPasteMarkers(text.slice(i, end));
       i = end;
       continue;
     }
-
     if (ch === "\n") {
-      buf += ch;
       flush();
       i += 1;
       continue;
     }
-
     buf += ch;
-    if (ch === "。" || ch === "！" || ch === "？") {
-      flush();
-    }
     i += 1;
   }
   flush();
-  return spans;
-}
-
-/**
- * 変換済みテキストをチャンク（意味単位）へ決定的に分割する（句点・改行の一次区切り）。
- * ペースト／凍結リテラル領域は内部に句点・改行があっても 1 チャンクとして通す。
- */
-export function chunkText(text: string): ChunkDraft[] {
-  const drafts: ChunkDraft[] = [];
-  for (const span of splitChunkSpans(text)) {
-    if (span.paste) {
-      const content = stripPasteMarkers(span.text).trim();
-      if (content !== "") {
-        drafts.push({ content });
-      }
-      continue;
-    }
-    for (const sentence of span.text.split(SENTENCE_BOUNDARY)) {
-      const content = sentence.trim();
-      if (content !== "") {
-        drafts.push({ content });
-      }
-    }
-  }
   return drafts;
 }
 
