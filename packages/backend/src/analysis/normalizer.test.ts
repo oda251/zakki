@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
 import { analyzeAll } from "@zakki/backend/analysis/service.ts";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
-import { saveSnapshot } from "@zakki/data/entry/repository.ts";
-import { listTagsByChunk } from "@zakki/data/entry/queries.ts";
+import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
+import { listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import type { TextGenerator } from "@zakki/backend/llm/client.ts";
 import {
   applyTagMerges,
@@ -79,14 +79,7 @@ describe("applyTagMerges", () => {
   });
 
   test("chunk_tags を代表タグへ付け替え、統合元タグを消す", async () => {
-    (
-      await saveSnapshot(db, {
-        date: "2026-06-13",
-        raw: "",
-        converted: "",
-        chunks: [{ content: "変換辞書と学習辞書の話。" }, { content: "変換器の辞書の続き。" }],
-      })
-    )._unsafeUnwrap();
+    await seedDayChunks(db, "2026-06-13", ["変換辞書と学習辞書の話。", "変換器の辞書の続き。"]);
     (await analyzeAll(db))._unsafeUnwrap();
 
     const before = (await listTagsByChunk(db))._unsafeUnwrap();

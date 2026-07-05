@@ -14,9 +14,10 @@ import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { nearestChunks } from "@zakki/data/embedding/semantic.ts";
-import { persistEntry } from "@zakki/data/entry/autosave.ts";
-import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
-import { getChunkContext, listChunksWithDate } from "@zakki/data/entry/queries.ts";
+import { persistChildren } from "@zakki/data/chunk/autosave.ts";
+import { deleteChunk, updateChunkContent } from "@zakki/data/chunk/repository.ts";
+import type { ChunkWithDate } from "@zakki/data/chunk/queries.ts";
+import { getChunkContext, listChunksWithDate } from "@zakki/data/chunk/queries.ts";
 import {
   editableBlockAt,
   freezeLiveTail,
@@ -24,7 +25,6 @@ import {
   splitDisplay,
 } from "@zakki/core/entry/records.ts";
 import type { Result } from "neverthrow";
-import { getEntryWithChunks } from "@zakki/data/entry/repository.ts";
 import { getEntryExportChunks } from "@zakki/tui/export/data.ts";
 import type { ExportError, ExportSummary } from "@zakki/tui/export/obsidian.ts";
 import { exportEntry } from "@zakki/tui/export/obsidian.ts";
@@ -66,8 +66,8 @@ const DELETE_CONFIRM_MESSAGE = "このチャンクを削除しますか？";
 export interface AppProps {
   db: Db;
   date: string;
-  /** 起動時に解決済みの当日デフォルトセッション。保存のたびの再解決を省く */
-  sessionId: number;
+  /** 起動時に解決済みの当日の日付チャンク（トップレベル）id。保存のたびの再解決を省く */
+  dateChunkId: number;
   initialRaw: string;
   vaultDir: string;
   engine: KanaKanjiEngine;
@@ -105,7 +105,7 @@ function anchorChildToTop(sb: ScrollBoxRenderable, childId: string): void {
 export function App({
   db,
   date,
-  sessionId,
+  dateChunkId,
   initialRaw,
   vaultDir,
   engine,
@@ -257,18 +257,13 @@ export function App({
   const exit = useCallback(() => {
     // flush 保存（打鍵途中の n を確定）→ エクスポート → 端末復帰。
     // raw が正本なので未確定セグメントの変換完了は待たない（次回起動で回収）。
-    const snapshot = {
-      date,
-      sessionId,
-      raw: store.getState().raw,
-      converted: convertRaw(store.getState().raw, true).text,
-    };
+    const converted = convertRaw(store.getState().raw, true).text;
     const finish = () => {
       engine.close();
       renderer.destroy();
       process.exit(0);
     };
-    void persistEntry(db, snapshot).match(async () => {
+    void persistChildren(db, dateChunkId, converted).match(async () => {
       // export の成否に関わらず端末を復帰する（保存は完了済み）
       await exportCurrent();
       // ローカル保存は完了済み。リモート同期はベストエフォートで、失敗しても終了を妨げない
@@ -276,7 +271,7 @@ export function App({
       await sync();
       finish();
     }, finish);
-  }, [db, date, sessionId, renderer, engine, convertRaw, exportCurrent, sync, store]);
+  }, [db, dateChunkId, renderer, engine, convertRaw, exportCurrent, sync, store]);
 
   /** 関連の詳細を閉じる（一覧表示へ戻す） */
   const closeExpand = useCallback(() => {
@@ -326,49 +321,36 @@ export function App({
 
   /**
    * 詳細ペインの過去/当日チャンクの修正を開く（docs/PANES.md §7）。
-   * 対象 raw（当日=store の raw / 過去=DB）から editableBlockAt で領域を解決する。
-   * 末尾ライブ文は凍結リテラルが無いため、編集の初期値には DB の content を使う
-   * （確定時にその文だけが literal へ畳まれる, patchDetailChunk）。
+   * 編集の初期値はどのケースも DB の content（確定テキスト）でよい。凍結リテラルの
+   * 解決は当日の raw 反映時（patchDetailChunk）にのみ必要で、初期表示には不要。
    */
   const openDetailEdit = useCallback(
-    async (chunk: ChunkWithDate, viewIndex: number) => {
-      const targetRaw =
-        chunk.date === date
-          ? store.getState().raw
-          : await getEntryWithChunks(db, chunk.date).match(
-              (e) => e?.entry.raw ?? "",
-              (e) => {
-                setMessage(`読込: ${e.message}`);
-                return "";
-              },
-            );
-      const block = editableBlockAt(targetRaw, chunk.position);
-      if (block === null) {
-        setMessage("対象チャンクが見つかりません");
-        return;
-      }
-      // 凍結リテラルは本文を、ライブ末尾文は表示中の確定テキスト（DB content）を初期値にする
-      const initial = block.frozen ? block.text : chunk.content;
+    (chunk: ChunkWithDate, viewIndex: number) => {
       setEditing({
         target: { kind: "detail", date: chunk.date, position: chunk.position, chunkId: chunk.id },
-        text: initial,
-        cursor: initial.length,
-        old: initial,
+        text: chunk.content,
+        cursor: chunk.content.length,
+        old: chunk.content,
       });
       moveCursor({ pane: "detail", index: viewIndex, mode: "input" });
     },
-    [db, date, moveCursor, store, setEditing],
+    [moveCursor, setEditing],
   );
 
   /**
-   * 詳細ペイン経由の確定チャンク編集/削除を、対象エントリの raw に反映する（docs/PANES.md §7）。
-   * `nextText` が空文字なら削除（replaceBlock が領域を消す）。当日は store の raw を正本とし
-   * （ライブ末尾を失わない）、過去は DB から raw を再取得して即保存＋当該日を再エクスポートする。
-   * stale offset を避けるため、領域は呼び出し時点の raw から `editableBlockAt` で再解決する。
+   * 詳細ペイン経由の確定チャンク編集/削除を反映する（docs/PANES.md §7）。
+   * `nextText` が空文字なら削除。当日の日付チャンク直下（parentId === dateChunkId）は
+   * store の raw が正本のため、従来どおり editableBlockAt で領域を解決して raw を書き換える
+   * （ライブ末尾を失わない。stale offset を避けるため呼び出し時点の raw から再解決する）。
+   * それ以外（過去日・深い階層）は raw 再構成をやめ、chunk id で直接 DB を更新/削除し、
+   * 当該日を再エクスポートする。
    */
   const patchDetailChunk = useCallback(
-    async (chunk: { date: string; position: number }, nextText: string) => {
-      if (chunk.date === date) {
+    async (
+      chunk: { id: number; parentId: number; date: string; position: number },
+      nextText: string,
+    ) => {
+      if (chunk.date === date && chunk.parentId === dateChunkId) {
         const block = editableBlockAt(store.getState().raw, chunk.position);
         if (block === null) {
           setMessage("対象チャンクが見つかりません");
@@ -379,31 +361,17 @@ export function App({
         setSaveState("dirty");
         return;
       }
-      await getEntryWithChunks(db, chunk.date).match(
-        async (entry) => {
-          const targetRaw = entry?.entry.raw ?? "";
-          const block = editableBlockAt(targetRaw, chunk.position);
-          if (block === null) {
-            setMessage("対象チャンクが見つかりません");
-            return;
-          }
-          const next = replaceBlock(targetRaw, block.start, block.end, nextText);
-          await persistEntry(db, {
-            date: chunk.date,
-            raw: next,
-            converted: convertRaw(next).text,
-          }).match(
-            async () => {
-              const exported = await exportFor(chunk.date);
-              exported?.mapErr((e) => setMessage(`export: ${e.message}`));
-            },
-            (e) => setMessage(`保存: ${e.message}`),
-          );
+      const op =
+        nextText === "" ? deleteChunk(db, chunk.id) : updateChunkContent(db, chunk.id, nextText);
+      await op.match(
+        async () => {
+          const exported = await exportFor(chunk.date);
+          exported?.mapErr((e) => setMessage(`export: ${e.message}`));
         },
-        (e) => setMessage(`読込: ${e.message}`),
+        (e) => setMessage(`保存: ${e.message}`),
       );
     },
-    [db, date, convertRaw, exportFor, store, setRaw],
+    [db, date, dateChunkId, exportFor, store, setRaw],
   );
 
   /**
@@ -439,17 +407,19 @@ export function App({
       moveCursor({ pane, index, mode: "select" });
       return;
     }
-    // ── detail: 対象エントリの raw に反映（patchDetailChunk が当日/過去を分岐）──
+    // ── detail: patchDetailChunk が当日直下（raw 反映）/過去・深い階層（id 直更新）を分岐する。
+    // parentId は表示中の contextChunks から引く（見つからなければ id 直更新側へ倒れて安全）。
     const { date: targetDate, position, chunkId } = current.target;
+    const parentId = contextChunks.find((c) => c.id === chunkId)?.parentId ?? -1;
     setEditing(null);
-    void patchDetailChunk({ date: targetDate, position }, text);
+    void patchDetailChunk({ id: chunkId, parentId, date: targetDate, position }, text);
     // 表示中の詳細を最新へ更新し、当該 detail View(select) にカーソルを戻す
     void getChunkContext(db, chunkId, CONTEXT_RADIUS).match(
       (ctx) => setContextChunks(ctx),
       () => {},
     );
     moveCursor({ pane, index, mode: "select" });
-  }, [moveCursor, db, patchDetailChunk, store, setRaw, setEditing]);
+  }, [moveCursor, db, patchDetailChunk, store, setRaw, setEditing, contextChunks]);
 
   /**
    * 確定チャンクの実削除（リテラル領域を空に置換, docs/PANES.md §4）。
@@ -479,13 +449,13 @@ export function App({
 
   /**
    * 詳細ペインの過去/当日チャンクの実削除（docs/PANES.md §7）。
-   * date+position から領域を再解決し空に置換する。当日は store の raw、過去は
-   * DB 保存＋再エクスポート。削除で要素が消えるため closeExpand しカーソルを関連へ戻す。
+   * 当日直下は store の raw から領域を消し、過去・深い階層は chunk id で直接削除する
+   * （patchDetailChunk が分岐）。削除で要素が消えるため closeExpand しカーソルを関連へ戻す。
    */
   const deleteDetailChunk = useCallback(
     (chunk: ChunkWithDate) => {
-      // 空テキストで置換＝削除（patchDetailChunk が当日/過去を分岐）
-      void patchDetailChunk({ date: chunk.date, position: chunk.position }, "");
+      // 空テキストで削除（patchDetailChunk が当日直下/過去・深い階層を分岐）
+      void patchDetailChunk(chunk, "");
       // 詳細を閉じてカーソルを関連へ戻す（展開元の ambient index、無ければ 0）
       closeExpand();
       const ai = ambient.findIndex((a) => a.chunkId === expandedChunkId);
@@ -595,7 +565,7 @@ export function App({
           } else if (intent.pane === "detail") {
             const chunk = contextChunks[intent.index];
             if (chunk !== undefined) {
-              void openDetailEdit(chunk, intent.index);
+              openDetailEdit(chunk, intent.index);
             }
           }
           return;
@@ -641,7 +611,7 @@ export function App({
                 {
                   label: "編集",
                   onChoose: () => {
-                    void openDetailEdit(chunk, viewIndex);
+                    openDetailEdit(chunk, viewIndex);
                   },
                 },
                 { label: "削除", onChoose: () => requestDeleteDetail(chunk) },
@@ -747,12 +717,12 @@ export function App({
         setRaw(frozen.raw);
       }
       const current = store.getState().raw;
-      // 2. 永続化（converted から決定的チャンク化）
+      // 2. 永続化（converted を Enter 区切りで日付チャンク直下の子チャンクへ投影）
       const converted = convertRaw(current).text;
-      void persistEntry(db, { date, sessionId, raw: current, converted }).match(
+      void persistChildren(db, dateChunkId, converted).match(
         (saved) => {
           setSaveState("saved");
-          setChunkCount(saved.chunks.length);
+          setChunkCount(saved?.length ?? 0);
           if (backgroundTimer.current !== null) {
             clearTimeout(backgroundTimer.current);
           }
@@ -766,7 +736,7 @@ export function App({
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // conversionVersion: 非同期変換が確定したら再保存・再凍結する
-  }, [db, date, sessionId, raw, conversionVersion, convertRaw, convertSettled, runBackgroundPass]);
+  }, [db, dateChunkId, raw, conversionVersion, convertRaw, convertSettled, runBackgroundPass]);
 
   // セマンティック検索（docs/FEATURES.md 候補8）。実体は search/semantic.ts に委譲する
   useEffect(() => {

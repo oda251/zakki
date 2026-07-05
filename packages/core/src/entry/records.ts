@@ -186,3 +186,14 @@ export function freezeLiveTail(
   const next = prefix + live;
   return { raw: next, changed: next !== raw };
 }
+
+/**
+ * 子チャンクの content 列から編集バッファ（raw）を再構成する（docs/CHUNKS.md）。
+ * 各行を凍結リテラル（wrapPaste）+ 行区切り改行として並べる。全行が確定済みの
+ * raw になるため、splitDisplay の liveRaw は空・editableBlockAt は position と
+ * 1:1 で対応する。raw / converted 列の廃止に伴い、永続化された chunk 列が
+ * バッファの唯一の復元元となる。
+ */
+export function buildRaw(contents: readonly string[]): string {
+  return contents.map((content) => `${wrapPaste(content)}\n`).join("");
+}

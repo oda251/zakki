@@ -1,32 +1,42 @@
-import { asc, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
+import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
-import { chunks, links } from "@zakki/data/db/schema.ts";
-import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
-import { listChunksWithDate, listTagsByChunk } from "@zakki/data/entry/queries.ts";
-import type { SessionWithTags } from "@zakki/data/session/repository.ts";
-import { listSessions } from "@zakki/data/session/repository.ts";
+import { listTagsByChunk } from "@zakki/data/chunk/queries.ts";
+import { listUserTagsByChunk } from "@zakki/data/chunk/user-tags.ts";
 
-/** グラフビューのノード = チャンク（web クライアントはこれを全量受けてフィルタする） */
+/**
+ * グラフビューのノード = chunk ツリーの全ノード（日付チャンク・コンテナ・本文）。
+ * childCount / descendantCount は列に持たない派生値で、ここで再帰 CTE により付与する
+ * （docs/CHUNKS.md §導出値と描画）。web クライアントはこれを全量受けてドリル表示する。
+ */
 export interface GraphNode {
   id: number;
+  /** null = 日付チャンク（トップレベル） */
+  parentId: number | null;
+  position: number;
   content: string;
+  /** 祖先（自身を含む）の日付チャンクの date */
   date: string;
-  sessionId: number;
-  sessionName: string | null;
   polarity: number | null;
   /** 自動タグ（chunk_tags 由来、スコア降順） */
   tags: string[];
+  /** ユーザ明示タグ（chunk_user_tags 由来） */
+  userTags: string[];
+  /** 直接の子数。0 なら葉（〇）、>0 ならコンテナ（◆） */
+  childCount: number;
+  /** 総子孫数。ノード半径のスケールに使う */
+  descendantCount: number;
 }
 
-/** グラフビューのエッジ = links（from < to で正規化済み） */
+/** グラフビューのエッジ。links（from < to 正規化済み）+ 導出の時系列リンク（chrono） */
 export interface GraphEdge {
   from: number;
   to: number;
   score: number;
-  origin: "auto" | "manual";
+  origin: "auto" | "manual" | "chrono";
 }
 
 export interface GraphData {
@@ -34,79 +44,171 @@ export interface GraphData {
   version: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  sessions: SessionWithTags[];
+}
+
+/** 差分応答での生存ノード（削除検出 + 派生値の更新。id 昇順） */
+export interface AliveNode {
+  id: number;
+  childCount: number;
+  descendantCount: number;
 }
 
 /**
  * 差分取得の応答（GET /api/graph?since=）。ノード本文（チャンク）だけが重いので
  * 変更分に絞り、残りは全量で返す:
  * - edges: links に updatedAt が無く増分検出できないが、1 本 4 スカラと軽量なので全量
- * - sessions: 件数が少なく、改名・タグ変更の検出列も転送削減の旨味も無いので全量
- * - aliveNodeIds: id のみの一覧。クライアントはこれに無いノードを削除とみなす
+ * - aliveNodes: id と派生値（childCount / descendantCount）のみの一覧。クライアントは
+ *   これに無いノードを削除とみなし、あるノードの派生値を更新する
+ *   （子の追加は親自身の updatedAt を動かさないため、派生値は全量で送る）
  */
 export interface GraphDelta {
   version: string;
   /** updatedAt >= since のチャンク（ノード形） */
   nodes: GraphNode[];
-  /** 現存する全チャンク id（削除検出用、昇順） */
-  aliveNodeIds: number[];
+  aliveNodes: AliveNode[];
   edges: GraphEdge[];
-  sessions: SessionWithTags[];
 }
 
 /** 差分取得の基準時刻 = chunks.updatedAt の最大値（ISO 文字列は辞書順比較可能） */
 function maxChunkUpdatedAt(db: Db): ResultAsync<string, DbError> {
   return tryDbAsync(async () => {
-    const rows = await db
-      .select({ max: sql<string | null>`max(${chunks.updatedAt})` })
-      .from(chunks);
+    const res = await db.run(sql`SELECT max(updated_at) AS max FROM chunks`);
+    const rows = res.rows as unknown as { max: string | null }[];
     return rows[0]?.max ?? "";
   });
 }
 
+interface RawNodeRow {
+  id: number;
+  parentId: number | null;
+  position: number;
+  content: string;
+  date: string;
+  /** 自身の date 列（日付チャンク判定 = 復号スキップ判定） */
+  ownDate: string | null;
+  polarity: number | null;
+}
+
+/** 全ノード（since 指定時は updatedAt >= since のみ）を root date 付きで読む */
+function listNodeRows(db: Db, since?: string): ResultAsync<RawNodeRow[], DbError> {
+  return tryDbAsync(async () => {
+    const filter = since === undefined ? sql`` : sql`WHERE c.updated_at >= ${since}`;
+    const res = await db.run(sql`
+      WITH RECURSIVE roots(id, root_date) AS (
+        SELECT id, date FROM chunks WHERE parent_id IS NULL
+        UNION ALL
+        SELECT c.id, r.root_date FROM chunks c JOIN roots r ON c.parent_id = r.id
+      )
+      SELECT c.id AS id, c.parent_id AS parentId, c.position AS position,
+             c.content AS content, r.root_date AS date, c.date AS ownDate, c.polarity AS polarity
+      FROM chunks c JOIN roots r ON c.id = r.id
+      ${filter}
+      ORDER BY c.id ASC
+    `);
+    return res.rows as unknown as RawNodeRow[];
+  });
+}
+
+/** id → 派生値（childCount / descendantCount）。全チャンク分（= aliveNodes の素） */
+function listCounts(db: Db): ResultAsync<AliveNode[], DbError> {
+  return tryDbAsync(async () => {
+    const res = await db.run(sql`
+      WITH RECURSIVE sub(root, id) AS (
+        SELECT id, id FROM chunks
+        UNION ALL
+        SELECT s.root, c.id FROM chunks c JOIN sub s ON c.parent_id = s.id
+      )
+      SELECT root AS id,
+             count(*) - 1 AS descendantCount,
+             (SELECT count(*) FROM chunks ch WHERE ch.parent_id = root) AS childCount
+      FROM sub GROUP BY root ORDER BY root ASC
+    `);
+    return res.rows as unknown as AliveNode[];
+  });
+}
+
 function toNodes(
-  chunkList: ChunkWithDate[],
+  db: Db,
+  rows: RawNodeRow[],
+  counts: ReadonlyMap<number, AliveNode>,
   tagsByChunk: ReadonlyMap<number, string[]>,
-  sessionList: SessionWithTags[],
+  userTagsByChunk: ReadonlyMap<number, string[]>,
 ): GraphNode[] {
-  const nameBySession = new Map(sessionList.map((s) => [s.id, s.name]));
-  return chunkList.map((c) => ({
-    id: c.id,
-    content: c.content,
-    date: c.date,
-    sessionId: c.sessionId,
-    sessionName: nameBySession.get(c.sessionId) ?? null,
-    polarity: c.polarity,
-    tags: tagsByChunk.get(c.id) ?? [],
+  const crypto = getCrypto(db);
+  return rows.map((r) => ({
+    id: r.id,
+    parentId: r.parentId,
+    position: r.position,
+    // 日付チャンク（ownDate 非 NULL）の content は平文（date と同値）
+    content:
+      crypto === undefined || r.ownDate !== null
+        ? r.content
+        : crypto.decString(r.content, "chunk.content"),
+    date: r.date,
+    polarity: r.polarity,
+    tags: tagsByChunk.get(r.id) ?? [],
+    userTags: userTagsByChunk.get(r.id) ?? [],
+    childCount: counts.get(r.id)?.childCount ?? 0,
+    descendantCount: counts.get(r.id)?.descendantCount ?? 0,
   }));
 }
 
-function listEdges(db: Db): ResultAsync<GraphEdge[], DbError> {
-  return tryDbAsync(() => db.select().from(links)).map((rows) =>
-    rows.map((e) => ({ from: e.fromChunkId, to: e.toChunkId, score: e.score, origin: e.origin })),
-  );
+function listStoredEdges(db: Db): ResultAsync<GraphEdge[], DbError> {
+  return tryDbAsync(async () => {
+    const res = await db.run(
+      sql`SELECT from_chunk_id AS "from", to_chunk_id AS "to", score, origin FROM links`,
+    );
+    return res.rows as unknown as GraphEdge[];
+  });
 }
 
 /**
- * グラフビュー用の全量取得。ノード=チャンク、エッジ=links、色分け・フィルタ用に
- * セッション一覧を添える。数千ノード規模を想定し、絞り込みはクライアント側で行う。
+ * 日付チャンク間の時系列リンクを導出する（docs/CHUNKS.md §日付チャンク）。
+ * date 昇順で隣接する日付チャンク同士を結ぶ（保存しない: 過去日の後挿入でも
+ * 常に正しく、links の再張替えが不要）。from < to へ正規化する。
+ */
+function chronoEdges(db: Db): ResultAsync<GraphEdge[], DbError> {
+  return tryDbAsync(async () => {
+    const res = await db.run(
+      sql`SELECT id, date FROM chunks WHERE date IS NOT NULL ORDER BY date ASC`,
+    );
+    const rows = res.rows as unknown as { id: number; date: string }[];
+    const edges: GraphEdge[] = [];
+    for (let i = 1; i < rows.length; i++) {
+      const a = rows[i - 1];
+      const b = rows[i];
+      if (a === undefined || b === undefined) continue;
+      const [from, to] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
+      edges.push({ from, to, score: 1, origin: "chrono" });
+    }
+    return edges;
+  });
+}
+
+/**
+ * グラフビュー用の全量取得。ノード = chunk ツリー全体、エッジ = links + 時系列導出。
+ * 数千ノード規模を想定し、絞り込み（ドリル表示）はクライアント側で行う。
  *
  * version は取得中の書き込みと厳密には直列化しないが、差分側の >= 比較と
- * aliveNodeIds 全量により、ずれは「次回の過剰送信」にしかならない。
+ * aliveNodes 全量により、ずれは「次回の過剰送信」にしかならない。
  */
 export function getGraph(db: Db): ResultAsync<GraphData, DbError> {
   return ResultAsync.combine([
-    listChunksWithDate(db),
-    listEdges(db),
+    listNodeRows(db),
+    listCounts(db),
+    listStoredEdges(db),
+    chronoEdges(db),
     listTagsByChunk(db),
-    listSessions(db),
+    listUserTagsByChunk(db),
     maxChunkUpdatedAt(db),
-  ]).map(([chunkList, edges, tagsByChunk, sessionList, version]) => ({
-    version,
-    nodes: toNodes(chunkList, tagsByChunk, sessionList),
-    edges,
-    sessions: sessionList,
-  }));
+  ]).map(([rows, counts, stored, chrono, tagsByChunk, userTagsByChunk, version]) => {
+    const countsById = new Map(counts.map((c) => [c.id, c]));
+    return {
+      version,
+      nodes: toNodes(db, rows, countsById, tagsByChunk, userTagsByChunk),
+      edges: [...stored, ...chrono],
+    };
+  });
 }
 
 /**
@@ -117,17 +219,20 @@ export function getGraph(db: Db): ResultAsync<GraphData, DbError> {
  */
 export function getGraphDelta(db: Db, since: string): ResultAsync<GraphDelta, DbError> {
   return ResultAsync.combine([
-    listChunksWithDate(db, since),
-    tryDbAsync(() => db.select({ id: chunks.id }).from(chunks).orderBy(asc(chunks.id))),
-    listEdges(db),
+    listNodeRows(db, since),
+    listCounts(db),
+    listStoredEdges(db),
+    chronoEdges(db),
     listTagsByChunk(db),
-    listSessions(db),
+    listUserTagsByChunk(db),
     maxChunkUpdatedAt(db),
-  ]).map(([chunkList, aliveRows, edges, tagsByChunk, sessionList, version]) => ({
-    version,
-    nodes: toNodes(chunkList, tagsByChunk, sessionList),
-    aliveNodeIds: aliveRows.map((r) => r.id),
-    edges,
-    sessions: sessionList,
-  }));
+  ]).map(([rows, counts, stored, chrono, tagsByChunk, userTagsByChunk, version]) => {
+    const countsById = new Map(counts.map((c) => [c.id, c]));
+    return {
+      version,
+      nodes: toNodes(db, rows, countsById, tagsByChunk, userTagsByChunk),
+      aliveNodes: counts,
+      edges: [...stored, ...chrono],
+    };
+  });
 }

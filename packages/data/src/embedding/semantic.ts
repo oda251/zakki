@@ -4,7 +4,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { links } from "@zakki/data/db/schema.ts";
-import { listChunksByIds } from "@zakki/data/entry/queries.ts";
+import { listChunksByIds } from "@zakki/data/chunk/queries.ts";
 import { loadVectors } from "./store.ts";
 import { cosine } from "./vector.ts";
 

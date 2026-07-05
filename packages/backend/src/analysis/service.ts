@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
@@ -110,6 +110,7 @@ async function ensureTagIds(
 export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
+    // 日付チャンク（構造ノード, content = 日付）は解析対象にしない
     const rawChunks = await db
       .select({
         id: chunks.id,
@@ -117,7 +118,8 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
         updatedAt: chunks.updatedAt,
         polarity: chunks.polarity,
       })
-      .from(chunks);
+      .from(chunks)
+      .where(isNull(chunks.date));
     const oldPolarity = new Map(rawChunks.map((c) => [c.id, c.polarity]));
     // 解析（名詞抽出・極性）は平文に対して行う。暗号 ON は復号した content を使う。
     const states = new Map<number, ChunkState>();
@@ -216,7 +218,10 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
     // 第 1 段: id + updatedAt だけを取得し、スナップショットとの比較で「動いた候補」を
     // 絞る。updatedAt が一致する行は content を取得しない（変更ゼロのパスでは
     // content 転送が一切発生しない）
-    const idRows = await db.select({ id: chunks.id, updatedAt: chunks.updatedAt }).from(chunks);
+    const idRows = await db
+      .select({ id: chunks.id, updatedAt: chunks.updatedAt })
+      .from(chunks)
+      .where(isNull(chunks.date));
     const candidateIds = idRows
       .filter((row) => {
         const prev = snapshot.chunks.get(row.id);

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
@@ -7,12 +7,17 @@ import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunks, embeddings } from "@zakki/data/db/schema.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
+import { contentHash64 } from "@zakki/core/util/hash.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { bufferToVector, vectorToBuffer } from "./vector.ts";
 
-/** content の変化検知ハッシュ。暗号 ON は鍵付き（平文を保存しない）、OFF は従来の Bun.hash */
+/**
+ * content の変化検知ハッシュ。暗号 ON は鍵付き（平文を保存しない）、OFF は
+ * ランタイム非依存の FNV-1a（CF Workers に Bun.hash が無いため。旧 Bun.hash 値の
+ * 既存行は不一致となり初回だけ再埋め込みされるが、値は content から再導出できる）
+ */
 function contentHash(crypto: CryptoContext | undefined, content: string): string {
-  return crypto === undefined ? Bun.hash(content).toString(16) : crypto.contentHash(content);
+  return crypto === undefined ? contentHash64(content) : crypto.contentHash(content);
 }
 
 /**
@@ -32,7 +37,10 @@ export async function syncChunkEmbeddings(
         hash: embeddings.contentHash,
       })
       .from(chunks)
-      .leftJoin(embeddings, eq(chunks.id, embeddings.chunkId));
+      .leftJoin(embeddings, eq(chunks.id, embeddings.chunkId))
+      // 日付チャンク（構造ノード, content = 日付）は埋め込まない: 日付同士の
+      // 見かけの類似で無意味なリンクが張られるのを防ぐ
+      .where(isNull(chunks.date));
     // content は暗号 ON では暗号文。復号した平文で hash 比較・embed する。
     const decrypted = rows.map((r) => ({
       id: r.id,

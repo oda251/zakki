@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
-import { saveSnapshot } from "@zakki/data/entry/repository.ts";
+import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { bufferToVector, cosine, vectorToBuffer } from "./vector.ts";
 import { addSemanticLinks, nearestChunks } from "./semantic.ts";
@@ -23,14 +23,7 @@ const fakeEmbedder: Embedder = {
 };
 
 async function seed(contents: string[]): Promise<void> {
-  (
-    await saveSnapshot(db, {
-      date: "2026-06-13",
-      raw: "",
-      converted: contents.join(""),
-      chunks: contents.map((content) => ({ content })),
-    })
-  )._unsafeUnwrap();
+  await seedDayChunks(db, "2026-06-13", contents);
 }
 
 beforeEach(async () => {

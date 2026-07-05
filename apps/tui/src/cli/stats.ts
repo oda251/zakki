@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { analyzeAll } from "@zakki/backend/analysis/service.ts";
 import { fmtPolarity, moodLabel } from "@zakki/core/analysis/sentiment.ts";
 import { createDb } from "@zakki/data/db/client.ts";
-import { dailySentiment } from "@zakki/data/entry/queries.ts";
+import { dailySentiment } from "@zakki/data/chunk/queries.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 
 const db = await createDb();

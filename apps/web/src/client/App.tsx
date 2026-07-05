@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect } from "react";
 import { subscribeAnalysis } from "@zakki/web/client/api/events.ts";
+import { Breadcrumb } from "@zakki/web/client/graph/Breadcrumb.tsx";
 import { GraphViewErrorBoundary } from "@zakki/web/client/GraphViewErrorBoundary.tsx";
 import { LeftSidebar } from "@zakki/web/client/layout/LeftSidebar.tsx";
 import { RightPanel } from "@zakki/web/client/layout/RightPanel.tsx";
+import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
-import { useSessionStore } from "@zakki/web/client/store/session.ts";
 
 // react-force-graph-2d（d3 一式）が重いため、グラフ描画は初期チャンクから分離する
 const GraphView = lazy(() =>
@@ -14,7 +15,7 @@ const GraphView = lazy(() =>
 export function App() {
   const load = useGraphStore((s) => s.load);
   const error = useGraphStore((s) => s.error);
-  const openToday = useSessionStore((s) => s.openToday);
+  const openToday = useBufferStore((s) => s.openToday);
 
   useEffect(() => {
     void load();
@@ -27,7 +28,7 @@ export function App() {
     () =>
       subscribeAnalysis(() => {
         void useGraphStore.getState().loadDelta();
-        void useSessionStore.getState().refreshRelated();
+        void useBufferStore.getState().refreshRelated();
       }),
     [],
   );
@@ -35,15 +36,18 @@ export function App() {
   return (
     <div className="app-shell">
       <LeftSidebar />
-      {error !== null ? (
-        <div className="empty-note main-pane">読み込みエラー: {error}</div>
-      ) : (
-        <GraphViewErrorBoundary>
-          <Suspense fallback={<div className="empty-note main-pane">グラフを読み込み中…</div>}>
-            <GraphView />
-          </Suspense>
-        </GraphViewErrorBoundary>
-      )}
+      <div className="graph-pane">
+        <Breadcrumb />
+        {error !== null ? (
+          <div className="empty-note main-pane">読み込みエラー: {error}</div>
+        ) : (
+          <GraphViewErrorBoundary>
+            <Suspense fallback={<div className="empty-note main-pane">グラフを読み込み中…</div>}>
+              <GraphView />
+            </Suspense>
+          </GraphViewErrorBoundary>
+        )}
+      </div>
       <RightPanel />
     </div>
   );

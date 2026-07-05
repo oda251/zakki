@@ -2,47 +2,46 @@
  * サーバ（Hono ルート）とクライアント（fetch ラッパ）で共有する API の型。
  * DB 由来の型は @zakki/data から type-only で再輸出する（JSON 直列化可能なもののみ）。
  */
-import type { GraphData, GraphDelta } from "@zakki/data/graph/queries.ts";
-import type { SessionWithTags } from "@zakki/data/session/repository.ts";
-import type { Chunk, Entry, Session } from "@zakki/data/db/schema.ts";
+import type { AliveNode, GraphData, GraphDelta } from "@zakki/data/graph/queries.ts";
+import type { Chunk } from "@zakki/data/db/schema.ts";
 import type { RelatedChunk } from "@zakki/data/embedding/semantic.ts";
 
-export type { GraphData, GraphDelta, SessionWithTags, RelatedChunk };
+export type { AliveNode, GraphData, GraphDelta, RelatedChunk };
 export type { GraphEdge, GraphNode } from "@zakki/data/graph/queries.ts";
-export type { Chunk, Entry, Session };
+export type { Chunk };
 
 export interface HealthResponse {
   engine: string;
   embedder: boolean;
 }
 
-export interface CreateSessionRequest {
-  name: string;
+export interface DateChunkRequest {
   /** 省略時はサーバのローカル日付（当日） */
   date?: string;
 }
 
-export interface DefaultSessionRequest {
-  /** 省略時はサーバのローカル日付（当日） */
-  date?: string;
+/** バッファ読み出し（GET /api/chunks/:id）: チャンク本体 + 子チャンク列 */
+export interface ChunkChildrenResponse {
+  chunk: Chunk;
+  children: Chunk[];
 }
 
-export interface RenameSessionRequest {
-  name: string;
-}
-
-export interface SetSessionTagsRequest {
-  names: string[];
-}
-
-export interface SessionEntryResponse {
-  entry: Entry | null;
-  chunks: Chunk[];
-}
-
-export interface SaveEntryRequest {
-  raw: string;
+/** バッファ保存（PUT /api/chunks/:id/children）。converted は凍結リテラルマーカー付き可 */
+export interface SaveChildrenRequest {
   converted: string;
+}
+
+export interface SaveChildrenResponse {
+  children: Chunk[];
+}
+
+/** 本文（コンテナ名）変更（PATCH /api/chunks/:id） */
+export interface RenameChunkRequest {
+  content: string;
+}
+
+export interface SetUserTagsRequest {
+  names: string[];
 }
 
 export interface ConvertRequest {

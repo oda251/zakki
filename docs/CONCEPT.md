@@ -120,15 +120,20 @@ flowchart TB
 
 ## データモデル素案
 
-| テーブル          | 役割                                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| entries           | 1 セッション（日付単位）の生入力ログ。raw（ローマ字/かな）と converted を分離して保持 |
-| chunks            | 自動分割された意味単位。title（自動生成）、content、entry への参照                    |
-| tags / chunk_tags | v1 の tags / node_tags に相当                                                         |
-| links             | chunk 間の関連。score（類似度）と origin（auto / manual）を持つ                       |
-| embeddings        | chunk の埋め込みベクトル（BLOB）                                                      |
+（2026-07-06 更新: entries / sessions は廃止し、chunk 単一の自己参照ツリーへ統合した。
+現行モデルの正本は `docs/CHUNKS.md`。）
 
-raw を捨てない理由: 変換・チャンク化は非可逆な自動処理であり、誤変換の事後修正・再処理（エンジン差し替え時の再変換）に原文が必要。
+| テーブル          | 役割                                                                             |
+| ----------------- | -------------------------------------------------------------------------------- |
+| chunks            | 自己参照ツリー（parent_id）。日付チャンク（トップレベル）〜本文行まで単一テーブル |
+| tags / chunk_tags | v1 の tags / node_tags に相当（自動タグ）                                         |
+| chunk_user_tags   | ユーザ明示タグ（旧 session_tags の一般化）                                        |
+| links             | chunk 間の関連。score（類似度）と origin（auto / manual）を持つ                   |
+| embeddings        | chunk の埋め込みベクトル（BLOB）                                                  |
+
+raw（ローマ字打鍵ログ）は永続化しない: 凍結リテラル方式（docs/RECORDS.md）では
+確定時点で原ローマ字が失われており、「再変換のため raw を残す」は成立しないため
+（docs/CHUNKS.md §動機）。
 
 ## v1 からの引き継ぎ / 破棄
 

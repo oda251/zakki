@@ -1,12 +1,12 @@
 import type {
+  Chunk,
+  ChunkChildrenResponse,
   ConversionStateResponse,
   ConvertResponse,
   GraphData,
   GraphDelta,
   RelatedResponse,
-  Session,
-  SessionEntryResponse,
-  SessionWithTags,
+  SaveChildrenResponse,
 } from "@zakki/web/shared/api-types.ts";
 
 /** API エラー（fetch 失敗・非 2xx）。UI はメッセージ表示のみ */
@@ -42,23 +42,20 @@ export const api = {
   graph: () => request<GraphData>("/api/graph"),
   graphDelta: (since: string) =>
     request<GraphDelta>(`/api/graph?since=${encodeURIComponent(since)}`),
-  sessions: () => request<SessionWithTags[]>("/api/sessions"),
-  defaultSession: (date?: string) =>
-    request<Session>("/api/sessions/default", { method: "POST", ...json({ date }) }),
-  createSession: (name: string, date?: string) =>
-    request<Session>("/api/sessions", { method: "POST", ...json({ name, date }) }),
-  renameSession: (id: number, name: string) =>
-    request<{ ok: true }>(`/api/sessions/${id}`, { method: "PATCH", ...json({ name }) }),
-  deleteSession: (id: number) => request<{ ok: true }>(`/api/sessions/${id}`, { method: "DELETE" }),
-  setSessionTags: (id: number, names: string[]) =>
-    request<{ ok: true }>(`/api/sessions/${id}/tags`, { method: "PUT", ...json({ names }) }),
-  sessionEntry: (id: number) => request<SessionEntryResponse>(`/api/sessions/${id}/entry`),
-  saveEntry: (id: number, raw: string, converted: string) =>
-    request<SessionEntryResponse>(`/api/sessions/${id}/entry`, {
+  dateChunk: (date?: string) =>
+    request<Chunk>("/api/chunks/date", { method: "POST", ...json({ date }) }),
+  chunkChildren: (id: number) => request<ChunkChildrenResponse>(`/api/chunks/${id}`),
+  saveChildren: (id: number, converted: string) =>
+    request<SaveChildrenResponse>(`/api/chunks/${id}/children`, {
       method: "PUT",
-      ...json({ raw, converted }),
+      ...json({ converted }),
     }),
-  related: (id: number) => request<RelatedResponse>(`/api/sessions/${id}/related`),
+  renameChunk: (id: number, content: string) =>
+    request<{ ok: true }>(`/api/chunks/${id}`, { method: "PATCH", ...json({ content }) }),
+  deleteChunk: (id: number) => request<{ ok: true }>(`/api/chunks/${id}`, { method: "DELETE" }),
+  setUserTags: (id: number, names: string[]) =>
+    request<{ ok: true }>(`/api/chunks/${id}/tags`, { method: "PUT", ...json({ names }) }),
+  related: (id: number) => request<RelatedResponse>(`/api/chunks/${id}/related`),
   addLink: (from: number, to: number) =>
     request<{ ok: true }>("/api/links", { method: "POST", ...json({ from, to }) }),
   convert: (kana: string, leftContext?: string) =>

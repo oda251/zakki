@@ -3,7 +3,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { nearestChunks } from "@zakki/data/embedding/semantic.ts";
 import { loadVectors } from "@zakki/data/embedding/store.ts";
-import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
+import type { ChunkWithDate } from "@zakki/data/chunk/queries.ts";
 import { convertRomaji } from "@zakki/core/romaji/convert.ts";
 
 /**

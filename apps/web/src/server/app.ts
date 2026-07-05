@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import type { AppDeps } from "./deps.ts";
+import { chunkRoutes } from "./routes/chunks.ts";
 import { conversionRoutes } from "./routes/convert.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { graphRoutes } from "./routes/graph.ts";
-import { sessionRoutes } from "./routes/sessions.ts";
 
 /**
  * API アプリの合成（テスト可能な純関数）。依存は {@link AppDeps} で注入する。
@@ -14,7 +14,7 @@ export function createApp(deps: AppDeps): Hono {
   const api = new Hono();
 
   api.get("/health", (c) => c.json({ engine: deps.engine.name, embedder: deps.embedder !== null }));
-  api.route("/sessions", sessionRoutes(deps));
+  api.route("/chunks", chunkRoutes(deps));
   api.route("/", conversionRoutes(deps));
   api.route("/", graphRoutes(deps));
   api.route("/", eventRoutes(deps));

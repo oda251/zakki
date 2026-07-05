@@ -11,7 +11,11 @@ import {
   unlockWithKeyfile,
   unlockWithPassphrase,
 } from "@zakki/data/crypto/envelopes.ts";
-import { migratePlaintextToEncrypted, provisionCrypto } from "@zakki/data/crypto/init.ts";
+import {
+  applyAadFixups,
+  migratePlaintextToEncrypted,
+  provisionCrypto,
+} from "@zakki/data/crypto/init.ts";
 
 /**
  * 起動時のアンロック／初回セットアップを束ねるオーケストレータ（Phase 6）。
@@ -75,7 +79,10 @@ export async function unlockOrSetup(
   if (kinds.includes("keyfile")) {
     try {
       const dek = await unlockWithKeyfile(db, keyfileKek);
-      return provisionCrypto(db, dek);
+      const ctx = provisionCrypto(db, dek);
+      // chunk ツリー移行（0010）が旧 AAD のまま残した暗号文があれば付替える
+      await applyAadFixups(db, ctx);
+      return ctx;
     } catch {
       // キーファイル KEK が一致しない（別デバイスへ DB だけ持ち込んだ等）。
       // パスフレーズへフォールバックする。
@@ -85,5 +92,7 @@ export async function unlockOrSetup(
   // パスフレーズでアンロック。違えば unlockWithPassphrase が throw する（呼び出し側で再試行）。
   const passphrase = await prompts.passphrase();
   const dek = await unlockWithPassphrase(db, passphrase);
-  return provisionCrypto(db, dek);
+  const ctx = provisionCrypto(db, dek);
+  await applyAadFixups(db, ctx);
+  return ctx;
 }

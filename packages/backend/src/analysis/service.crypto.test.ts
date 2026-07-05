@@ -4,8 +4,12 @@ import { createDb, type Db } from "@zakki/data/db/client.ts";
 import { initCrypto } from "@zakki/data/crypto/init.ts";
 import { attachCrypto, getCrypto } from "@zakki/data/db/crypto-context.ts";
 import { chunkTags, links, tags as tagsTable } from "@zakki/data/db/schema.ts";
-import { listLinksByChunk, listTagsByChunk } from "@zakki/data/entry/queries.ts";
-import { saveSnapshot } from "@zakki/data/entry/repository.ts";
+import {
+  listChunksWithDate,
+  listLinksByChunk,
+  listTagsByChunk,
+} from "@zakki/data/chunk/queries.ts";
+import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import { analyzeAll, analyzeChanged } from "./service.ts";
 
 let db: Db;
@@ -20,14 +24,7 @@ beforeEach(async () => {
 });
 
 async function seed(date: string, contents: string[]): Promise<void> {
-  (
-    await saveSnapshot(db, {
-      date,
-      raw: "",
-      converted: contents.join(""),
-      chunks: contents.map((content) => ({ content })),
-    })
-  )._unsafeUnwrap();
+  await seedDayChunks(db, date, contents);
 }
 
 describe("analyzeAll（暗号 ON）", () => {
@@ -47,8 +44,11 @@ describe("analyzeAll（暗号 ON）", () => {
     }
 
     // 読み出し経路は平文へ復号
+    const body = (await listChunksWithDate(db))._unsafeUnwrap();
+    const firstId = body[0]?.id;
+    if (firstId === undefined) throw new Error("seed 不足");
     const tags = (await listTagsByChunk(db))._unsafeUnwrap();
-    expect(tags.get(1)).toContain("辞書");
+    expect(tags.get(firstId)).toContain("辞書");
   });
 
   test("同じタグ名は fingerprint UNIQUE で 1 行に重複排除される", async () => {

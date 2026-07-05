@@ -12,6 +12,7 @@ import { chainLinks, newChunkIds } from "@zakki/web/client/composer/auto-link.ts
 import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
+import type { Chunk } from "@zakki/web/shared/api-types.ts";
 
 /** キーストローク単位の永続化（TUI と同じ間合い, apps/tui/src/tui/App.tsx） */
 const SAVE_DEBOUNCE_MS = 300;
@@ -19,8 +20,8 @@ const SAVE_DEBOUNCE_MS = 300;
 type SaveState = "saved" | "dirty" | "error";
 
 interface ComposerProps {
-  /** 現在セッション（id は保存先、name/date は楽観的更新のノード素性に使う） */
-  session: { id: number; name: string | null; date: string };
+  /** 現在のバッファ（親チャンク）。id が子チャンクの保存先（docs/CHUNKS.md §入力・保存） */
+  parent: Chunk;
   initialRaw: string;
   /** ロード時点の既存チャンク id（初回保存で全チャンクが「新規」扱いになるのを防ぐ） */
   initialChunkIds: readonly number[];
@@ -40,7 +41,7 @@ interface ComposerProps {
  * 接続のモバイル等で挙動を分けたくなったら UA 判定を足す。
  */
 export function Composer({
-  session,
+  parent,
   initialRaw,
   initialChunkIds,
   corrections,
@@ -142,12 +143,20 @@ export function Composer({
       const current = store.getState().raw;
       const converted = conversion.convertRaw(current).text;
       api
-        .saveEntry(session.id, current, converted)
+        .saveChildren(parent.id, converted)
         .then(async (saved) => {
           setSaveState("saved");
-          // 楽観的更新: 解析（タグ・意味リンク）を待たず、まずノードを画面に出す
-          useGraphStore.getState().applySaved(session, saved.chunks);
-          await linkNewChunks(saved.chunks);
+          // 楽観的更新: 解析（タグ・意味リンク）を待たず、まずノードを画面に出す。
+          // parent.date が null（コンテナ）なら祖先日付を graph data の親ノードから引く。
+          // 引けない（親ノード未取得）場合は楽観的更新をスキップし、SSE 差分に委ねる。
+          const date =
+            parent.date ??
+            useGraphStore.getState().data?.nodes.find((n) => n.id === parent.id)?.date ??
+            null;
+          if (date !== null) {
+            useGraphStore.getState().applySaved({ id: parent.id, date }, saved.children);
+          }
+          await linkNewChunks(saved.children);
         })
         .catch((e: unknown) => {
           setSaveState("error");
@@ -155,20 +164,10 @@ export function Composer({
         });
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-    // session はオブジェクト同一性ではなく素性（id/name/date）で依存させる: 同一セッション id の
-    // まま store が current を新オブジェクトで差し替える経路（リネーム後の openSession 等）があり、
-    // オブジェクト依存だと保留中の保存デバウンスが無意味に破棄・張り直しされるため
-  }, [
-    raw,
-    conversionVersion,
-    session.id,
-    session.name,
-    session.date,
-    store,
-    setRaw,
-    conversion,
-    linkNewChunks,
-  ]);
+    // 依存は parent.id のみ（保存先キー）。同一 id のまま buffer store が current を新
+    // オブジェクトで差し替える経路（rename 後の openChunk 等）があり、オブジェクト依存だと
+    // 保留中の保存デバウンスが無意味に破棄・張り直しされるため素性で依存させる
+  }, [raw, conversionVersion, parent.id, parent.date, store, setRaw, conversion, linkNewChunks]);
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
   const openEdit = useCallback(

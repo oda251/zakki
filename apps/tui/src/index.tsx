@@ -9,8 +9,9 @@ import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
 import { stdinPrompts } from "@zakki/tui/tui/prompt.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
-import { localDate } from "@zakki/data/entry/autosave.ts";
-import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
+import { localDate } from "@zakki/data/chunk/autosave.ts";
+import { getOrCreateDateChunk, listChildren } from "@zakki/data/chunk/repository.ts";
+import { buildRaw } from "@zakki/core/entry/records.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 import { App } from "@zakki/tui/tui/App.tsx";
 
@@ -56,13 +57,24 @@ if (process.env["ZAKKI_ENCRYPTION"] === "1") {
 // 起動は続行する（ローカルレプリカでそのまま動く）。
 await sync();
 const date = localDate();
-const entry = await getOrCreateEntry(db, date).match(
-  (e) => e,
+// 当日の日付チャンク（トップレベル）を用意し、その直下の子チャンクからバッファ（raw）を
+// 再構成する（docs/CHUNKS.md）。raw / converted 列は廃止したため、子チャンクの content が
+// バッファの唯一の復元元。打ちかけ行（未確定ローマ字）は前回終了時に失われている（受容済み）。
+const dateChunk = await getOrCreateDateChunk(db, date).match(
+  (c) => c,
   (e): never => {
     console.error(`zakki: DB エラー: ${e.message}`);
     process.exit(1);
   },
 );
+const children = await listChildren(db, dateChunk.id).match(
+  (cs) => cs,
+  (e): never => {
+    console.error(`zakki: DB エラー: ${e.message}`);
+    process.exit(1);
+  },
+);
+const initialRaw = buildRaw(children.map((c) => c.content));
 
 // anco 未導入（scripts/install-anco.sh 未実行）の環境では、かなのまま
 // 動作する identity エンジンにフォールバックする（docs/FEATURES.md §変換エンジン）。
@@ -82,8 +94,8 @@ createRoot(renderer).render(
   <App
     db={db}
     date={date}
-    sessionId={entry.sessionId}
-    initialRaw={entry.raw}
+    dateChunkId={dateChunk.id}
+    initialRaw={initialRaw}
     vaultDir={defaultVaultDir()}
     engine={engine}
     corrections={corrections}
