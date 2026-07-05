@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
 import { links } from "@zakki/data/db/schema.ts";
 import { saveSnapshot } from "@zakki/data/entry/repository.ts";
-import { addManualLink } from "./repository.ts";
+import { addManualLink, addManualLinks } from "./repository.ts";
 
 let db: Db;
 let chunkIds: number[];
@@ -42,6 +42,31 @@ describe("addManualLink", () => {
     const [a] = chunkIds;
     if (a === undefined) throw new Error("seed 不足");
     (await addManualLink(db, a, a))._unsafeUnwrap();
+    expect(await db.select().from(links)).toHaveLength(0);
+  });
+});
+
+describe("addManualLinks（バッチ）", () => {
+  test("複数ペアを一括で張り、バッチ内重複・自己リンクは除外する", async () => {
+    const [a, b, c] = chunkIds;
+    if (a === undefined || b === undefined || c === undefined) throw new Error("seed 不足");
+    (
+      await addManualLinks(db, [
+        { from: a, to: b },
+        { from: b, to: a }, // 正規化後に重複
+        { from: b, to: b }, // 自己リンク
+        { from: c, to: b }, // 逆順 → 正規化
+      ])
+    )._unsafeUnwrap();
+    const rows = await db.select().from(links);
+    expect(rows).toEqual([
+      { fromChunkId: a, toChunkId: b, score: 1, origin: "manual" },
+      { fromChunkId: b, toChunkId: c, score: 1, origin: "manual" },
+    ]);
+  });
+
+  test("空配列は no-op", async () => {
+    (await addManualLinks(db, []))._unsafeUnwrap();
     expect(await db.select().from(links)).toHaveLength(0);
   });
 });

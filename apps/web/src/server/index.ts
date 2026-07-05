@@ -10,6 +10,7 @@ import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { createAnalysisScheduler } from "./analysis.ts";
 import { createApp } from "./app.ts";
+import { createAnalysisEvents } from "./events.ts";
 
 // TUI（apps/tui/src/index.tsx）と同じ合成: openDb → 暗号アンロック → エンジン選択 → serve。
 // 違いは 2 点: TTY を要求しない・暗号はキーファイルの無言アンロックのみ
@@ -41,8 +42,15 @@ await sync();
 const engine = resolveDefaultEngine();
 const embedder = resolveDefaultEmbedder();
 
-const analysis = createAnalysisScheduler(db, embedder, (m) => console.error(`zakki-web: ${m}`));
-const app = createApp({ db, engine, embedder, analysis });
+const events = createAnalysisEvents();
+const analysis = createAnalysisScheduler(
+  db,
+  embedder,
+  (m) => console.error(`zakki-web: ${m}`),
+  undefined,
+  () => events.emit(),
+);
+const app = createApp({ db, engine, embedder, analysis, events });
 
 // ビルド済み SPA（vite build → apps/web/dist）があれば配信する（SPA フォールバック付き）。
 // 開発時は dist が無くてもよい（vite dev サーバが /api を proxy する）。

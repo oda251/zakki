@@ -22,12 +22,17 @@ export function createAnalysisScheduler(
   embedder: Embedder | null,
   onError: (message: string) => void,
   debounceMs: number = ANALYZE_DEBOUNCE_MS,
+  onSettled?: () => void,
 ): AnalysisScheduler {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
 
   const run = () => {
-    chain = chain.then(() => runAnalysisPass(db, embedder, onError)).then(() => {});
+    chain = chain
+      .then(() => runAnalysisPass(db, embedder, onError))
+      .then(() => {
+        onSettled?.();
+      });
   };
 
   return {
