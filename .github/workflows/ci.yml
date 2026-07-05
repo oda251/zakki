@@ -1,10 +1,9 @@
 # CI: lint / typecheck / test / build（issue #30）
 # lefthook の pre-commit はローカルでスキップ可能なため、main へのマージ品質を CI で保証する。
 # 備考:
-# - trustedDependencies（onnxruntime-node, protobufjs）の postinstall は
-#   bun install がルート package.json の宣言に従い自動実行する
 # - packages/backend の embedding 統合テストは初回に ruri-v3-30m ONNX モデル
-#   （約37MB）を HuggingFace からダウンロードする（テスト側 timeout 180s）
+#   （約37MB）を HuggingFace からダウンロードするため、CI では既定で skip する
+#   （RUN_EMBEDDING_TESTS=1 でローカル同様に実行可能）
 # - anco 実バイナリ統合テストは skipIf(!hasAnco) で CI では skip される
 name: CI
 
@@ -13,9 +12,12 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
