@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
+import { GraphViewErrorBoundary } from "@zakki/web/client/GraphViewErrorBoundary.tsx";
 import { LeftSidebar } from "@zakki/web/client/layout/LeftSidebar.tsx";
 import { RightPanel } from "@zakki/web/client/layout/RightPanel.tsx";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
@@ -25,9 +26,11 @@ export function App() {
       {error !== null ? (
         <div className="empty-note main-pane">読み込みエラー: {error}</div>
       ) : (
-        <Suspense fallback={<div className="empty-note main-pane">グラフを読み込み中…</div>}>
-          <GraphView />
-        </Suspense>
+        <GraphViewErrorBoundary>
+          <Suspense fallback={<div className="empty-note main-pane">グラフを読み込み中…</div>}>
+            <GraphView />
+          </Suspense>
+        </GraphViewErrorBoundary>
       )}
       <RightPanel />
     </div>
