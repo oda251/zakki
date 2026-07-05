@@ -319,8 +319,11 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
       }
 
       // 極性は content のみの関数なので変更チャンクだけ再計算する。差分取得
-      // （getGraphDelta）が「変更ノード = updatedAt >= since」で拾えるよう、
-      // 極性またはタグ列が実際に変わったチャンクだけ updatedAt を進める（analyzeAll と同じ基準）。
+      // （getGraphDelta）が「変更ノード = updatedAt >= since」で拾えるよう、極性または
+      // 自身のタグ列が実際に変わったチャンクだけ updatedAt を進める。ここでの対象は
+      // あくまで changed（自身の content が変わったチャンク）に限る: corpus 変動で
+      // 他チャンクのタグ順位だけが揺れても、それは自身の変化ではないので bump しない
+      // （差分ペイロードを「ユーザの変更」に比例させる、analyzeChanged の設計方針）。
       const dirtyTagSet = new Set(dirtyTagChunks);
       const oldPolarity = new Map<number, number | null>();
       for (const ids of batched([...changed], 200)) {
@@ -339,12 +342,6 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
           continue;
         }
         await tx.update(chunks).set({ polarity, updatedAt: now }).where(eq(chunks.id, chunkId));
-      }
-      // content 自体は不変でも corpus 変動でタグ列だけ変わったチャンクは、極性ループの
-      // 対象外（changed に含まれない）なので別途 updatedAt を進める
-      for (const chunkId of dirtyTagSet) {
-        if (changed.has(chunkId)) continue;
-        await tx.update(chunks).set({ updatedAt: now }).where(eq(chunks.id, chunkId));
       }
     });
 
