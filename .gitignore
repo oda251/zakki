@@ -4,6 +4,9 @@ node_modules/
 *.db
 apps/web/dist/
 
+# Claude Code の作業ディレクトリ（エージェント worktree 等）
+.claude/
+
 # Pulumi (infra/)
 infra/bin/
 infra/sdks/
