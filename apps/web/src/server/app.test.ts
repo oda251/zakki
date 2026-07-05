@@ -200,6 +200,11 @@ describe("グラフとセッション関連", () => {
     expect((await app.request("/api/graph?since=abc")).status).toBe(400);
   });
 
+  test('?since= 空文字は 400 でなく全量応答（空 DB 起動直後の version="" を since に使う回帰）', async () => {
+    const graph = await json<GraphData>(await app.request("/api/graph?since="));
+    expect(graph).toEqual({ version: "", nodes: [], edges: [], sessions: [] });
+  });
+
   test("差分マージ後のストア状態が全量取得と一致し、ペイロードは変化分に比例する", async () => {
     // ベースライン: セッション A を保存・解析し、チャンクの updatedAt を過去へ倒す
     // （同一ミリ秒に潰れるテスト実行でも「以後の変更だけが新しい」状況を作る）

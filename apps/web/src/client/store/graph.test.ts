@@ -169,6 +169,20 @@ describe("mergeDelta（差分マージ）", () => {
     expect(merged.nodes.find((n) => n.id === 1)?.sessionName).toBe("改名");
     expect(merged.nodes.find((n) => n.id === 3)?.sessionName).toBe("調査");
   });
+
+  test("delta.version が現在の version より過去（並行 loadDelta の応答順序逆転）なら version は現在値を維持する", () => {
+    const edges = [{ from: 1, to: 3, score: 1, origin: "manual" as const }];
+    const merged = mergeDelta(DATA, {
+      ...base,
+      version: "v0", // DATA.version="v1" より過去
+      nodes: [{ ...node(2, 100), content: "更新" }],
+      edges,
+    });
+    expect(merged.version).toBe("v1"); // 後退させない
+    // ノード・エッジのマージ自体は行う
+    expect(merged.nodes.find((n) => n.id === 2)?.content).toBe("更新");
+    expect(merged.edges).toEqual(edges);
+  });
 });
 
 describe("loadDelta（SSE 後の差分取得）", () => {
@@ -198,6 +212,26 @@ describe("loadDelta（SSE 後の差分取得）", () => {
     expect(data?.version).toBe("v2");
     expect(data?.nodes.map((n) => n.id)).toEqual([1, 3]);
     expect(data?.edges).toEqual([]);
+  });
+
+  test("data.version が空文字（空 DB 起動直後）のときは since を送らず全量 load にフォールバックする", async () => {
+    useGraphStore.setState({ data: { ...DATA, version: "" } });
+    const full: GraphData = { ...DATA, version: "v9" };
+    const calls: string[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return new Response(JSON.stringify(full), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      await useGraphStore.getState().loadDelta();
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(calls).toEqual(["/api/graph"]);
+    expect(useGraphStore.getState().data?.version).toBe("v9");
   });
 });
 

@@ -78,7 +78,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   loadDelta: async () => {
     const { data, load } = get();
-    if (data === null) return load();
+    // version="" は空 DB 起動直後（初回保存前）の getGraph 応答。since には使えないので全量 load
+    if (data === null || data.version === "") return load();
     try {
       const delta = await api.graphDelta(data.version);
       // マージ基準は応答受信時点の data（取得中の applySaved 等の楽観的更新を上書きしない）
@@ -168,7 +169,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
  * 差分応答を全量データへマージする純関数（差分適用後 = 全量取得後、が不変条件）。
  * - nodes: 変更分は置換・aliveNodeIds に無い id は削除・残りは温存（id 昇順に正規化）
  * - sessionName はノードに非正規化されているため、全量で届く sessions から引き直す（改名反映）
- * - edges / sessions / version は差分側で全置換
+ * - edges / sessions は差分側で全置換
+ * - version は差分側を採用するが、現在値より過去（文字列比較で小さい）なら現在値を維持する
+ *   （並行 loadDelta の応答順序逆転で since が過去に戻り、以後の差分取得が過剰送信になるのを防ぐ）
  */
 export function mergeDelta(data: GraphData, delta: GraphDelta): GraphData {
   const changed = new Map(delta.nodes.map((n) => [n.id, n]));
@@ -181,7 +184,8 @@ export function mergeDelta(data: GraphData, delta: GraphDelta): GraphData {
       const sessionName = nameBySession.get(n.sessionId) ?? null;
       return n.sessionName === sessionName ? n : { ...n, sessionName };
     });
-  return { version: delta.version, nodes, edges: delta.edges, sessions: delta.sessions };
+  const version = delta.version < data.version ? data.version : delta.version;
+  return { version, nodes, edges: delta.edges, sessions: delta.sessions };
 }
 
 /** セッション id → series スロット（作成順で固定割当。SERIES_SLOTS 超は undefined = neutral） */

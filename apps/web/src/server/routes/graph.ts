@@ -23,9 +23,11 @@ export function graphRoutes(deps: AppDeps): Hono {
 
   // ?since=<ISO> で差分取得（version は応答に含まれ、次回の since に使う）。
   // 不正な since は取りこぼし（過小送信）になり得るので 400 で弾く。
+  // 空文字は「空 DB 起動直後（getGraph の version が空文字）をそのまま since に使った」場合の
+  // クライアント発の値なので、未指定と同様に全量応答へフォールバックする（400 にしない）。
   app.get("/graph", (c) => {
     const since = c.req.query("since");
-    if (since === undefined) return respond(c, getGraph(db));
+    if (since === undefined || since === "") return respond(c, getGraph(db));
     if (!v.is(v.pipe(v.string(), v.isoTimestamp()), since)) {
       return c.json({ error: "invalid since" }, 400);
     }
