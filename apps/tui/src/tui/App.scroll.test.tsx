@@ -15,7 +15,9 @@ import { App } from "./App.tsx";
 async function setup(rawChunks: string[], width = 20, height = 6) {
   const db = await createDb(":memory:");
   const entry = (await getOrCreateEntry(db, "2026-06-14"))._unsafeUnwrap();
-  const initialRaw = rawChunks.map((c) => wrapPaste(c)).join("");
+  // チャンク間は改行区切り（実際の raw は Enter で行区切りが挿入される。区切りなしで
+  // 連結すると同一「行」とみなされ scanLineGroups で 1 チャンクにマージされてしまう）
+  const initialRaw = rawChunks.map((c) => wrapPaste(c)).join("\n");
   const t = await testRender(
     <App
       db={db}

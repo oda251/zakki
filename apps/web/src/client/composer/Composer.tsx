@@ -3,12 +3,7 @@ import { useStore } from "zustand";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { createConversionSession } from "@zakki/core/conversion/compose.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
-import {
-  freezeLiveTail,
-  liveTailStart,
-  parseBlocks,
-  replaceBlock,
-} from "@zakki/core/entry/records.ts";
+import { freezeLiveTail, replaceBlock, splitDisplay } from "@zakki/core/entry/records.ts";
 import { applyKey } from "@zakki/core/input/controller.ts";
 import { createEditorStore } from "@zakki/core/input/store.ts";
 import { api } from "@zakki/web/client/api/client.ts";
@@ -178,12 +173,12 @@ export function Composer({
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
   const openEdit = useCallback(
-    (block: { start: number; end: number; text: string }) => {
+    (block: { start: number; end: number; content: string }) => {
       setEditing({
         target: { kind: "main", start: block.start, end: block.end },
-        old: block.text,
-        text: block.text,
-        cursor: block.text.length,
+        old: block.content,
+        text: block.content,
+        cursor: block.content.length,
       });
     },
     [setEditing],
@@ -214,11 +209,14 @@ export function Composer({
     [store, setRaw, setEditing],
   );
 
-  // 表示: 凍結チャンク列 + ライブ末尾（変換済み + pending ローマ字）
-  const frozen = useMemo(() => parseBlocks(raw).filter((b) => b.frozen), [raw]);
+  // 表示: 確定チャンク列（行グループ単位、DB チャンクと 1:1）+ ライブ末尾
+  // （変換済み + pending ローマ字）。同一行の複数リテラルはここでマージされる
+  // ため、凍結リテラル単位（parseBlocks(raw).filter(frozen)）では列挙しない。
+  const display = useMemo(() => splitDisplay(raw), [raw]);
+  const frozen = display.frozen;
   const live = useMemo(
-    () => conversion.convertLive(raw.slice(liveTailStart(raw))),
-    [raw, conversionVersion, conversion],
+    () => conversion.convertLive(display.liveRaw),
+    [display.liveRaw, conversionVersion, conversion],
   );
 
   const editingStart =
@@ -258,10 +256,10 @@ export function Composer({
           <div
             key={`${block.start}-${i}`}
             className={chunkWeb.base}
-            title={makeTitle(block.text)}
+            title={makeTitle(block.content)}
             onClick={() => openEdit(block)}
           >
-            {block.text}
+            {block.content}
             <button
               type="button"
               className="composer__delete"

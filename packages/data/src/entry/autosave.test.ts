@@ -7,23 +7,26 @@ import { localDate, persistEntry, saveSessionEntry } from "./autosave.ts";
 let db: Db;
 
 describe("persistEntry（自動保存の入口）", () => {
-  test("converted からチャンクを再生成して保存する", async () => {
+  test("converted からチャンクを再生成して保存する（区切りは改行のみ・句点では割らない）", async () => {
     db = await createDb(":memory:");
     const saved = (
       await persistEntry(db, {
         date: "2026-06-12",
-        raw: "hare.Claude tohanashita.",
-        converted: "はれ。Claudeとはなした。",
+        raw: "hare.Claude tohanashita.\nasu mo hanasu",
+        converted: "はれ。Claudeとはなした。\nあすもはなす",
       })
     )._unsafeUnwrap();
 
-    expect(saved.chunks.map((c) => c.content)).toEqual(["はれ。", "Claudeとはなした。"]);
+    expect(saved.chunks.map((c) => c.content)).toEqual([
+      "はれ。Claudeとはなした。",
+      "あすもはなす",
+    ]);
   });
 
-  test("マーカー付き converted は凍結リテラル境界で分割し、保存値は strip される", async () => {
+  test("マーカー付き converted は改行境界で分割し、保存値は strip される", async () => {
     db = await createDb(":memory:");
-    // Enter 終端（句点なし）の 2 文が凍結された raw 相当。境界はマーカーのみ
-    const converted = wrapPaste("ぶにち") + wrapPaste("ぶんい");
+    // Enter 終端の 2 行が凍結された raw 相当。行区切りの改行はリテラルの外にある
+    const converted = `${wrapPaste("ぶにち")}\n${wrapPaste("ぶんい")}\n`;
     const saved = (
       await persistEntry(db, {
         date: "2026-06-12",
@@ -32,10 +35,10 @@ describe("persistEntry（自動保存の入口）", () => {
       })
     )._unsafeUnwrap();
 
-    // 1 投稿に結合されず、凍結リテラル単位で 2 チャンクになる
+    // 1 投稿に結合されず、行（Enter）単位で 2 チャンクになる
     expect(saved.chunks.map((c) => c.content)).toEqual(["ぶにち", "ぶんい"]);
     // entries.converted の保存値にマーカー（PUA）は残らない
-    expect(saved.entry.converted).toBe("ぶにちぶんい");
+    expect(saved.entry.converted).toBe("ぶにち\nぶんい\n");
   });
 
   test("E2E: Enter 区切りの2文が凍結→保存で2チャンクになる（結合されない）", async () => {
@@ -62,18 +65,18 @@ describe("persistEntry（自動保存の入口）", () => {
     expect(saved.chunks.map((c) => c.content)).toEqual(["ぶにち", "ぶんい"]);
   });
 
-  test("saveSessionEntry も同様にマーカー境界で分割し、保存値は strip される（web 経路）", async () => {
+  test("saveSessionEntry も同様に改行境界で分割し、保存値は strip される（web 経路）", async () => {
     db = await createDb(":memory:");
     const session = (await getOrCreateDefaultSession(db, "2026-06-12"))._unsafeUnwrap();
     const saved = (
       await saveSessionEntry(db, session.id, {
         raw: "bunichi\nbunni\n",
-        converted: wrapPaste("ぶにち") + wrapPaste("ぶんい"),
+        converted: `${wrapPaste("ぶにち")}\n${wrapPaste("ぶんい")}\n`,
       })
     )._unsafeUnwrap();
 
     expect(saved?.chunks.map((c) => c.content)).toEqual(["ぶにち", "ぶんい"]);
-    expect(saved?.entry.converted).toBe("ぶにちぶんい");
+    expect(saved?.entry.converted).toBe("ぶにち\nぶんい\n");
   });
 });
 

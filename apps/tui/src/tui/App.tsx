@@ -20,8 +20,8 @@ import { getChunkContext, listChunksWithDate } from "@zakki/data/entry/queries.t
 import {
   editableBlockAt,
   freezeLiveTail,
-  parseBlocks,
   replaceBlock,
+  splitDisplay,
 } from "@zakki/core/entry/records.ts";
 import type { Result } from "neverthrow";
 import { getEntryWithChunks } from "@zakki/data/entry/repository.ts";
@@ -119,7 +119,7 @@ export function App({
       raw: initialRaw,
       cursor: {
         pane: "main",
-        index: parseBlocks(initialRaw).filter((b) => b.frozen).length,
+        index: splitDisplay(initialRaw).frozen.length,
         mode: "input",
       },
     }),
@@ -310,12 +310,12 @@ export function App({
    * （文単位の非同期変換はバッファ途中のインライン変換ができないため）。
    */
   const openEdit = useCallback(
-    (block: { start: number; end: number; text: string }, viewIndex: number) => {
+    (block: { start: number; end: number; content: string }, viewIndex: number) => {
       setEditing({
         target: { kind: "main", start: block.start, end: block.end },
-        text: block.text,
-        cursor: block.text.length,
-        old: block.text,
+        text: block.content,
+        cursor: block.content.length,
+        old: block.content,
       });
       // 編集中はカーソルを当該 View（mode:"input"）に維持する
       moveCursor({ pane: "main", index: viewIndex, mode: "input" });
@@ -570,7 +570,7 @@ export function App({
     }
     // ── 単一カーソル（メイン / 関連 / 詳細 を配線） ──
     // この tick の確定チャンク数からレンズを作る。related=関連件数、detail=詳細表示件数。
-    const frozenNow = parseBlocks(store.getState().raw).filter((b) => b.frozen);
+    const frozenNow = splitDisplay(store.getState().raw).frozen;
     const lens: ScreenLens = {
       main: frozenNow.length,
       related: ambient.length,
@@ -790,12 +790,13 @@ export function App({
     return () => clearTimeout(timer);
   }, [mode, searchQuery, embedder, engine, db]);
 
-  // 表示用の分解: 先頭の確定チャンク（凍結リテラル）＋末尾のライブ入力
-  const blocks = useMemo(() => parseBlocks(raw), [raw]);
-  const frozen = useMemo(() => blocks.filter((b) => b.frozen), [blocks]);
-  // ライブ末尾は分解済みブロックから取る（末尾ブロックが非凍結ならそれ）
-  const lastBlock = blocks.at(-1);
-  const liveRaw = lastBlock !== undefined && !lastBlock.frozen ? lastBlock.text : "";
+  // 表示用の分解: 確定チャンク列（行グループ単位、DB チャンクと 1:1）＋末尾のライブ入力。
+  // 凍結リテラル単位（parseBlocks(raw).filter(frozen)）だと同一行の複数リテラルが
+  // 別チャンクとして列挙され、liveRaw も末尾リテラル直後の行区切り改行を含んで
+  // しまう（#37-1, #37-2）。splitDisplay（liveTailStart + scanLineGroups）に統一する。
+  const display = useMemo(() => splitDisplay(raw), [raw]);
+  const frozen = display.frozen;
+  const liveRaw = display.liveRaw;
   const live = useMemo(
     () => conversion.convertLive(liveRaw),
     [liveRaw, conversionVersion, conversion],
@@ -985,7 +986,7 @@ export function App({
               <Chunk.View
                 key={`chunk-${b.start}`}
                 id={`chunk-${b.start}`}
-                text={b.text}
+                text={b.content}
                 selected={selected}
                 onClick={() => openEdit(b, idx)}
               />

@@ -4,6 +4,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { createDb } from "@zakki/data/db/client.ts";
+import { listChunksWithDate } from "@zakki/data/entry/queries.ts";
 import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
 import { App } from "./App.tsx";
 
@@ -32,7 +33,7 @@ async function setup(rawChunks: string[], width = 24, height = 8) {
     { width, height },
   );
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", false);
-  return t;
+  return { ...t, db };
 }
 
 const FRAME = (t: Awaited<ReturnType<typeof setup>>) => t.captureCharFrame();
@@ -89,6 +90,26 @@ describe("入力フロー（編集・ペースト・削除）の統合", () => {
     await settle(t, 100);
 
     expect(FRAME(t)).toContain("メモ書き");
+    t.renderer.destroy();
+  }, 20000);
+
+  // 回帰(#37-1): 同一行に改行なしで連続ペーストすると凍結リテラルが並ぶ
+  // （Web の IME compositionend 連打と同じ状況）。旧実装（parseBlocks(raw).filter(frozen)）
+  // だとリテラルごとに別チャンクとして表示され、DB の chunkText 結果（1 チャンク）とズレる。
+  test("改行なしの連続ペーストは表示・DB とも 1 チャンクにマージされる", async () => {
+    const t = await setup([]);
+    await t.flush();
+
+    await t.mockInput.pasteBracketedText("いち");
+    await settle(t, 100);
+    await t.mockInput.pasteBracketedText("に");
+    await settle(t, 500); // 保存デバウンスを跨いで永続化を確定させる
+
+    const frame = FRAME(t);
+    expect(frame).toContain("いちに");
+
+    const saved = (await listChunksWithDate(t.db))._unsafeUnwrap();
+    expect(saved.map((c) => c.content)).toEqual(["いちに"]);
     t.renderer.destroy();
   }, 20000);
 

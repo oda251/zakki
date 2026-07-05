@@ -1,3 +1,4 @@
+import { type LineGroup, scanLineGroups } from "@zakki/core/chunk/chunker.ts";
 import {
   PASTE_CLOSE,
   PASTE_OPEN,
@@ -49,10 +50,38 @@ export function frozenCount(raw: string): number {
   return parseBlocks(raw).filter((b) => b.frozen).length;
 }
 
-/** 末尾のライブ領域（最後のリテラル以降）の開始位置 */
+/**
+ * 末尾のライブ領域の開始位置。最後のリテラル直後の改行（行区切り）は
+ * 確定済み領域に属するため飛ばす（ライブ領域＝現在入力中の行以降）。
+ */
 export function liveTailStart(raw: string): number {
   const close = raw.lastIndexOf(PASTE_CLOSE);
-  return close === -1 ? 0 : close + 1;
+  let start = close === -1 ? 0 : close + 1;
+  while (start < raw.length && raw.charAt(start) === "\n") {
+    start += 1;
+  }
+  return start;
+}
+
+/** raw を「確定済み表示チャンク列」と「末尾ライブ raw」へ分解した結果（Composer.web / TUI 共有） */
+export interface DisplaySplit {
+  /** 確定済み表示チャンク（行グループ単位）。DB チャンク（chunkText）と 1:1 に揃う */
+  frozen: LineGroup[];
+  /** 末尾のライブ raw（liveTailStart 以降）。convertLive への入力に使う */
+  liveRaw: string;
+}
+
+/**
+ * raw を UI 表示用に「確定済みチャンク列」と「末尾ライブ raw」へ分解する
+ * （docs/COMPOSER.md, docs/PANES.md）。Web Composer / TUI の両方が、凍結リテラル
+ * 単位（parseBlocks(raw).filter(frozen)）ではなくこれを使う: IME の compositionend
+ * ごとの wrapPaste 等で同一行に複数の凍結リテラルが並んでも、行グループ
+ * （scanLineGroups）でまとめることで chunkText が生成する DB チャンクと 1:1 に揃える。
+ * ライブ末尾は liveTailStart で切り出す（末尾リテラル直後の行区切り改行を含めない）。
+ */
+export function splitDisplay(raw: string): DisplaySplit {
+  const start = liveTailStart(raw);
+  return { frozen: scanLineGroups(raw.slice(0, start)), liveRaw: raw.slice(start) };
 }
 
 /** raw 内のリテラル領域 [start, end) を確定テキストで置換する（空なら削除）。修正の確定に使う */
@@ -75,60 +104,44 @@ export interface EditableBlock {
 
 /**
  * raw の position 番目のチャンクの編集対象領域を返す（無ければ null）。
- * 不変条件「チャンクは raw の順序と 1:1」（docs/PANES.md 実装リスク2）により、
- * 先頭から凍結リテラル群を数え、続けて末尾ライブ領域を文単位（firstSentenceRomajiLen）
- * に分割して数える。エントリ末尾の文は常にライブのローマ字として残る（freezeLiveTail は
- * 最後の1文を畳まない）ため、過去エントリの最後／単一チャンクの編集にはこの分解が要る。
+ * 不変条件「チャンクは raw の順序と 1:1」（docs/PANES.md 実装リスク2）は
+ * 行グループ（＝チャンク区切り、scanLineGroups で chunker.ts と共通化）で
+ * 成立させる。行全体が単一の凍結リテラルなら frozen（初期値＝リテラル本文）、
+ * ローマ字やリテラル混在の行は live 扱い（初期値は呼び出し側が DB content から渡す）。
  */
 export function editableBlockAt(raw: string, position: number): EditableBlock | null {
-  const frozen = parseBlocks(raw).filter((b) => b.frozen);
-  const lit = frozen[position];
-  if (lit !== undefined) {
-    return { start: lit.start, end: lit.end, frozen: true, text: lit.text };
+  const group = scanLineGroups(raw)[position];
+  if (group === undefined) {
+    return null;
   }
-  // 末尾ライブ領域を文単位の部分範囲へ分割し、残りの index を引く
-  const tailStart = liveTailStart(raw);
-  const tail = raw.slice(tailStart);
-  let liveIndex = position - frozen.length;
-  let offset = 0;
-  while (offset < tail.length) {
-    const len = firstSentenceRomajiLen(tail.slice(offset));
-    const segLen = len ?? tail.length - offset;
-    if (liveIndex === 0) {
-      return {
-        start: tailStart + offset,
-        end: tailStart + offset + segLen,
-        frozen: false,
-        text: "",
-      };
-    }
-    liveIndex -= 1;
-    offset += segLen;
+  const blocks = parseBlocks(raw.slice(group.start, group.end));
+  const frozen = blocks.filter((b) => b.frozen);
+  const literalOnly = frozen.length === 1 && blocks.every((b) => b.frozen || b.text.trim() === "");
+  if (literalOnly && frozen[0] !== undefined) {
+    return { start: group.start, end: group.end, frozen: true, text: frozen[0].text };
   }
-  return null;
+  return { start: group.start, end: group.end, frozen: false, text: "" };
 }
 
-const SENTENCE_BOUNDARY = /[。！？\n]/u;
-// 区切り文字（句点系とそのローマ字）。連続分は 1 境界へ畳まれるので末尾まで食い切る。
-const DELIM_CHARS = /[.。!！?？]/u;
+const LINE_BOUNDARY = /\n/u;
 
 /**
- * ローマ字の先頭1文（最初の句点・改行境界まで）のローマ字長を返す。
- * 境界が無ければ null（＝まだ末尾の入力途中チャンクのみ）。連続した区切り文字
- * （"あ。。" 等、変換で最後の 1 つに畳まれる）は末尾までまとめて 1 文に含める。
+ * ローマ字の先頭1行（最初の改行境界まで）のローマ字長を返す。
+ * 境界が無ければ null（＝まだ末尾の入力途中行のみ）。連続した改行（空行）は
+ * 末尾までまとめて 1 行分に含める（孤立した区切りを残さない）。
  */
-export function firstSentenceRomajiLen(romaji: string): number | null {
+export function firstLineRomajiLen(romaji: string): number | null {
   const { converted } = convertRomaji(romaji);
-  const m = converted.match(SENTENCE_BOUNDARY);
+  const m = converted.match(LINE_BOUNDARY);
   if (m === null || m.index === undefined) {
     return null;
   }
   const need = m.index + 1; // 境界文字を含める
   for (let r = 1; r <= romaji.length; r++) {
     if (convertRomaji(romaji.slice(0, r)).converted.length >= need) {
-      // 連続する区切り文字（畳まれて 1 つの境界になる）を末尾まで食い切る
+      // 連続する改行（空行）は末尾まで食い切る
       let end = r;
-      while (end < romaji.length && DELIM_CHARS.test(romaji.charAt(end))) {
+      while (end < romaji.length && romaji.charAt(end) === "\n") {
         end += 1;
       }
       return end;
@@ -137,13 +150,14 @@ export function firstSentenceRomajiLen(romaji: string): number | null {
   return romaji.length;
 }
 
-/** 1文ぶんのローマ字を確定テキストへ変換し、変換が settled かを返す関数の型 */
-export type SettledConvert = (sentenceRomaji: string) => { text: string; settled: boolean };
+/** 1行ぶんのローマ字を確定テキストへ変換し、変換が settled かを返す関数の型 */
+export type SettledConvert = (lineRomaji: string) => { text: string; settled: boolean };
 
 /**
- * 末尾ライブ領域のうち「最後の1文を除く」完結済み・変換済みの文を凍結リテラルへ畳む
- * （確定境界＝末尾の入力中チャンク以外, docs/RECORDS.md）。
- * 変換が未完（settled でない）の文に達したら、そこで止めて次回に委ねる。
+ * 末尾ライブ領域のうち、Enter（改行）で完結し変換も済んだ行を凍結リテラルへ畳む
+ * （確定境界＝改行のみ, docs/RECORDS.md）。句点では畳まない（Enter だけが投稿の区切り）。
+ * 行区切りの改行はリテラルの外に残す（chunkText がチャンク境界として解釈する）。
+ * 変換が未完（settled でない）の行に達したら、そこで止めて次回に委ねる。
  */
 export function freezeLiveTail(
   raw: string,
@@ -152,33 +166,23 @@ export function freezeLiveTail(
   const start = liveTailStart(raw);
   let prefix = raw.slice(0, start);
   let live = raw.slice(start);
-  let changed = false;
 
   while (true) {
-    const len = firstSentenceRomajiLen(live);
+    const len = firstLineRomajiLen(live);
     if (len === null) {
-      break; // 境界なし＝末尾チャンクのみ
+      break; // 改行なし＝末尾の入力中行のみ
     }
-    const rest = live.slice(len);
     const { text, settled } = convert(live.slice(0, len));
-    // Enter（改行）で終えた文は最後でも確定する。改行は文（句点 split で text 側）にも
-    // rest 側（「文。」の直後で Enter）にも現れうるので両方を見る。句点だけで終わる
-    // 最後の文は書き足す余地があるためライブのまま残す（末尾以外確定 + Enter で即確定）。
-    const hasNewline = text.endsWith("\n") || rest.includes("\n");
-    if (rest.trim() === "" && !hasNewline) {
-      break;
-    }
     if (!settled) {
       break; // 未変換は畳まず次回へ
     }
-    // 末尾の改行は区切りとして捨て、句点等は確定テキストに残す
+    // 行区切りの改行は区切りとしてリテラルの外へ（空行はそのまま温存）
+    const newlines = /\n+$/u.exec(text)?.[0] ?? "\n";
     const frozen = text.replace(/\n+$/u, "");
-    if (frozen.trim() !== "") {
-      prefix += wrapPaste(frozen);
-    }
-    live = rest;
-    changed = true;
+    prefix += (frozen.trim() === "" ? "" : wrapPaste(frozen)) + newlines;
+    live = live.slice(len);
   }
 
-  return { raw: prefix + live, changed };
+  const next = prefix + live;
+  return { raw: next, changed: next !== raw };
 }

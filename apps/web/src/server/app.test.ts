@@ -101,8 +101,8 @@ describe("entry の保存と読み出し", () => {
     const saved = await json<SessionEntryResponse>(
       await app.request(
         put(`/api/sessions/${def.id}/entry`, {
-          raw: "kyouhahare.sanposhita.",
-          converted: "きょうははれ。さんぽした。",
+          raw: "kyouhahare.\nsanposhita.",
+          converted: "きょうははれ。\nさんぽした。",
         }),
       ),
     );
@@ -111,7 +111,7 @@ describe("entry の保存と読み出し", () => {
     const loaded = await json<SessionEntryResponse>(
       await app.request(`/api/sessions/${def.id}/entry`),
     );
-    expect(loaded.entry?.raw).toBe("kyouhahare.sanposhita.");
+    expect(loaded.entry?.raw).toBe("kyouhahare.\nsanposhita.");
     expect(loaded.chunks).toHaveLength(2);
 
     // 解析（タグ付け）がデバウンス後に走る
@@ -158,7 +158,7 @@ describe("POST /api/links（手動リンク）", () => {
   test("作成した manual リンクが graph に反映される", async () => {
     const def = await json<Session>(await app.request(post("/api/sessions/default", {})));
     const saved = await json<SessionEntryResponse>(
-      await app.request(put(`/api/sessions/${def.id}/entry`, { raw: "", converted: "一。二。" })),
+      await app.request(put(`/api/sessions/${def.id}/entry`, { raw: "", converted: "一。\n二。" })),
     );
     const [a, b] = saved.chunks.map((c) => c.id);
     if (a === undefined || b === undefined) throw new Error("seed 不足");
