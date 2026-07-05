@@ -18,7 +18,11 @@ export function createAnalysisEvents(): AnalysisEvents {
     },
     emit() {
       for (const listener of listeners) {
-        listener();
+        try {
+          listener();
+        } catch {
+          // 1 listener の例外で他の購読者・後続処理を止めない
+        }
       }
     },
   };

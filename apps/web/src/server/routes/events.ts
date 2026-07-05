@@ -15,7 +15,7 @@ export function eventRoutes(deps: AppDeps): Hono {
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {
       const unsubscribe = deps.events.subscribe(() => {
-        void stream.writeSSE({ event: "analysis", data: "settled" });
+        stream.writeSSE({ event: "analysis", data: "settled" }).catch(() => {});
       });
       stream.onAbort(unsubscribe);
       while (!stream.aborted) {
