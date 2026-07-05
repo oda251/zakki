@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { chunks } from "@zakki/data/db/schema.ts";
 import type { Hono } from "hono";
+import { mergeDelta } from "@zakki/web/client/store/graph.ts";
 import type {
   ConversionStateResponse,
   ConvertResponse,
   GraphData,
+  GraphDelta,
   HealthResponse,
   Session,
   SessionEntryResponse,
@@ -51,6 +54,11 @@ function post(path: string, body: unknown): Request {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+/** ノード順序の正規化（全量は date,position 順・差分マージは id 順のため） */
+function byId(g: GraphData): GraphData {
+  return { ...g, nodes: [...g.nodes].toSorted((x, y) => x.id - y.id) };
 }
 
 describe("GET /api/health", () => {
@@ -185,7 +193,69 @@ describe("POST /api/links（手動リンク）", () => {
 describe("グラフとセッション関連", () => {
   test("graph はノード・エッジ・セッションを返す（空 DB は空）", async () => {
     const graph = await json<GraphData>(await app.request("/api/graph"));
-    expect(graph).toEqual({ nodes: [], edges: [], sessions: [] });
+    expect(graph).toEqual({ version: "", nodes: [], edges: [], sessions: [] });
+  });
+
+  test("不正な since は 400", async () => {
+    expect((await app.request("/api/graph?since=abc")).status).toBe(400);
+  });
+
+  test('?since= 空文字は 400 でなく全量応答（空 DB 起動直後の version="" を since に使う回帰）', async () => {
+    const graph = await json<GraphData>(await app.request("/api/graph?since="));
+    expect(graph).toEqual({ version: "", nodes: [], edges: [], sessions: [] });
+  });
+
+  test("差分マージ後のストア状態が全量取得と一致し、ペイロードは変化分に比例する", async () => {
+    // ベースライン: セッション A を保存・解析し、チャンクの updatedAt を過去へ倒す
+    // （同一ミリ秒に潰れるテスト実行でも「以後の変更だけが新しい」状況を作る）
+    const def = await json<Session>(
+      await app.request(post("/api/sessions/default", { date: "2026-07-05" })),
+    );
+    await json(
+      await app.request(
+        put(`/api/sessions/${def.id}/entry`, { raw: "", converted: "きょうははれ。さんぽした。" }),
+      ),
+    );
+    await analysis.settle();
+    await db.update(chunks).set({ updatedAt: "2020-01-01T00:00:00.000Z" });
+    const full0 = await json<GraphData>(await app.request("/api/graph"));
+
+    // 変更: 名前付きセッション B の保存・A→B の手動リンク・B の改名・解析
+    const named = await json<Session>(
+      await app.request(post("/api/sessions", { name: "調査", date: "2026-07-05" })),
+    );
+    const savedB = await json<SessionEntryResponse>(
+      await app.request(
+        put(`/api/sessions/${named.id}/entry`, { raw: "", converted: "変換辞書を調べた。" }),
+      ),
+    );
+    const a0 = full0.nodes[0]?.id;
+    const b0 = savedB.chunks[0]?.id;
+    if (a0 === undefined || b0 === undefined) throw new Error("seed 不足");
+    await json(await app.request(post("/api/links", { from: b0, to: a0 })));
+    await app.request(
+      new Request(`http://x/api/sessions/${named.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "設計" }),
+      }),
+    );
+    await analysis.settle();
+
+    const delta = await json<GraphDelta>(
+      await app.request(`/api/graph?since=${encodeURIComponent(full0.version)}`),
+    );
+    const full1 = await json<GraphData>(await app.request("/api/graph"));
+
+    // 受け入れ基準1: 差分ノードは「そのパスで変化した分」だけ（A の 2 チャンクは再送しない）
+    const sinceMid = await json<GraphDelta>(
+      await app.request("/api/graph?since=2025-01-01T00:00:00.000Z"),
+    );
+    expect(sinceMid.nodes.map((n) => n.id)).toEqual([b0]);
+
+    // 受け入れ基準2: 差分適用後のストア状態が全量取得と一致する
+    expect(byId(mergeDelta(full0, delta))).toEqual(byId(full1));
+    expect(full1.sessions.find((s) => s.id === named.id)?.name).toBe("設計");
   });
 
   test("related は embedder なしでは空", async () => {

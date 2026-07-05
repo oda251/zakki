@@ -95,6 +95,26 @@ describe("analyzeAll", () => {
     expect(links.get(a)).toContain(b);
   });
 
+  test("解析結果が変わったチャンクは updatedAt が進み、冪等再実行では進まない", async () => {
+    const { chunks } = await import("@zakki/data/db/schema.ts");
+    const OLD = "2020-01-01T00:00:00.000Z";
+    await seed("2026-06-12", ["変換辞書の話。", "散歩して天気の話をした。"]);
+
+    // 初回解析は polarity null → 値・タグ付与で「変化あり」= 全チャンク bump
+    await db.update(chunks).set({ updatedAt: OLD });
+    (await analyzeAll(db))._unsafeUnwrap();
+    for (const row of await db.select({ updatedAt: chunks.updatedAt }).from(chunks)) {
+      expect(row.updatedAt > OLD).toBe(true);
+    }
+
+    // 再実行は決定的に同じ結果 = 変化なし → bump しない（差分取得の無駄な再送を防ぐ）
+    await db.update(chunks).set({ updatedAt: OLD });
+    (await analyzeAll(db))._unsafeUnwrap();
+    for (const row of await db.select({ updatedAt: chunks.updatedAt }).from(chunks)) {
+      expect(row.updatedAt).toBe(OLD);
+    }
+  });
+
   test("セッションタグ（ユーザ明示）は解析の全消し再挿入・孤立削除に干渉されない", async () => {
     const session = (await createSession(db, { name: "調査", date: "2026-06-12" }))._unsafeUnwrap();
     (await setSessionTags(db, session.id, ["web", "設計"]))._unsafeUnwrap();

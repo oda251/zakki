@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { GraphData } from "@zakki/web/shared/api-types.ts";
-import { useGraphStore, visibleGraph } from "./graph.ts";
+import type { GraphData, GraphDelta } from "@zakki/web/shared/api-types.ts";
+import { mergeDelta, useGraphStore, visibleGraph } from "./graph.ts";
 
 const node = (id: number, sessionId: number) => ({
   id,
@@ -13,6 +13,7 @@ const node = (id: number, sessionId: number) => ({
 });
 
 const DATA: GraphData = {
+  version: "v1",
   nodes: [node(1, 100), node(2, 100), node(3, 200)],
   edges: [
     { from: 1, to: 2, score: 0.9, origin: "auto" },
@@ -125,6 +126,112 @@ describe("addManualEdges（数珠繋ぎリンクの楽観的反映）", () => {
       { from: 3, to: 3 }, // 自己リンク
     ]);
     expect(useGraphStore.getState().data?.edges).toHaveLength(2);
+  });
+});
+
+describe("mergeDelta（差分マージ）", () => {
+  const base: Omit<GraphDelta, "nodes"> = {
+    version: "v2",
+    aliveNodeIds: [1, 2, 3],
+    edges: DATA.edges,
+    sessions: DATA.sessions,
+  };
+
+  test("変更ノードは置換、無変更ノードは温存（tags・polarity ごと）", () => {
+    const data = {
+      ...DATA,
+      nodes: [{ ...node(1, 100), tags: ["web"], polarity: 0.5 }, node(2, 100), node(3, 200)],
+    };
+    const merged = mergeDelta(data, { ...base, nodes: [{ ...node(2, 100), content: "更新" }] });
+    expect(merged.version).toBe("v2");
+    expect(merged.nodes.map((n) => n.id)).toEqual([1, 2, 3]);
+    expect(merged.nodes.find((n) => n.id === 2)?.content).toBe("更新");
+    const kept = merged.nodes.find((n) => n.id === 1);
+    expect(kept?.tags).toEqual(["web"]);
+    expect(kept?.polarity).toBe(0.5);
+  });
+
+  test("aliveNodeIds に無いノードは削除される", () => {
+    const merged = mergeDelta(DATA, { ...base, nodes: [], aliveNodeIds: [1, 3] });
+    expect(merged.nodes.map((n) => n.id)).toEqual([1, 3]);
+  });
+
+  test("エッジ・セッションは差分側で全置換される", () => {
+    const edges = [{ from: 1, to: 3, score: 1, origin: "manual" as const }];
+    const merged = mergeDelta(DATA, { ...base, nodes: [], edges });
+    expect(merged.edges).toEqual(edges);
+    expect(merged.sessions).toEqual(DATA.sessions);
+  });
+
+  test("セッション改名が既存ノードの sessionName に反映される", () => {
+    const sessions = DATA.sessions.map((s) => (s.id === 100 ? { ...s, name: "改名" } : s));
+    const merged = mergeDelta(DATA, { ...base, nodes: [], sessions });
+    expect(merged.nodes.find((n) => n.id === 1)?.sessionName).toBe("改名");
+    expect(merged.nodes.find((n) => n.id === 3)?.sessionName).toBe("調査");
+  });
+
+  test("delta.version が現在の version より過去（並行 loadDelta の応答順序逆転）なら version は現在値を維持する", () => {
+    const edges = [{ from: 1, to: 3, score: 1, origin: "manual" as const }];
+    const merged = mergeDelta(DATA, {
+      ...base,
+      version: "v0", // DATA.version="v1" より過去
+      nodes: [{ ...node(2, 100), content: "更新" }],
+      edges,
+    });
+    expect(merged.version).toBe("v1"); // 後退させない
+    // ノード・エッジのマージ自体は行う
+    expect(merged.nodes.find((n) => n.id === 2)?.content).toBe("更新");
+    expect(merged.edges).toEqual(edges);
+  });
+});
+
+describe("loadDelta（SSE 後の差分取得）", () => {
+  test("data.version を since に使い、応答をマージする", async () => {
+    const calls: string[] = [];
+    const delta: GraphDelta = {
+      version: "v2",
+      nodes: [],
+      aliveNodeIds: [1, 3],
+      edges: [],
+      sessions: DATA.sessions,
+    };
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return new Response(JSON.stringify(delta), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      await useGraphStore.getState().loadDelta();
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(calls).toEqual(["/api/graph?since=v1"]);
+    const data = useGraphStore.getState().data;
+    expect(data?.version).toBe("v2");
+    expect(data?.nodes.map((n) => n.id)).toEqual([1, 3]);
+    expect(data?.edges).toEqual([]);
+  });
+
+  test("data.version が空文字（空 DB 起動直後）のときは since を送らず全量 load にフォールバックする", async () => {
+    useGraphStore.setState({ data: { ...DATA, version: "" } });
+    const full: GraphData = { ...DATA, version: "v9" };
+    const calls: string[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return new Response(JSON.stringify(full), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      await useGraphStore.getState().loadDelta();
+    } finally {
+      globalThis.fetch = orig;
+    }
+    expect(calls).toEqual(["/api/graph"]);
+    expect(useGraphStore.getState().data?.version).toBe("v9");
   });
 });
 
