@@ -12,17 +12,15 @@ import { chainLinks, newChunkIds } from "@zakki/web/client/composer/auto-link.ts
 import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
-import { useSessionStore } from "@zakki/web/client/store/session.ts";
 
 /** キーストローク単位の永続化（TUI と同じ間合い, apps/tui/src/tui/App.tsx） */
 const SAVE_DEBOUNCE_MS = 300;
-/** 保存後、サーバ解析（2s デバウンス）の反映を拾って関連・グラフを更新するまでの猶予 */
-const AMBIENT_REFRESH_MS = 4000;
 
 type SaveState = "saved" | "dirty" | "error";
 
 interface ComposerProps {
-  sessionId: number;
+  /** 現在セッション（id は保存先、name/date は楽観的更新のノード素性に使う） */
+  session: { id: number; name: string | null; date: string };
   initialRaw: string;
   /** ロード時点の既存チャンク id（初回保存で全チャンクが「新規」扱いになるのを防ぐ） */
   initialChunkIds: readonly number[];
@@ -42,7 +40,7 @@ interface ComposerProps {
  * 接続のモバイル等で挙動を分けたくなったら UA 判定を足す。
  */
 export function Composer({
-  sessionId,
+  session,
   initialRaw,
   initialChunkIds,
   corrections,
@@ -61,25 +59,26 @@ export function Composer({
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [message, setMessage] = useState("");
   const [focused, setFocused] = useState(false);
-  const refreshRelated = useSessionStore((s) => s.refreshRelated);
-  const reloadGraph = useGraphStore((s) => s.load);
-  const ambientTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   // 自動リンク（数珠繋ぎ）の「新規」判定基準。保存応答のたびに更新する
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
-  // 新規チャンクを「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す
+  // 新規チャンクを「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す。
+  // エッジはローカルへ即時反映し、永続化の失敗はメッセージ表示に留める
+  // （次回の GET /graph で正となる状態に収束する）
   const linkNewChunks = useCallback(async (savedChunks: readonly { id: number }[]) => {
     const fresh = newChunkIds(knownChunkIds.current, savedChunks);
     knownChunkIds.current = savedChunks.map((c) => c.id);
     if (fresh.length === 0) return;
     const anchor = useGraphStore.getState().selectedNodeId;
+    const links = chainLinks(anchor, fresh);
+    useGraphStore.getState().addManualEdges(links);
+    useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
     await Promise.all(
-      chainLinks(anchor, fresh).map((link) =>
+      links.map((link) =>
         api.addLink(link.from, link.to).catch(() => setMessage("リンク作成に失敗")),
       ),
     );
-    useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
   }, []);
 
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();
@@ -133,7 +132,7 @@ export function Composer({
   );
 
   // 保存: 300ms デバウンスで凍結 → 変換 → PUT（TUI の保存 effect の移植）。
-  // 関連・グラフの更新はさらに粗い周期（サーバ解析の反映を待つ二段デバウンス）
+  // 保存応答は即時にグラフへ反映し、解析結果の反映は SSE（App.tsx の購読）に任せる
   useEffect(() => {
     const timer = setTimeout(() => {
       const frozen = freezeLiveTail(store.getState().raw, conversion.convertSettled);
@@ -143,15 +142,12 @@ export function Composer({
       const current = store.getState().raw;
       const converted = conversion.convertRaw(current).text;
       api
-        .saveEntry(sessionId, current, converted)
+        .saveEntry(session.id, current, converted)
         .then(async (saved) => {
           setSaveState("saved");
+          // 楽観的更新: 解析（タグ・意味リンク）を待たず、まずノードを画面に出す
+          useGraphStore.getState().applySaved(session, saved.chunks);
           await linkNewChunks(saved.chunks);
-          if (ambientTimer.current !== null) clearTimeout(ambientTimer.current);
-          ambientTimer.current = setTimeout(() => {
-            void refreshRelated();
-            void reloadGraph();
-          }, AMBIENT_REFRESH_MS);
         })
         .catch((e: unknown) => {
           setSaveState("error");
@@ -159,16 +155,19 @@ export function Composer({
         });
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
+    // session はオブジェクト同一性ではなく素性（id/name/date）で依存させる: 同一セッション id の
+    // まま store が current を新オブジェクトで差し替える経路（リネーム後の openSession 等）があり、
+    // オブジェクト依存だと保留中の保存デバウンスが無意味に破棄・張り直しされるため
   }, [
     raw,
     conversionVersion,
-    sessionId,
+    session.id,
+    session.name,
+    session.date,
     store,
     setRaw,
     conversion,
     linkNewChunks,
-    refreshRelated,
-    reloadGraph,
   ]);
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppDeps } from "./deps.ts";
 import { conversionRoutes } from "./routes/convert.ts";
+import { eventRoutes } from "./routes/events.ts";
 import { graphRoutes } from "./routes/graph.ts";
 import { sessionRoutes } from "./routes/sessions.ts";
 
@@ -16,6 +17,7 @@ export function createApp(deps: AppDeps): Hono {
   api.route("/sessions", sessionRoutes(deps));
   api.route("/", conversionRoutes(deps));
   api.route("/", graphRoutes(deps));
+  api.route("/", eventRoutes(deps));
 
   app.route("/api", api);
   return app;

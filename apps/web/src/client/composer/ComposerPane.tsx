@@ -45,7 +45,7 @@ export function ComposerPane() {
       </div>
       <Composer
         key={current.id}
-        sessionId={current.id}
+        session={current}
         initialRaw={initialRaw}
         initialChunkIds={initialChunkIds}
         corrections={seed.corrections}

@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { api } from "@zakki/web/client/api/client.ts";
-import type { GraphData, GraphNode, SessionWithTags } from "@zakki/web/shared/api-types.ts";
+import type {
+  GraphData,
+  GraphEdge,
+  GraphNode,
+  SessionWithTags,
+} from "@zakki/web/shared/api-types.ts";
 
 /**
  * セッション色: dataviz の fixed-order categorical（styles.css の --series-*）。
@@ -23,12 +28,27 @@ export interface GraphFilter {
   sessionTag: string | null;
 }
 
+/** applySaved に渡す現セッションの素性（ノード生成に必要な最小限） */
+export interface SavedSession {
+  id: number;
+  name: string | null;
+  date: string;
+}
+
 interface GraphState {
   data: GraphData | null;
   error: string | null;
   filter: GraphFilter;
   selectedNodeId: number | null;
   load: () => Promise<void>;
+  /**
+   * 保存応答のチャンク列をグラフへ即時反映する（楽観的更新）。
+   * サーバ解析（タグ・極性・意味リンク）は待たず、既存ノードの解析結果は温存する。
+   * 応答はセッションの全チャンクなので、応答に無い同セッションノードは削除とみなす。
+   */
+  applySaved: (session: SavedSession, chunks: readonly { id: number; content: string }[]) => void;
+  /** 数珠繋ぎリンクの即時反映。data 層 addManualLink と同じ不変条件（from<to・重複/自己は no-op） */
+  addManualEdges: (links: readonly { from: number; to: number }[]) => void;
   toggleSession: (id: number) => void;
   /** グラフをこのセッションだけの表示にする（セッションを開いたときのリセット） */
   focusSession: (id: number) => void;
@@ -51,6 +71,49 @@ export const useGraphStore = create<GraphState>((set) => ({
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
     }
+  },
+
+  applySaved: (session, chunks) => {
+    set((s) => {
+      if (s.data === null) return s;
+      const existing = new Map(s.data.nodes.map((n) => [n.id, n]));
+      const sessionNodes = chunks.map((c): GraphNode => {
+        const prev = existing.get(c.id);
+        return prev !== undefined
+          ? { ...prev, content: c.content }
+          : {
+              id: c.id,
+              content: c.content,
+              date: session.date,
+              sessionId: session.id,
+              sessionName: session.name,
+              polarity: null,
+              tags: [],
+            };
+      });
+      const kept = s.data.nodes.filter((n) => n.sessionId !== session.id);
+      const nodes = [...kept, ...sessionNodes].toSorted((a, b) => a.id - b.id);
+      const alive = new Set(nodes.map((n) => n.id));
+      const edges = s.data.edges.filter((e) => alive.has(e.from) && alive.has(e.to));
+      return { data: { ...s.data, nodes, edges } };
+    });
+  },
+
+  addManualEdges: (drafts) => {
+    set((s) => {
+      if (s.data === null) return s;
+      const seen = new Set(s.data.edges.map((e) => `${e.from}-${e.to}`));
+      const added: GraphEdge[] = [];
+      for (const d of drafts) {
+        if (d.from === d.to) continue;
+        const [from, to] = d.from < d.to ? [d.from, d.to] : [d.to, d.from];
+        const key = `${from}-${to}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        added.push({ from, to, score: 1, origin: "manual" as const });
+      }
+      return added.length === 0 ? s : { data: { ...s.data, edges: [...s.data.edges, ...added] } };
+    });
   },
 
   toggleSession: (id) => {

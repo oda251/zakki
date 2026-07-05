@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
+import { subscribeAnalysis } from "@zakki/web/client/api/events.ts";
 import { GraphViewErrorBoundary } from "@zakki/web/client/GraphViewErrorBoundary.tsx";
 import { LeftSidebar } from "@zakki/web/client/layout/LeftSidebar.tsx";
 import { RightPanel } from "@zakki/web/client/layout/RightPanel.tsx";
@@ -19,6 +20,17 @@ export function App() {
     void load();
     void openToday();
   }, [load, openToday]);
+
+  // サーバ解析（タグ・極性・意味リンク）の完了を SSE で受け、その時だけ再取得する。
+  // 新規ノード自体は保存応答の楽観的更新（Composer → applySaved）で即時反映済み
+  useEffect(
+    () =>
+      subscribeAnalysis(() => {
+        void useGraphStore.getState().load();
+        void useSessionStore.getState().refreshRelated();
+      }),
+    [],
+  );
 
   return (
     <div className="app-shell">

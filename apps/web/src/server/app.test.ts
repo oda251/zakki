@@ -13,6 +13,7 @@ import type {
 } from "@zakki/web/shared/api-types.ts";
 import { createAnalysisScheduler } from "./analysis.ts";
 import { createApp } from "./app.ts";
+import { createAnalysisEvents } from "./events.ts";
 
 let db: Db;
 let app: Hono;
@@ -22,7 +23,13 @@ beforeEach(async () => {
   db = await createDb(":memory:");
   // テストはデバウンス 0ms（settle() で完了を待てる）
   analysis = createAnalysisScheduler(db, null, () => {}, 0);
-  app = createApp({ db, engine: identityEngine, embedder: null, analysis });
+  app = createApp({
+    db,
+    engine: identityEngine,
+    embedder: null,
+    analysis,
+    events: createAnalysisEvents(),
+  });
 });
 
 async function json<T>(res: Response): Promise<T> {
