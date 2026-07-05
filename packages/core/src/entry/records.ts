@@ -1,4 +1,4 @@
-import { scanLineGroups } from "@zakki/core/chunk/chunker.ts";
+import { type LineGroup, scanLineGroups } from "@zakki/core/chunk/chunker.ts";
 import {
   PASTE_CLOSE,
   PASTE_OPEN,
@@ -61,6 +61,27 @@ export function liveTailStart(raw: string): number {
     start += 1;
   }
   return start;
+}
+
+/** raw を「確定済み表示チャンク列」と「末尾ライブ raw」へ分解した結果（Composer.web / TUI 共有） */
+export interface DisplaySplit {
+  /** 確定済み表示チャンク（行グループ単位）。DB チャンク（chunkText）と 1:1 に揃う */
+  frozen: LineGroup[];
+  /** 末尾のライブ raw（liveTailStart 以降）。convertLive への入力に使う */
+  liveRaw: string;
+}
+
+/**
+ * raw を UI 表示用に「確定済みチャンク列」と「末尾ライブ raw」へ分解する
+ * （docs/COMPOSER.md, docs/PANES.md）。Web Composer / TUI の両方が、凍結リテラル
+ * 単位（parseBlocks(raw).filter(frozen)）ではなくこれを使う: IME の compositionend
+ * ごとの wrapPaste 等で同一行に複数の凍結リテラルが並んでも、行グループ
+ * （scanLineGroups）でまとめることで chunkText が生成する DB チャンクと 1:1 に揃える。
+ * ライブ末尾は liveTailStart で切り出す（末尾リテラル直後の行区切り改行を含めない）。
+ */
+export function splitDisplay(raw: string): DisplaySplit {
+  const start = liveTailStart(raw);
+  return { frozen: scanLineGroups(raw.slice(0, start)), liveRaw: raw.slice(start) };
 }
 
 /** raw 内のリテラル領域 [start, end) を確定テキストで置換する（空なら削除）。修正の確定に使う */

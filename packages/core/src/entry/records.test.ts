@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { chunkText } from "@zakki/core/chunk/chunker.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import {
   editableBlockAt,
@@ -7,6 +8,7 @@ import {
   liveTailStart,
   parseBlocks,
   replaceBlock,
+  splitDisplay,
 } from "./records.ts";
 
 describe("parseBlocks", () => {
@@ -113,6 +115,58 @@ describe("editableBlockAt", () => {
   test("範囲外は null", () => {
     expect(editableBlockAt(wrapPaste("雨。"), 1)).toBeNull();
     expect(editableBlockAt("", 0)).toBeNull();
+  });
+});
+
+describe("splitDisplay", () => {
+  // 回帰: IME の compositionend ごとに wrapPaste すると同一行に複数の凍結リテラルが
+  // 並ぶ。parseBlocks(raw).filter(frozen) のような凍結リテラル単位の列挙だと
+  // 表示チャンク数が chunkText の DB チャンクとズレる（#37-1）。scanLineGroups で
+  // 同一行のリテラルをまとめ、1 行グループ＝1 表示チャンクにする。
+  test("同一行に複数の凍結リテラルが並んでも表示チャンクは 1 個にマージする", () => {
+    const raw = `${wrapPaste("いち")}${wrapPaste("に")}\n${wrapPaste("さん")}`;
+    const { frozen, liveRaw } = splitDisplay(raw);
+    expect(frozen.map((g) => g.content)).toEqual(["いちに", "さん"]);
+    expect(liveRaw).toBe("");
+  });
+
+  // 回帰: 最後の凍結リテラルの直後の行区切り改行を live 側に混ぜると、まだ
+  // Enter されていない次の行の先頭に余分な改行が入り込む（#37-2）。
+  // liveTailStart と同じ境界（直後の改行は確定済み領域）を採用して防ぐ。
+  test("末尾ライブ行の直前の行区切り改行は live に混ざらない", () => {
+    const raw = `${wrapPaste("a")}\nb`;
+    const { frozen, liveRaw } = splitDisplay(raw);
+    expect(frozen.map((g) => g.content)).toEqual(["a"]);
+    expect(liveRaw).toBe("b");
+  });
+
+  test("末尾ライブ領域が無ければ liveRaw は空文字", () => {
+    const raw = `${wrapPaste("あめです。")}\n`;
+    const { frozen, liveRaw } = splitDisplay(raw);
+    expect(frozen.map((g) => g.content)).toEqual(["あめです。"]);
+    expect(liveRaw).toBe("");
+  });
+
+  test("空文字列は確定チャンクなし・live も空", () => {
+    expect(splitDisplay("")).toEqual({ frozen: [], liveRaw: "" });
+  });
+
+  // Web Composer の実フロー模擬: compositionend のたびに appendLiteral（wrapPaste 直書き）
+  // → Enter で "\n" を追記 → 保存直前は raw に手を加えず persistEntry の chunkText に渡る。
+  // 表示（splitDisplay.frozen）と永続化（chunkText）が同じチャンク数・内容になることを
+  // 固定する（#37-1 の再発防止: 表示だけ IME 文節ごとに数えると DB とズレる）。
+  test("IME 文節確定を複数回 → Enter は、表示チャンク数と chunkText の DB チャンク数が一致する", () => {
+    let raw = "";
+    raw += wrapPaste("いち"); // compositionend #1
+    raw += wrapPaste("に"); // compositionend #2
+    raw += wrapPaste("さん"); // compositionend #3
+    raw += "\n"; // Enter（controller.ts の applyKey が raw + "\n" を追記する）
+
+    const { frozen, liveRaw } = splitDisplay(raw);
+    const chunks = chunkText(raw);
+    expect(frozen.map((g) => g.content)).toEqual(["いちにさん"]);
+    expect(chunks.map((c) => c.content)).toEqual(frozen.map((g) => g.content));
+    expect(liveRaw).toBe("");
   });
 });
 
