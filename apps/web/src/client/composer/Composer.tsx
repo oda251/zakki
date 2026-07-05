@@ -79,7 +79,11 @@ export function Composer({
     const links = chainLinks(anchor, fresh);
     useGraphStore.getState().addManualEdges(links);
     useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
-    await api.addLinks(links).catch(() => setMessage("リンク作成に失敗"));
+    await Promise.all(
+      links.map((link) =>
+        api.addLink(link.from, link.to).catch(() => setMessage("リンク作成に失敗")),
+      ),
+    );
   }, []);
 
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();

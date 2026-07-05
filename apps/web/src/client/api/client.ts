@@ -56,8 +56,8 @@ export const api = {
       ...json({ raw, converted }),
     }),
   related: (id: number) => request<RelatedResponse>(`/api/sessions/${id}/related`),
-  addLinks: (links: readonly { from: number; to: number }[]) =>
-    request<{ ok: true }>("/api/links", { method: "POST", ...json({ links }) }),
+  addLink: (from: number, to: number) =>
+    request<{ ok: true }>("/api/links", { method: "POST", ...json({ from, to }) }),
   convert: (kana: string, leftContext?: string) =>
     request<ConvertResponse>("/api/convert", { method: "POST", ...json({ kana, leftContext }) }),
   conversionState: () => request<ConversionStateResponse>("/api/conversion/state"),
