@@ -88,10 +88,17 @@ async function ensureTagIds(
       .values({ name: stored, nameFingerprint: fpOf(name), createdAt: now })
       .onConflictDoNothing({ target: tags.nameFingerprint });
   }
-  // 平文タグ名 → id を引けるよう fingerprint で突き合わせる
-  const idByFingerprint = new Map(
-    (await tx.select().from(tags)).map((r) => [r.nameFingerprint, r.id]),
-  );
+  // 平文タグ名 → id を引けるよう fingerprint で突き合わせる。今回必要な
+  // fingerprint だけを IN 句で引き、tags 全件スキャンを避ける（増分解析での負荷対策）
+  const fingerprints = [...names].map(fpOf);
+  const idByFingerprint = new Map<string, number>();
+  for (const fps of batched(fingerprints, 200)) {
+    const rows = await tx
+      .select({ id: tags.id, nameFingerprint: tags.nameFingerprint })
+      .from(tags)
+      .where(inArray(tags.nameFingerprint, fps));
+    for (const row of rows) idByFingerprint.set(row.nameFingerprint, row.id);
+  }
   return new Map([...names].map((name) => [name, idByFingerprint.get(fpOf(name))]));
 }
 
