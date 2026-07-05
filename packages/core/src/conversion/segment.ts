@@ -2,7 +2,8 @@ import { PASTE_OPEN, pasteBlockEnd } from "./paste.ts";
 
 /**
  * かなストリームの変換単位への分割。
- * 境界はチャンク化（src/chunk/chunker.ts）と同じ「句点（。！？）・改行」。
+ * 境界は変換単位としての「句点（。！？）・改行」。チャンク境界（改行のみ,
+ * src/chunk/chunker.ts）とは別概念で、句点はここでのみ区切りとして扱う。
  * ペースト領域（PASTE_OPEN…PASTE_CLOSE）は内部の句点・改行で分割せず、
  * 変換にもかけない 1 区切りとして扱う。
  * 全セグメントを連結すると元のテキストに一致する（lossless）。

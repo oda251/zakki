@@ -1,3 +1,4 @@
+import { scanLineGroups } from "@zakki/core/chunk/chunker.ts";
 import {
   PASTE_CLOSE,
   PASTE_OPEN,
@@ -81,55 +82,14 @@ export interface EditableBlock {
 }
 
 /**
- * raw を「ペースト領域外の改行」で行グループへ分割する（チャンク区切りと同一規則,
- * chunker.ts の chunkText と対）。内容が空のグループ（空行・マーカーのみ）は
- * チャンクにならないため含めない。範囲は [start, end) で行区切りの改行を含まない。
- */
-function lineGroupRanges(raw: string): { start: number; end: number }[] {
-  const groups: { start: number; end: number }[] = [];
-  let start = 0;
-  let hasContent = false;
-  const push = (end: number) => {
-    if (hasContent) {
-      groups.push({ start, end });
-    }
-  };
-  let i = 0;
-  while (i < raw.length) {
-    const ch = raw.charAt(i);
-    if (ch === PASTE_OPEN) {
-      const end = pasteBlockEnd(raw, i);
-      if (stripPasteMarkers(raw.slice(i, end)).trim() !== "") {
-        hasContent = true;
-      }
-      i = end;
-      continue;
-    }
-    if (ch === "\n") {
-      push(i);
-      start = i + 1;
-      hasContent = false;
-      i += 1;
-      continue;
-    }
-    if (ch.trim() !== "") {
-      hasContent = true;
-    }
-    i += 1;
-  }
-  push(raw.length);
-  return groups;
-}
-
-/**
  * raw の position 番目のチャンクの編集対象領域を返す（無ければ null）。
  * 不変条件「チャンクは raw の順序と 1:1」（docs/PANES.md 実装リスク2）は
- * 行グループ（＝チャンク区切り）で成立させる。行全体が単一の凍結リテラルなら
- * frozen（初期値＝リテラル本文）、ローマ字やリテラル混在の行は live 扱い
- * （初期値は呼び出し側が DB content から渡す）。
+ * 行グループ（＝チャンク区切り、scanLineGroups で chunker.ts と共通化）で
+ * 成立させる。行全体が単一の凍結リテラルなら frozen（初期値＝リテラル本文）、
+ * ローマ字やリテラル混在の行は live 扱い（初期値は呼び出し側が DB content から渡す）。
  */
 export function editableBlockAt(raw: string, position: number): EditableBlock | null {
-  const group = lineGroupRanges(raw)[position];
+  const group = scanLineGroups(raw)[position];
   if (group === undefined) {
     return null;
   }
