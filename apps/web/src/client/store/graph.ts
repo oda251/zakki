@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { api } from "@zakki/web/client/api/client.ts";
-import type { GraphData, GraphNode, SessionWithTags } from "@zakki/web/shared/api-types.ts";
+import type {
+  GraphData,
+  GraphEdge,
+  GraphNode,
+  SessionWithTags,
+} from "@zakki/web/shared/api-types.ts";
 
 /**
  * セッション色: dataviz の fixed-order categorical（styles.css の --series-*）。
@@ -98,7 +103,7 @@ export const useGraphStore = create<GraphState>((set) => ({
     set((s) => {
       if (s.data === null) return s;
       const seen = new Set(s.data.edges.map((e) => `${e.from}-${e.to}`));
-      const added = [];
+      const added: GraphEdge[] = [];
       for (const d of drafts) {
         if (d.from === d.to) continue;
         const [from, to] = d.from < d.to ? [d.from, d.to] : [d.to, d.from];

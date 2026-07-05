@@ -160,7 +160,20 @@ export function Composer({
         });
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [raw, conversionVersion, session, store, setRaw, conversion, linkNewChunks]);
+    // session はオブジェクト同一性ではなく素性（id/name/date）で依存させる: 同一セッション id の
+    // まま store が current を新オブジェクトで差し替える経路（リネーム後の openSession 等）があり、
+    // オブジェクト依存だと保留中の保存デバウンスが無意味に破棄・張り直しされるため
+  }, [
+    raw,
+    conversionVersion,
+    session.id,
+    session.name,
+    session.date,
+    store,
+    setRaw,
+    conversion,
+    linkNewChunks,
+  ]);
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
   const openEdit = useCallback(
