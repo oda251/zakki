@@ -4,8 +4,11 @@ import { EMBEDDING_DIMS } from "@zakki/core/embedding/types.ts";
 import { createRuriEmbedder } from "./embedder.ts";
 
 // ruri-v3-30m（非公式 ONNX、q8）の実モデル統合テスト。
-// 初回はモデルダウンロードが走る（約37MB、以後キャッシュ）。
-describe("createRuriEmbedder（実モデル統合）", () => {
+// 初回はモデルダウンロードが走る（約37MB、以後キャッシュ）ため、
+// CI では毎回のダウンロードとネットワーク依存を避けるため既定で skip する。
+const skipInCi = process.env["CI"] === "true" && process.env["RUN_EMBEDDING_TESTS"] !== "1";
+
+describe.skipIf(skipInCi)("createRuriEmbedder（実モデル統合）", () => {
   test("256 次元・言い換えが無関係文より近い（出力一致検証の回帰）", async () => {
     const embedder = createRuriEmbedder();
     const [a, b, c] = await embedder.embed([
