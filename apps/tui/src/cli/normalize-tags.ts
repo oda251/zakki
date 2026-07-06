@@ -11,14 +11,19 @@ import {
   proposeTagMerges,
   type TagWithCount,
 } from "@zakki/backend/analysis/normalizer.ts";
-import { createDb } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
 import { cosine } from "@zakki/data/embedding/vector.ts";
 import { createRuriEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { countTags, listTagsByChunk } from "@zakki/data/chunk/queries.ts";
+import { xdgDataHome } from "@zakki/data/util/paths.ts";
+import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { detectLlm } from "@zakki/backend/llm/client.ts";
 
+// 合成点: 環境変数を起動時に一度だけ検証する（issue #48）
+const config = loadConfigOrExit(process.env);
+
 const apply = process.argv.includes("--apply");
-const db = await createDb();
+const db = await createDb(defaultDbPath(xdgDataHome(config.xdgDataHome)));
 
 const counts = countTags((await listTagsByChunk(db))._unsafeUnwrap());
 const tagCounts: TagWithCount[] = [...counts.entries()].map(([name, count]) => ({ name, count }));
@@ -29,7 +34,7 @@ if (tagCounts.length < 2) {
 
 // タグ名の embedding 類似（無効化時は編集距離のみ）
 let similarity: ((a: string, b: string) => number) | undefined;
-if (process.env["ZAKKI_NO_EMBEDDING"] !== "1") {
+if (!config.noEmbedding) {
   const embedder = createRuriEmbedder();
   const names = tagCounts.map((t) => t.name);
   const vectors = await embedder.embed(names).catch(() => null);
@@ -44,7 +49,7 @@ if (process.env["ZAKKI_NO_EMBEDDING"] !== "1") {
 }
 
 let proposals = proposeTagMerges(tagCounts, similarity);
-const llm = await detectLlm();
+const llm = await detectLlm({ baseUrl: config.llmBaseUrl, model: config.llmModel });
 if (llm !== null) {
   proposals = await filterProposalsWithLlm(proposals, llm);
 }

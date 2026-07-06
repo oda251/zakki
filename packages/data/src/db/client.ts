@@ -5,7 +5,6 @@ import type { Client } from "@libsql/client";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import * as schema from "./schema.ts";
 
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -18,8 +17,9 @@ export interface SyncConfig {
 
 const MIGRATIONS_FOLDER = join(import.meta.dir, "..", "..", "drizzle");
 
-export function defaultDbPath(): string {
-  return join(xdgDataHome(), "zakki", "zakki.sqlite");
+/** 既定の DB パス。dataHome は解決済みの XDG データディレクトリ（合成点が渡す） */
+export function defaultDbPath(dataHome: string): string {
+  return join(dataHome, "zakki", "zakki.sqlite");
 }
 
 /**
@@ -78,7 +78,7 @@ export async function migrateDb(db: Db): Promise<void> {
  * DB を開いてマイグレーションを適用する。起動時に 1 回呼ぶ。
  * 失敗は起動不能を意味するため throw する（以降のクエリ層は Result を返す）。
  */
-export async function createDb(path: string = defaultDbPath()): Promise<Db> {
+export async function createDb(path: string): Promise<Db> {
   const { db } = await openClient(path);
   await migrateDb(db);
   return db;

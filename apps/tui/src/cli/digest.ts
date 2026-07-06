@@ -9,11 +9,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { generateDigest } from "@zakki/tui/digest/digest.ts";
-import { createDb } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
 import { localDate } from "@zakki/data/chunk/autosave.ts";
 import { countTags, listChunksWithDate, listTagsByChunk } from "@zakki/data/chunk/queries.ts";
+import { xdgDataHome } from "@zakki/data/util/paths.ts";
+import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 import { detectLlm } from "@zakki/backend/llm/client.ts";
+
+// 合成点: 環境変数を起動時に一度だけ検証する（issue #48）
+const config = loadConfigOrExit(process.env);
 
 const args = process.argv.slice(2);
 const week = args.includes("--week");
@@ -30,7 +35,7 @@ if (week) {
 }
 const period = week ? `${[...dates].toSorted()[0]} 〜 ${endDate}` : endDate;
 
-const db = await createDb();
+const db = await createDb(defaultDbPath(xdgDataHome(config.xdgDataHome)));
 const chunks = (await listChunksWithDate(db))._unsafeUnwrap().filter((c) => dates.has(c.date));
 const tagsByChunk = (await listTagsByChunk(db))._unsafeUnwrap();
 const tagCounts = countTags(
@@ -38,10 +43,14 @@ const tagCounts = countTags(
   chunks.map((c) => c.id),
 );
 
-const llm = await detectLlm();
+const llm = await detectLlm({ baseUrl: config.llmBaseUrl, model: config.llmModel });
 const digest = await generateDigest({ period, chunks, tagCounts }, llm);
 
-const file = join(defaultVaultDir(), "digests", `${week ? `week-${endDate}` : endDate}.md`);
+const file = join(
+  defaultVaultDir(config.vaultDir),
+  "digests",
+  `${week ? `week-${endDate}` : endDate}.md`,
+);
 await mkdir(dirname(file), { recursive: true });
 await writeFile(file, digest, "utf8");
 

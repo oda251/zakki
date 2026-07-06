@@ -44,9 +44,11 @@ const toExportError = (cause: unknown): ExportError => ({
   cause,
 });
 
-export function defaultVaultDir(): string {
-  // ZAKKI_VAULT_DIR で出力先を差し替え可能（お試し用のサンドボックス・別 vault 等）
-  const override = process.env["ZAKKI_VAULT_DIR"];
+/**
+ * 既定のエクスポート先。override は検証済み config の vaultDir（ZAKKI_VAULT_DIR 由来。
+ * お試し用のサンドボックス・別 vault 等への差し替え）。
+ */
+export function defaultVaultDir(override?: string): string {
   if (override !== undefined && override !== "") {
     return override;
   }

@@ -22,8 +22,6 @@ const baseUrl = `http://127.0.0.1:${server.port}/v1`;
 
 beforeEach(() => {
   models = ["qwen3-4b"];
-  delete process.env["ZAKKI_LLM_BASE_URL"];
-  delete process.env["ZAKKI_LLM_MODEL"];
 });
 
 afterAll(() => {
@@ -45,26 +43,22 @@ describe("createOpenAIGenerator", () => {
 });
 
 describe("detectLlm", () => {
-  test("ZAKKI_LLM_BASE_URL 指定時はそのサーバの最初のモデルを使う", async () => {
-    process.env["ZAKKI_LLM_BASE_URL"] = baseUrl;
-    const llm = await detectLlm();
+  test("baseUrl（ZAKKI_LLM_BASE_URL 由来）指定時はそのサーバの最初のモデルを使う", async () => {
+    const llm = await detectLlm({ baseUrl });
     expect(llm?.name).toBe("openai:qwen3-4b");
   });
 
-  test("ZAKKI_LLM_MODEL でモデルを上書きできる", async () => {
-    process.env["ZAKKI_LLM_BASE_URL"] = baseUrl;
-    process.env["ZAKKI_LLM_MODEL"] = "gpt-oss";
-    expect((await detectLlm())?.name).toBe("openai:gpt-oss");
+  test("model（ZAKKI_LLM_MODEL 由来）でモデルを上書きできる", async () => {
+    expect((await detectLlm({ baseUrl, model: "gpt-oss" }))?.name).toBe("openai:gpt-oss");
   });
 
   test("指定サーバにモデルがなければ null", async () => {
-    process.env["ZAKKI_LLM_BASE_URL"] = baseUrl;
     models = [];
-    expect(await detectLlm()).toBeNull();
+    expect(await detectLlm({ baseUrl })).toBeNull();
   });
 
   test("既知ランタイムが全滅なら null（自動検出失敗）", async () => {
     // 既定ポート（1234 / 11434）に何もない環境を想定
-    expect(await detectLlm()).toBeNull();
+    expect(await detectLlm({})).toBeNull();
   });
 });

@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
+import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import { AncoEngine, defaultAncoPath, defaultZenzPath } from "./engine.ts";
 
 // anco バイナリ導入済み環境（scripts/install-anco.sh 実行後）でのみ動く統合テスト。
 // 期待値は AzooKeyKanaKanjiConverter v0.11.2 同梱辞書（N-gram、zenz なし）の実測値。
-const ancoPath = defaultAncoPath();
-const zenzPath = defaultZenzPath();
+const dataHome = xdgDataHome(process.env["XDG_DATA_HOME"]);
+const ancoPath = defaultAncoPath(dataHome);
+const zenzPath = defaultZenzPath(dataHome);
 const hasAnco = existsSync(ancoPath);
 const hasZenz = existsSync(zenzPath);
 

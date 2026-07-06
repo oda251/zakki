@@ -2,9 +2,18 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
+import { parseZakkiConfig } from "@zakki/core/config/env.ts";
 
 // 開発は `bun run web`（API, :3777）と `bun run web:dev`（vite, :5173 proxy）の 2 プロセス。
 // 本番は `vite build` の dist を API サーバが配信する（apps/web/src/server/index.ts）。
+// vite の起動も合成点として扱い、環境変数をスキーマ検証してから使う（issue #48）。
+const config = parseZakkiConfig(process.env).match(
+  (c) => c,
+  (message): never => {
+    throw new Error(`zakki-web(vite): ${message}`);
+  },
+);
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -16,7 +25,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": `http://localhost:${process.env["ZAKKI_WEB_PORT"] ?? 3777}`,
+      "/api": `http://localhost:${config.webPort}`,
     },
   },
 });

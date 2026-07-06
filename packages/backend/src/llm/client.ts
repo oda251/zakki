@@ -84,18 +84,24 @@ async function listModels(baseUrl: string): Promise<string[] | null> {
   }
 }
 
+/** 検証済み config からの上書き値（ZAKKI_LLM_BASE_URL / ZAKKI_LLM_MODEL 由来） */
+export interface LlmOverrides {
+  readonly baseUrl?: string;
+  readonly model?: string;
+}
+
 /**
  * 使える OpenAI 互換 LLM があれば TextGenerator を返す。なければ null
  * （呼び出し側は決定的フォールバックへ）。
  *
  * 優先順位:
- * 1. `ZAKKI_LLM_BASE_URL`（+ 任意の `ZAKKI_LLM_MODEL`）が指定されていればそれ
+ * 1. `env.baseUrl`（ZAKKI_LLM_BASE_URL。+ 任意の `env.model`）が指定されていればそれ
  * 2. 既知のローカルランタイム（LM Studio → Ollama）を順にプローブし、
  *    モデルが応答した最初のものを採用
  */
-export async function detectLlm(): Promise<TextGenerator | null> {
-  const envBase = process.env["ZAKKI_LLM_BASE_URL"];
-  const envModel = process.env["ZAKKI_LLM_MODEL"];
+export async function detectLlm(env: LlmOverrides): Promise<TextGenerator | null> {
+  const envBase = env.baseUrl;
+  const envModel = env.model;
   if (envBase !== undefined && envBase !== "") {
     const model = envModel ?? (await firstModel(envBase));
     return model === null ? null : createOpenAIGenerator(envBase, model);

@@ -5,7 +5,6 @@ import { errAsync, ResultAsync } from "neverthrow";
 import type { EngineError, KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
-import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -13,27 +12,32 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** 候補ローテーション（手動修正 UX）に使う n-best の数 */
 const CANDIDATE_COUNT = 5;
 
-/** anco バイナリの場所。ZAKKI_ANCO_PATH で上書き可能（Docker 等で /opt に焼く用） */
-export function defaultAncoPath(): string {
-  return process.env["ZAKKI_ANCO_PATH"] ?? join(xdgDataHome(), "zakki", "anco", "anco");
+/** anco バイナリの既定の場所。dataHome は解決済みの XDG データディレクトリ */
+export function defaultAncoPath(dataHome: string): string {
+  return join(dataHome, "zakki", "anco", "anco");
 }
 
-/** zenz GGUF の場所。ZAKKI_ZENZ_PATH で上書き可能 */
-export function defaultZenzPath(): string {
-  return (
-    process.env["ZAKKI_ZENZ_PATH"] ??
-    join(xdgDataHome(), "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf")
-  );
+/** zenz GGUF の既定の場所 */
+export function defaultZenzPath(dataHome: string): string {
+  return join(dataHome, "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf");
+}
+
+/** 検証済み config からの上書き値（ZAKKI_ANCO_PATH / ZAKKI_ZENZ_PATH 由来） */
+export interface EngineOverrides {
+  /** anco バイナリの上書き（Docker 等で /opt に焼く用） */
+  readonly ancoPath?: string;
+  /** zenz GGUF の上書き */
+  readonly zenzPath?: string;
 }
 
 /**
  * 環境からのエンジン解決（TUI / web サーバの合成点が共有）。
  * anco 未導入なら identity（かな素通し）へフォールバックし、zenz GGUF があれば文脈校正を有効化。
  */
-export function resolveDefaultEngine(): KanaKanjiEngine {
-  const ancoPath = defaultAncoPath();
+export function resolveDefaultEngine(env: EngineOverrides, dataHome: string): KanaKanjiEngine {
+  const ancoPath = env.ancoPath ?? defaultAncoPath(dataHome);
   if (!existsSync(ancoPath)) return identityEngine;
-  const zenzPath = defaultZenzPath();
+  const zenzPath = env.zenzPath ?? defaultZenzPath(dataHome);
   return new AncoEngine(ancoPath, existsSync(zenzPath) ? zenzPath : undefined);
 }
 
@@ -72,7 +76,7 @@ export class AncoEngine implements KanaKanjiEngine {
   /** zenz GGUF のパス。指定すると文脈校正（Zenzai）が有効になる */
   private readonly zenzPath?: string;
 
-  constructor(ancoPath: string = defaultAncoPath(), zenzPath?: string) {
+  constructor(ancoPath: string, zenzPath?: string) {
     this.ancoPath = ancoPath;
     this.zenzPath = zenzPath;
     this.name = zenzPath === undefined ? "anco" : "anco+zenz";
