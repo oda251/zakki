@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { IDBFactory } from "fake-indexeddb";
-import type { IndexedChunk } from "@zakki/web/client/store/plaintext-index.ts";
+import type { IndexDelta, IndexedChunk } from "@zakki/web/client/store/plaintext-index.ts";
 import { openPlaintextIndex } from "@zakki/web/client/store/plaintext-index.ts";
 
 /**
@@ -138,6 +138,68 @@ describe("plaintext-index", () => {
     expect(await idx.getCursor()).toBeUndefined();
     await idx.setCursor("2026-07-06T12:00:00.000Z");
     expect(await idx.getCursor()).toBe("2026-07-06T12:00:00.000Z");
+    idx.close();
+  });
+
+  test("applyDelta は 1 回で全ストアへ upsert を反映する", async () => {
+    const idx = await openPlaintextIndex("t-delta-upsert");
+    await idx.applyDelta({
+      chunks: { upsert: [chunk({ id: 1, parentId: 50, content: "本文" })] },
+      userTags: { upsert: [{ id: 1, chunkId: 1, name: "日記" }] },
+      tags: { upsert: [{ id: 1, name: "自動" }] },
+      corrections: {
+        upsert: [{ kana: "きろく", chosen: "記録", updatedAt: "2026-07-06T00:00:00.000Z" }],
+      },
+    });
+    expect((await idx.getChunk(1))?.content).toBe("本文");
+    expect((await idx.getUserTagsByChunk(1)).map((t) => t.name)).toEqual(["日記"]);
+    expect(await idx.getTag(1)).toEqual({ id: 1, name: "自動" });
+    expect((await idx.getCorrections()).get("きろく")).toBe("記録");
+    idx.close();
+  });
+
+  test("applyDelta の delete 指定が全ストアへ反映される", async () => {
+    const idx = await openPlaintextIndex("t-delta-delete");
+    await idx.applyDelta({
+      chunks: { upsert: [chunk({ id: 1 })] },
+      userTags: { upsert: [{ id: 1, chunkId: 1, name: "日記" }] },
+      tags: { upsert: [{ id: 1, name: "自動" }] },
+      corrections: {
+        upsert: [{ kana: "きろく", chosen: "記録", updatedAt: "2026-07-06T00:00:00.000Z" }],
+      },
+    });
+    await idx.applyDelta({
+      chunks: { delete: [1] },
+      userTags: { delete: [1] },
+      tags: { delete: [1] },
+      corrections: { delete: ["きろく"] },
+    });
+    expect(await idx.getChunk(1)).toBeUndefined();
+    expect(await idx.getUserTagsByChunk(1)).toEqual([]);
+    expect(await idx.getTag(1)).toBeUndefined();
+    expect((await idx.getCorrections()).size).toBe(0);
+    idx.close();
+  });
+
+  test("applyDelta に cursor を渡すとカーソルが前進する", async () => {
+    const idx = await openPlaintextIndex("t-delta-cursor");
+    await idx.applyDelta({ cursor: "2026-07-06T10:00:00.000Z" });
+    expect(await idx.getCursor()).toBe("2026-07-06T10:00:00.000Z");
+    idx.close();
+  });
+
+  test("applyDelta は冪等: 同じ delta を 2 回適用しても重複しない", async () => {
+    const idx = await openPlaintextIndex("t-delta-idempotent");
+    const delta: IndexDelta = {
+      chunks: { upsert: [chunk({ id: 1 }), chunk({ id: 2 })] },
+      corrections: {
+        upsert: [{ kana: "きろく", chosen: "記録", updatedAt: "2026-07-06T00:00:00.000Z" }],
+      },
+    };
+    await idx.applyDelta(delta);
+    await idx.applyDelta(delta);
+    expect((await idx.getAllChunks()).length).toBe(2);
+    expect((await idx.getCorrections()).size).toBe(1);
     idx.close();
   });
 });

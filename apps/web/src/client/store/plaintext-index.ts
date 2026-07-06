@@ -36,6 +36,14 @@ interface MetaRow {
   value: string;
 }
 
+export interface IndexDelta {
+  chunks?: { upsert?: IndexedChunk[]; delete?: number[] };
+  userTags?: { upsert?: IndexedUserTag[]; delete?: number[] };
+  tags?: { upsert?: IndexedTag[]; delete?: number[] };
+  corrections?: { upsert?: IndexedCorrection[]; delete?: string[] };
+  cursor?: string;
+}
+
 const DEFAULT_DB_NAME = "zakki-index";
 const DB_VERSION = 1;
 
@@ -80,6 +88,8 @@ export interface PlaintextIndex {
 
   getCursor(): Promise<string | undefined>;
   setCursor(value: string): Promise<void>;
+
+  applyDelta(delta: IndexDelta): Promise<void>;
 
   close(): void;
 }
@@ -201,6 +211,44 @@ function createPlaintextIndex(db: IDBDatabase): PlaintextIndex {
     async setCursor(value) {
       const tx = db.transaction("meta", "readwrite");
       tx.objectStore("meta").put({ key: "cursor", value } satisfies MetaRow);
+      await wrapTx(tx);
+    },
+
+    async applyDelta(delta) {
+      const storeNames: string[] = [];
+      if (delta.chunks) storeNames.push("chunks");
+      if (delta.userTags) storeNames.push("chunk_user_tags");
+      if (delta.tags) storeNames.push("tags");
+      if (delta.corrections) storeNames.push("corrections");
+      if (delta.cursor !== undefined) storeNames.push("meta");
+      if (storeNames.length === 0) return;
+
+      const tx = db.transaction(storeNames, "readwrite");
+
+      if (delta.chunks) {
+        const store = tx.objectStore("chunks");
+        for (const c of delta.chunks.upsert ?? []) store.put(c);
+        for (const id of delta.chunks.delete ?? []) store.delete(id);
+      }
+      if (delta.userTags) {
+        const store = tx.objectStore("chunk_user_tags");
+        for (const t of delta.userTags.upsert ?? []) store.put(t);
+        for (const id of delta.userTags.delete ?? []) store.delete(id);
+      }
+      if (delta.tags) {
+        const store = tx.objectStore("tags");
+        for (const t of delta.tags.upsert ?? []) store.put(t);
+        for (const id of delta.tags.delete ?? []) store.delete(id);
+      }
+      if (delta.corrections) {
+        const store = tx.objectStore("corrections");
+        for (const c of delta.corrections.upsert ?? []) store.put(c);
+        for (const kana of delta.corrections.delete ?? []) store.delete(kana);
+      }
+      if (delta.cursor !== undefined) {
+        tx.objectStore("meta").put({ key: "cursor", value: delta.cursor } satisfies MetaRow);
+      }
+
       await wrapTx(tx);
     },
 
