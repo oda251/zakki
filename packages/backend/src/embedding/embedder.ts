@@ -18,10 +18,11 @@ type FeatureExtractor = Awaited<ReturnType<typeof pipeline<"feature-extraction">
  */
 /**
  * 環境からの embedder 解決（TUI / web サーバの合成点が共有）。
- * ZAKKI_NO_EMBEDDING=1 なら null（関連・セマンティック機能を無効化し完全決定的動作）。
+ * noEmbedding（ZAKKI_NO_EMBEDDING=1 由来）なら null
+ * （関連・セマンティック機能を無効化し完全決定的動作）。
  */
-export function resolveDefaultEmbedder(): Embedder | null {
-  return process.env["ZAKKI_NO_EMBEDDING"] === "1" ? null : createRuriEmbedder();
+export function resolveDefaultEmbedder(noEmbedding: boolean): Embedder | null {
+  return noEmbedding ? null : createRuriEmbedder();
 }
 
 export function createRuriEmbedder(): Embedder {

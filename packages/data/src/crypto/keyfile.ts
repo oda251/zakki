@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
-import { xdgConfigHome } from "@zakki/data/util/paths.ts";
 
 /**
  * ローカルキーファイルによる KEK（鍵暗号鍵）管理（Phase 5 の唯一のアンロック手段）。
@@ -15,9 +14,9 @@ import { xdgConfigHome } from "@zakki/data/util/paths.ts";
 
 const KEYFILE_BYTES = 32;
 
-/** keyfile のパス（`$XDG_CONFIG_HOME/zakki/keyfile`） */
-export function keyfilePath(): string {
-  return join(xdgConfigHome(), "zakki", "keyfile");
+/** keyfile のパス（`<configHome>/zakki/keyfile`）。configHome は解決済み XDG 設定ディレクトリ */
+export function keyfilePath(configHome: string): string {
+  return join(configHome, "zakki", "keyfile");
 }
 
 /**
@@ -25,15 +24,16 @@ export function keyfilePath(): string {
  * （ディレクトリは 0700 で作成）。返り値は 32 バイトの KEK。
  *
  * 複数回呼んでも同じ KEK を返す（生成は初回のみ）。
+ * configHome は合成点が検証済み config から解決して渡す。
  */
-export async function loadOrCreateKeyfile(): Promise<Uint8Array> {
+export async function loadOrCreateKeyfile(configHome: string): Promise<Uint8Array> {
   await ready();
-  const path = keyfilePath();
+  const path = keyfilePath(configHome);
   if (existsSync(path)) {
     const buf = readFileSync(path);
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   }
-  mkdirSync(join(xdgConfigHome(), "zakki"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(configHome, "zakki"), { recursive: true, mode: 0o700 });
   const kek = sodium.randombytes_buf(KEYFILE_BYTES);
   writeFileSync(path, kek, { mode: 0o600 });
   return kek;

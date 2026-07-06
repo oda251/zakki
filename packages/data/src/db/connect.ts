@@ -3,7 +3,7 @@ import type { Result } from "neverthrow";
 import { ok } from "neverthrow";
 import type { Identity } from "@zakki/core/identity/types.ts";
 import type { Db } from "@zakki/data/db/client.ts";
-import { defaultDbPath, migrateDb, openClient } from "@zakki/data/db/client.ts";
+import { migrateDb, openClient } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 
@@ -21,9 +21,9 @@ export interface DbHandle {
  * - いずれか欠ければローカル専用。`sync()` は no-op の Ok。
  *
  * 構築時にネットワーク I/O はしない（openClient は sync を呼ばない）ためオフラインでも開ける。
+ * path は合成点が `defaultDbPath(dataHome)` 等で解決して渡す。
  */
-export async function openDb(identity: Identity, path?: string): Promise<DbHandle> {
-  const dbPath = path ?? defaultDbPath();
+export async function openDb(identity: Identity, dbPath: string): Promise<DbHandle> {
   if (identity.tursoUrl !== undefined && identity.tursoToken !== undefined) {
     const { client, db } = await openClient(dbPath, {
       syncUrl: identity.tursoUrl,

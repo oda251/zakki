@@ -4,12 +4,15 @@ import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { loadConversionCache } from "@zakki/data/conversion/cache.ts";
 import { loadCorrections } from "@zakki/data/conversion/corrections.ts";
 import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
+import { defaultDbPath } from "@zakki/data/db/client.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
 import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
 import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
 import { stdinPrompts } from "@zakki/tui/tui/prompt.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
+import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
+import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { localDate } from "@zakki/data/chunk/autosave.ts";
 import { getOrCreateDateChunk, listChildren } from "@zakki/data/chunk/repository.ts";
 import { buildRaw } from "@zakki/core/entry/records.ts";
@@ -23,16 +26,22 @@ if (!process.stdout.isTTY) {
   process.exit(1);
 }
 
+// 環境変数はここで一度だけスキーマ検証し、以降は型付き config を注入する（issue #48）。
+// 不正な値（例: ZAKKI_WEB_PORT=abc）は変数名を示して即終了する。
+const config = loadConfigOrExit(process.env);
+const dataHome = xdgDataHome(config.xdgDataHome);
+const configHome = xdgConfigHome(config.xdgConfigHome);
+
 // Identity を解決し、embedded replica（クラウド設定時）/ ローカル専用で DB を開く。
 // 開く処理はオフライン安全（ネットワーク I/O なし）。
-const identity = resolveLocalIdentity();
-const { db, sync } = await openDb(identity);
+const identity = resolveLocalIdentity(config, configHome);
+const { db, sync } = await openDb(identity, defaultDbPath(dataHome));
 // E2E 暗号はオプトイン（ZAKKI_ENCRYPTION=1）。有効時は keyfile の KEK でまず無言
 // アンロックを試み、初回は DEK を生成してキーファイル／パスフレーズ／リカバリ封筒を
 // 作る（リカバリコードを一度だけ表示）。キーファイルが使えない場合はパスフレーズを
 // 尋ね、誤りは数回まで再試行する。データアクセス前に DEK を用意する。
-if (process.env["ZAKKI_ENCRYPTION"] === "1") {
-  const keyfileKek = await loadOrCreateKeyfile();
+if (config.encryption) {
+  const keyfileKek = await loadOrCreateKeyfile(configHome);
   const MAX_TRIES = 3;
   let unlocked = false;
   for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
@@ -89,7 +98,7 @@ const initialRaw = buildRaw(children.map((c) => c.content));
 // anco 未導入（scripts/install-anco.sh 未実行）の環境では、かなのまま
 // 動作する identity エンジンにフォールバックする（docs/FEATURES.md §変換エンジン）。
 // zenz GGUF（scripts/install-zenz.sh）があれば文脈校正を有効化する
-const engine = resolveDefaultEngine();
+const engine = resolveDefaultEngine(config, dataHome);
 
 const corrections = await loadCorrections(db).unwrapOr(new Map());
 // 永続化済みの自動変換キャッシュをシードし、毎起動の全文再変換を避ける
@@ -97,7 +106,7 @@ const conversionCache = await loadConversionCache(db).unwrapOr(new Map());
 
 // embedding は遅延ロード（初回 embed 時にモデル取得）のため起動をブロックしない。
 // ZAKKI_NO_EMBEDDING=1 で無効化できる（完全決定的動作）
-const embedder = resolveDefaultEmbedder();
+const embedder = resolveDefaultEmbedder(config.noEmbedding);
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(
@@ -106,7 +115,7 @@ createRoot(renderer).render(
     date={date}
     dateChunkId={dateChunk.id}
     initialRaw={initialRaw}
-    vaultDir={defaultVaultDir()}
+    vaultDir={defaultVaultDir(config.vaultDir)}
     engine={engine}
     corrections={corrections}
     conversionCache={conversionCache}

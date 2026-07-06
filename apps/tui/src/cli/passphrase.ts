@@ -16,7 +16,9 @@ import {
 } from "@zakki/data/crypto/envelopes.ts";
 import { hasEnvelope } from "@zakki/data/crypto/envelopes.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
-import { createDb } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
+import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
+import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { readNewPassphraseTwice, readPassphrase } from "@zakki/tui/tui/prompt.ts";
 
 if (!process.stdout.isTTY) {
@@ -24,8 +26,12 @@ if (!process.stdout.isTTY) {
   process.exit(1);
 }
 
+// 合成点: 環境変数を起動時に一度だけ検証する（issue #48）
+const config = loadConfigOrExit(process.env);
+const configHome = xdgConfigHome(config.xdgConfigHome);
+
 await ready();
-const db = await createDb();
+const db = await createDb(defaultDbPath(xdgDataHome(config.xdgDataHome)));
 
 if (!(await hasEnvelope(db, "passphrase"))) {
   console.error(
@@ -38,7 +44,7 @@ if (!(await hasEnvelope(db, "passphrase"))) {
 let dek: Uint8Array | undefined;
 if (await hasEnvelope(db, "keyfile")) {
   try {
-    dek = await unlockWithKeyfile(db, await loadOrCreateKeyfile());
+    dek = await unlockWithKeyfile(db, await loadOrCreateKeyfile(configHome));
   } catch {
     // キーファイル KEK 不一致。パスフレーズへフォールバック。
   }

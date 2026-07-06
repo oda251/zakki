@@ -9,11 +9,16 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { analyzeAll } from "@zakki/backend/analysis/service.ts";
 import { fmtPolarity, moodLabel } from "@zakki/core/analysis/sentiment.ts";
-import { createDb } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
 import { dailySentiment } from "@zakki/data/chunk/queries.ts";
+import { xdgDataHome } from "@zakki/data/util/paths.ts";
+import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 
-const db = await createDb();
+// 合成点: 環境変数を起動時に一度だけ検証する（issue #48）
+const config = loadConfigOrExit(process.env);
+
+const db = await createDb(defaultDbPath(xdgDataHome(config.xdgDataHome)));
 (await analyzeAll(db))._unsafeUnwrap();
 const rows = (await dailySentiment(db))._unsafeUnwrap();
 
@@ -30,7 +35,7 @@ const lines = [
 ];
 const output = rows.length === 0 ? "# 気分の推移\n\nデータがありません。\n" : lines.join("\n");
 
-const file = join(defaultVaultDir(), "digests", "mood.md");
+const file = join(defaultVaultDir(config.vaultDir), "digests", "mood.md");
 await mkdir(dirname(file), { recursive: true });
 await writeFile(file, output, "utf8");
 

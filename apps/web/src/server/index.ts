@@ -4,28 +4,43 @@ import { fileURLToPath } from "node:url";
 import { serveStatic } from "hono/bun";
 import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
+import { parseZakkiConfig } from "@zakki/core/config/env.ts";
+import { defaultDbPath } from "@zakki/data/db/client.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
 import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
 import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
+import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
 import { createAnalysisScheduler } from "./analysis.ts";
 import { createApp } from "./app.ts";
 import { createAnalysisEvents } from "./events.ts";
 
+// 環境変数はここで一度だけスキーマ検証し、以降は型付き config を注入する（issue #48）。
+// 不正な値（例: ZAKKI_WEB_PORT=abc）は変数名を示して即終了する。
+const config = parseZakkiConfig(process.env).match(
+  (c) => c,
+  (message): never => {
+    console.error(`zakki-web: ${message}`);
+    process.exit(1);
+  },
+);
+const dataHome = xdgDataHome(config.xdgDataHome);
+const configHome = xdgConfigHome(config.xdgConfigHome);
+
 // TUI（apps/tui/src/index.tsx）と同じ合成: openDb → 暗号アンロック → エンジン選択 → serve。
 // 違いは 2 点: TTY を要求しない・暗号はキーファイルの無言アンロックのみ
 // （初回セットアップ・パスフレーズ入力は対話 UI を持つ TUI 側で行う）。
-const identity = resolveLocalIdentity();
-const { db, sync } = await openDb(identity);
+const identity = resolveLocalIdentity(config, configHome);
+const { db, sync } = await openDb(identity, defaultDbPath(dataHome));
 
 const headless = (what: string) => () =>
   Promise.reject(
     new Error(`web サーバは${what}に対応していません。先に TUI（bun start）で実行してください`),
   );
 
-if (process.env["ZAKKI_ENCRYPTION"] === "1") {
-  const keyfileKek = await loadOrCreateKeyfile();
+if (config.encryption) {
+  const keyfileKek = await loadOrCreateKeyfile(configHome);
   try {
     await unlockOrSetup(db, keyfileKek, {
       newPassphrase: headless("初回セットアップ"),
@@ -51,8 +66,8 @@ try {
 
 await sync();
 
-const engine = resolveDefaultEngine();
-const embedder = resolveDefaultEmbedder();
+const engine = resolveDefaultEngine(config, dataHome);
+const embedder = resolveDefaultEmbedder(config.noEmbedding);
 
 const events = createAnalysisEvents();
 const analysis = createAnalysisScheduler(
@@ -74,6 +89,5 @@ if (existsSync(join(distDir, "index.html"))) {
   app.get("*", serveStatic({ root, path: "index.html" }));
 }
 
-const port = Number(process.env["ZAKKI_WEB_PORT"] ?? 3777);
-const server = Bun.serve({ port, fetch: app.fetch });
+const server = Bun.serve({ port: config.webPort, fetch: app.fetch });
 console.log(`zakki-web: http://localhost:${server.port} (engine: ${engine.name})`);
