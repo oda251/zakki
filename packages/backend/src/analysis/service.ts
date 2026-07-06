@@ -8,6 +8,7 @@ import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunks, chunkTags, links, tags } from "@zakki/data/db/schema.ts";
 import { computeLinks, computeLinksFor } from "./linker.ts";
+import { LruCache } from "./lru.ts";
 import type { WritePlan } from "./plan.ts";
 import { planWrites } from "./plan.ts";
 import type { TagScore } from "./tagger.ts";
@@ -19,8 +20,11 @@ export interface AnalysisSummary {
   links: number;
 }
 
-/** content → 名詞列のメモ（同一内容の再解析を避ける。プロセス内キャッシュ） */
-const nounCache = new Map<string, string[]>();
+/**
+ * content → 名詞列のメモ（同一内容の再解析を避ける。プロセス内キャッシュ）。
+ * 長寿命プロセス（web サーバ）での無制限成長を防ぐため LRU で上限化する（issue #54）。
+ */
+const nounCache = new LruCache<string, string[]>(1000);
 
 function nounsOf(content: string): string[] {
   let nouns = nounCache.get(content);
