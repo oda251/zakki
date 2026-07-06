@@ -5,6 +5,7 @@ import { loadConversionCache } from "@zakki/data/conversion/cache.ts";
 import { loadCorrections } from "@zakki/data/conversion/corrections.ts";
 import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
+import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
 import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
 import { stdinPrompts } from "@zakki/tui/tui/prompt.ts";
@@ -52,6 +53,15 @@ if (process.env["ZAKKI_ENCRYPTION"] === "1") {
   if (!unlocked) {
     process.exit(1);
   }
+}
+// 暗号 ON で作成した DB を ZAKKI_ENCRYPTION 未設定で開くと、暗号文をそのまま
+// 平文として読み書きしてしまう（issue #46）。データアクセス前に拒否する。
+// アンロック済み・暗号 OFF（封筒なし）の DB では no-op。
+try {
+  await assertCryptoReady(db);
+} catch (err) {
+  console.error(`zakki: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
 }
 // 起動時の同期はベストエフォート。オフラインや未設定は正常系なので、失敗しても
 // 起動は続行する（ローカルレプリカでそのまま動く）。

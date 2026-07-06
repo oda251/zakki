@@ -5,6 +5,7 @@ import { serveStatic } from "hono/bun";
 import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
+import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
 import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
@@ -36,6 +37,16 @@ if (process.env["ZAKKI_ENCRYPTION"] === "1") {
     console.error(`zakki-web: アンロックに失敗しました（${msg}）`);
     process.exit(1);
   }
+}
+
+// 暗号 ON で作成した DB を ZAKKI_ENCRYPTION 未設定で開くと、暗号文をそのまま
+// 平文として読み書きしてしまう（issue #46）。データアクセス前に拒否する。
+// アンロック済み・暗号 OFF（封筒なし）の DB では no-op。
+try {
+  await assertCryptoReady(db);
+} catch (err) {
+  console.error(`zakki-web: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
 }
 
 await sync();
