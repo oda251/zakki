@@ -5,6 +5,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
+import { ROOT_DATE_CTE } from "@zakki/data/chunk/sql.ts";
 
 /**
  * 検索・エクスポート・関連表示で共有する「日付付き本文チャンク」ビュー。
@@ -21,15 +22,6 @@ export interface ChunkWithDate {
   /** 永続化済みネガポジ極性 [-1,+1]。未解析は null */
   polarity: number | null;
 }
-
-/** 祖先の日付チャンクの date を全チャンクへ写す再帰 CTE（本文チャンクのみ選択） */
-const CONTENT_CHUNKS_WITH_DATE = sql`
-  WITH RECURSIVE roots(id, root_date) AS (
-    SELECT id, date FROM chunks WHERE parent_id IS NULL
-    UNION ALL
-    SELECT c.id, r.root_date FROM chunks c JOIN roots r ON c.parent_id = r.id
-  )
-`;
 
 interface RawChunkRow {
   id: number;
@@ -54,7 +46,7 @@ export function listChunksWithDate(db: Db, since?: string): ResultAsync<ChunkWit
   return tryDbAsync(async () => {
     const filter = since === undefined ? sql`` : sql`AND c.updated_at >= ${since}`;
     const res = await db.run(sql`
-      ${CONTENT_CHUNKS_WITH_DATE}
+      ${ROOT_DATE_CTE}
       SELECT c.id AS id, c.parent_id AS parentId, c.position AS position,
              c.content AS content, r.root_date AS date, c.polarity AS polarity
       FROM chunks c JOIN roots r ON c.id = r.id
@@ -77,7 +69,7 @@ export function listChunksByIds(db: Db, ids: number[]): ResultAsync<ChunkWithDat
       sql`, `,
     );
     const res = await db.run(sql`
-      ${CONTENT_CHUNKS_WITH_DATE}
+      ${ROOT_DATE_CTE}
       SELECT c.id AS id, c.parent_id AS parentId, c.position AS position,
              c.content AS content, r.root_date AS date, c.polarity AS polarity
       FROM chunks c JOIN roots r ON c.id = r.id
@@ -162,7 +154,7 @@ export interface DailySentiment {
 export function dailySentiment(db: Db): ResultAsync<DailySentiment[], DbError> {
   return tryDbAsync(async () => {
     const res = await db.run(sql`
-      ${CONTENT_CHUNKS_WITH_DATE}
+      ${ROOT_DATE_CTE}
       SELECT r.root_date AS date,
              count(*) AS chunks,
              count(c.polarity) AS scored,

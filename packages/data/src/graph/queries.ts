@@ -5,6 +5,7 @@ import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { listTagsByChunk } from "@zakki/data/chunk/queries.ts";
+import { ROOT_DATE_CTE } from "@zakki/data/chunk/sql.ts";
 import { listUserTagsByChunk } from "@zakki/data/chunk/user-tags.ts";
 
 /**
@@ -94,11 +95,7 @@ function listNodeRows(db: Db, since?: string): ResultAsync<RawNodeRow[], DbError
   return tryDbAsync(async () => {
     const filter = since === undefined ? sql`` : sql`WHERE c.updated_at >= ${since}`;
     const res = await db.run(sql`
-      WITH RECURSIVE roots(id, root_date) AS (
-        SELECT id, date FROM chunks WHERE parent_id IS NULL
-        UNION ALL
-        SELECT c.id, r.root_date FROM chunks c JOIN roots r ON c.parent_id = r.id
-      )
+      ${ROOT_DATE_CTE}
       SELECT c.id AS id, c.parent_id AS parentId, c.position AS position,
              c.content AS content, r.root_date AS date, c.date AS ownDate, c.polarity AS polarity
       FROM chunks c JOIN roots r ON c.id = r.id

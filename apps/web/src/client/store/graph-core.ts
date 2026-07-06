@@ -67,6 +67,45 @@ export function visibleGraph(
   return { nodes, edges };
 }
 
+/** 親チャンク id の解決（無ければ null）。Escape の戻り先・drillUp が共有する */
+export function parentOf(data: GraphData, id: number): number | null {
+  return data.nodes.find((n) => n.id === id)?.parentId ?? null;
+}
+
+/**
+ * ノードのダブルクリック起動の遷移先（docs/CHUNKS.md §ナビゲーション）。
+ * - コンテナ / 日付チャンク → その中へ潜る（バッファ切替）
+ * - 葉（external 含む）→ 所属セッション（親バッファ）へ移動し当該ノードを選択
+ */
+export type NodeActivation =
+  | { kind: "drill"; id: number }
+  | { kind: "drillSelect"; parentId: number; selectId: number };
+
+export function resolveNodeActivation(node: GraphNode): NodeActivation {
+  if (node.childCount > 0 || node.parentId === null) {
+    return { kind: "drill", id: node.id };
+  }
+  return { kind: "drillSelect", parentId: node.parentId, selectId: node.id };
+}
+
+/** 同一ノードの 2 連続クリックをダブルクリックとみなす窓（event.detail 不達時の保険） */
+export const DOUBLE_CLICK_MS = 350;
+
+export interface ClickStamp {
+  id: number;
+  at: number;
+}
+
+export function isDoubleClick(
+  prev: ClickStamp | null,
+  id: number,
+  at: number,
+  detail: number,
+  windowMs: number = DOUBLE_CLICK_MS,
+): boolean {
+  return detail === 2 || (prev !== null && prev.id === id && at - prev.at < windowMs);
+}
+
 /** ドリル位置までの祖先列（ルート → 現在）。パンくずリストの素 */
 export function breadcrumbPath(data: GraphData, drillId: number | null): GraphNode[] {
   const byId = new Map(data.nodes.map((n) => [n.id, n]));
@@ -87,19 +126,19 @@ export function breadcrumbPath(data: GraphData, drillId: number | null): GraphNo
  */
 export function recomputeCounts(nodes: readonly GraphNode[]): GraphNode[] {
   const childCount = new Map<number, number>();
-  const parentOf = new Map<number, number | null>();
+  const parentById = new Map<number, number | null>();
   for (const n of nodes) {
-    parentOf.set(n.id, n.parentId);
+    parentById.set(n.id, n.parentId);
     if (n.parentId !== null) {
       childCount.set(n.parentId, (childCount.get(n.parentId) ?? 0) + 1);
     }
   }
   const descendantCount = new Map<number, number>();
   for (const n of nodes) {
-    let cursor = parentOf.get(n.id) ?? null;
+    let cursor = parentById.get(n.id) ?? null;
     while (cursor !== null && cursor !== undefined) {
       descendantCount.set(cursor, (descendantCount.get(cursor) ?? 0) + 1);
-      cursor = parentOf.get(cursor) ?? null;
+      cursor = parentById.get(cursor) ?? null;
     }
   }
   return nodes.map((n) => {

@@ -5,8 +5,11 @@ import {
   applySavedChildren,
   breadcrumbPath,
   EMPTY_FILTER,
+  isDoubleClick,
   mergeDelta,
+  parentOf,
   recomputeCounts,
+  resolveNodeActivation,
   seriesSlotsAtLevel,
   visibleGraph,
 } from "./graph-core.ts";
@@ -181,6 +184,34 @@ describe("mergeDelta", () => {
     const before = data([], [], "v5");
     const after = mergeDelta(before, { version: "v2", nodes: [], aliveNodes: [], edges: [] });
     expect(after.version).toBe("v5");
+  });
+});
+
+describe("resolveNodeActivation / parentOf / isDoubleClick", () => {
+  test("コンテナ・日付チャンクは drill、葉は親へ移動 + 選択", () => {
+    const d = data(TREE);
+    const byId = new Map(d.nodes.map((x) => [x.id, x]));
+    expect(resolveNodeActivation(byId.get(3) ?? n(0, null))).toEqual({ kind: "drill", id: 3 });
+    expect(resolveNodeActivation(byId.get(1) ?? n(0, null))).toEqual({ kind: "drill", id: 1 });
+    expect(resolveNodeActivation(byId.get(4) ?? n(0, null))).toEqual({
+      kind: "drillSelect",
+      parentId: 3,
+      selectId: 4,
+    });
+  });
+
+  test("parentOf は親 id（トップレベル・未知 id は null）", () => {
+    const d = data(TREE);
+    expect(parentOf(d, 4)).toBe(3);
+    expect(parentOf(d, 1)).toBeNull();
+    expect(parentOf(d, 999)).toBeNull();
+  });
+
+  test("isDoubleClick は detail=2 または窓内の同一ノード再クリック", () => {
+    expect(isDoubleClick(null, 1, 1000, 2)).toBe(true);
+    expect(isDoubleClick({ id: 1, at: 900 }, 1, 1000, 1)).toBe(true);
+    expect(isDoubleClick({ id: 2, at: 900 }, 1, 1000, 1)).toBe(false);
+    expect(isDoubleClick({ id: 1, at: 100 }, 1, 1000, 1)).toBe(false);
   });
 });
 

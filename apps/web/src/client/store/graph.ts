@@ -7,6 +7,7 @@ import {
   EMPTY_FILTER,
   type GraphFilter,
   mergeDelta,
+  parentOf,
 } from "@zakki/web/client/store/graph-core.ts";
 
 export const NODE_NEUTRAL = "var(--node-neutral)";
@@ -89,9 +90,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   drillUp: () => {
     set((s) => {
       if (s.drillId === null) return s;
-      const current = s.data?.nodes.find((n) => n.id === s.drillId);
       // 現在のドリル位置を選択状態で親階層へ戻る（どこから戻ったか分かるように）
-      return { drillId: current?.parentId ?? null, selectedNodeId: s.drillId };
+      const parentId = s.data === null ? null : parentOf(s.data, s.drillId);
+      return { drillId: parentId, selectedNodeId: s.drillId };
     });
   },
 

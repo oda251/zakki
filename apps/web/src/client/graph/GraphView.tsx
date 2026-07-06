@@ -5,6 +5,10 @@ import { clampText } from "@zakki/web/client/graph/clamp.ts";
 import type { GraphNode } from "@zakki/web/shared/api-types.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import {
+  type ClickStamp,
+  isDoubleClick,
+  parentOf,
+  resolveNodeActivation,
   SERIES_SLOTS,
   seriesSlotsAtLevel,
   type VisibleNode,
@@ -36,8 +40,6 @@ interface ForceNode {
 }
 
 const NODE_RADIUS = 4;
-/** 同一ノードの 2 連続クリックをダブルクリックとみなす窓（event.detail 不達時の保険） */
-const DOUBLE_CLICK_MS = 350;
 
 /** 半径は descendantCount の対数スケール（大きなコンテナほど大きく, docs/CHUNKS.md） */
 function nodeRadius(descendantCount: number): number {
@@ -105,9 +107,9 @@ export function GraphView() {
       }
       const { data: current, drillId: id } = useGraphStore.getState();
       if (id === null) return;
-      const node = current?.nodes.find((n) => n.id === id);
-      if (node !== undefined && node.parentId !== null) {
-        void useBufferStore.getState().openChunk(node.parentId);
+      const parentId = current === null ? null : parentOf(current, id);
+      if (parentId !== null) {
+        void useBufferStore.getState().openChunk(parentId);
       } else {
         useGraphStore.getState().drillTo(null);
       }
@@ -159,32 +161,27 @@ export function GraphView() {
     return slot === undefined ? palette.neutral : (palette.series[slot] ?? palette.neutral);
   };
 
-  // ダブルクリック判定: event.detail === 2 か、350ms 以内の同一ノード再クリック。
+  // ダブルクリック判定・遷移先決定は graph-core の純関数（isDoubleClick /
+  // resolveNodeActivation）に委譲し、ここは openChunk / selectNode の配線のみ。
   // シングル = 選択のみ（external も同じ、セッション移動しない）。
-  const lastClick = useRef<{ id: number; at: number } | null>(null);
+  const lastClick = useRef<ClickStamp | null>(null);
   const onNodeClick = (raw: object, event: MouseEvent) => {
     const fn = raw as ForceNode;
     const now = Date.now();
-    const prev = lastClick.current;
-    const isDouble =
-      event.detail === 2 || (prev !== null && prev.id === fn.id && now - prev.at < DOUBLE_CLICK_MS);
+    const double = isDoubleClick(lastClick.current, fn.id, now, event.detail);
     lastClick.current = { id: fn.id, at: now };
-    if (!isDouble) {
+    if (!double) {
       selectNode(fn.id);
       return;
     }
-    const { node } = fn;
-    if (node.childCount > 0) {
-      // コンテナ → その中へ（バッファも切替）
-      void useBufferStore.getState().openChunk(node.id);
-    } else if (node.parentId !== null) {
-      // 葉 / external の葉 → 所属セッションへ移動 + 当該ノード選択
+    const activation = resolveNodeActivation(fn.node);
+    if (activation.kind === "drill") {
+      void useBufferStore.getState().openChunk(activation.id);
+    } else {
       void useBufferStore
         .getState()
-        .openChunk(node.parentId)
-        .then(() => useGraphStore.getState().selectNode(node.id));
-    } else {
-      void useBufferStore.getState().openChunk(node.id);
+        .openChunk(activation.parentId)
+        .then(() => useGraphStore.getState().selectNode(activation.selectId));
     }
   };
 

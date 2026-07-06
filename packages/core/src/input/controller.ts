@@ -93,6 +93,10 @@ export interface ScreenLens {
   related: number;
   detail: number;
 }
+/** レンズ（メイン / 関連 / 詳細 の要素数）を組み立てる。導出を 1 箇所に寄せる */
+export function screenLens(main: number, related: number, detail: number): ScreenLens {
+  return { main, related, detail };
+}
 export type CursorIntent =
   | { type: "move"; cursor: Cursor }
   | { type: "edit-view"; pane: PaneId; index: number } // edit(e) on View → インライン編集を開く
@@ -277,6 +281,19 @@ export function clampCursor(cursor: Cursor, lens: ScreenLens): Cursor {
   }
   const index = Math.min(Math.max(0, cursor.index), count - 1);
   return { ...cursor, index };
+}
+
+/**
+ * 入力カーソルの補正（docs/PANES.md §3 の New 既定位置）。
+ * 編集中でない main の input は常に末尾 New（index=lens.main）へ寄せ、文の確定で
+ * チャンクが増減しても New が後ろのチャンクに取り残されないようにする。
+ * それ以外（編集中・他ペイン・select）は clampCursor に委ねる。
+ */
+export function clampInputCursor(cursor: Cursor, lens: ScreenLens, editing: boolean): Cursor {
+  if (!editing && cursor.pane === "main" && cursor.mode === "input") {
+    return { pane: "main", index: lens.main, mode: "input" };
+  }
+  return clampCursor(cursor, lens);
 }
 
 /** 修正モードのプレーンテキスト編集状態（カーソル付き, docs/RECORDS.md） */

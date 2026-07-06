@@ -109,6 +109,9 @@ export function listDateChunks(db: Db): ResultAsync<Chunk[], DbError> {
  * 2. 残りは位置対応で割り当てる（その場で編集された行の id を保つ）
  * 3. どの草稿にも対応しない既存行だけを削除する（子孫ごと cascade =
  *    行を消した場合に限り投影の破壊性が働く）
+ *
+ * 限界: 同一保存内で「行削除」と「別の行の編集」が同時に起きると位置対応（2）が
+ * ずれ得る（保存デバウンス窓内の複合編集のみ。単独操作は常に正しく対応する）。
  */
 export function saveChildren(
   db: Db,
