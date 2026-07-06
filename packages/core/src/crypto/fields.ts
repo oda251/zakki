@@ -15,7 +15,7 @@ import { sodium } from "@zakki/core/crypto/sodium.ts";
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-/** 文脈ラベル（例: "chunk.content"）を UTF-8 バイト列へ符号化し、aad として使う。 */
+/** 文脈ラベル（例: {@link import("@zakki/core/crypto/aad.ts").AAD.chunkContent}）を UTF-8 バイト列へ符号化し、aad として使う。 */
 export function aad(context: string): Uint8Array {
   return enc.encode(context);
 }

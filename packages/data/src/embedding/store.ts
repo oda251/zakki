@@ -1,5 +1,6 @@
 import { eq, isNull } from "drizzle-orm";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
@@ -44,7 +45,7 @@ export async function syncChunkEmbeddings(
     // content は暗号 ON では暗号文。復号した平文で hash 比較・embed する。
     const decrypted = rows.map((r) => ({
       id: r.id,
-      content: crypto === undefined ? r.content : crypto.decString(r.content, "chunk.content"),
+      content: crypto === undefined ? r.content : crypto.decString(r.content, AAD.chunkContent),
       hash: r.hash,
     }));
     return decrypted.filter((r) => r.hash !== contentHash(crypto, r.content));
@@ -76,7 +77,7 @@ export async function syncChunkEmbeddings(
         const buf =
           crypto === undefined
             ? vectorToBuffer(vector)
-            : Buffer.from(crypto.encVector(vector, "embedding.vector"));
+            : Buffer.from(crypto.encVector(vector, AAD.embeddingVector));
         await tx
           .insert(embeddings)
           .values({
@@ -113,7 +114,7 @@ export function loadVectors(db: Db): ResultAsync<Map<number, Float32Array>, DbEr
           ? bufferToVector(r.vector)
           : crypto.decVector(
               new Uint8Array(r.vector.buffer, r.vector.byteOffset, r.vector.byteLength),
-              "embedding.vector",
+              AAD.embeddingVector,
             ),
       ]),
     );

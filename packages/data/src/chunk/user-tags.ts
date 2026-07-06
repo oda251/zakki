@@ -1,5 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
@@ -19,7 +20,7 @@ function encTag(
 ): { name: string; nameFingerprint: string } {
   if (crypto === undefined) return { name, nameFingerprint: name };
   return {
-    name: crypto.encString(name, "chunkUserTag.name"),
+    name: crypto.encString(name, AAD.chunkUserTagName),
     nameFingerprint: crypto.fingerprint(name),
   };
 }
@@ -51,7 +52,7 @@ export function listUserTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, 
     const rows = await db.select().from(chunkUserTags).orderBy(asc(chunkUserTags.id));
     const result = new Map<number, string[]>();
     for (const t of rows) {
-      const name = crypto === undefined ? t.name : crypto.decString(t.name, "chunkUserTag.name");
+      const name = crypto === undefined ? t.name : crypto.decString(t.name, AAD.chunkUserTagName);
       const list = result.get(t.chunkId) ?? [];
       list.push(name);
       result.set(t.chunkId, list);

@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
@@ -77,7 +78,7 @@ async function ensureTagIds(
 ): Promise<Map<string, number | undefined>> {
   const fpOf = (name: string) => (crypto === undefined ? name : crypto.fingerprint(name));
   for (const name of names) {
-    const stored = crypto === undefined ? name : crypto.encString(name, "tag.name");
+    const stored = crypto === undefined ? name : crypto.encString(name, AAD.tagName);
     await tx
       .insert(tags)
       .values({ name: stored, nameFingerprint: fpOf(name), createdAt: now })
@@ -114,7 +115,7 @@ async function readOldTags(
     .innerJoin(tags, eq(chunkTags.tagId, tags.id));
   const result = new Map<number, TagScore[]>();
   for (const row of rows) {
-    const name = crypto === undefined ? row.name : crypto.decString(row.name, "tag.name");
+    const name = crypto === undefined ? row.name : crypto.decString(row.name, AAD.tagName);
     const list = result.get(row.chunkId) ?? [];
     list.push({ name, score: row.score });
     result.set(row.chunkId, list);
@@ -198,7 +199,7 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
     const states = new Map<number, ChunkState>();
     for (const c of rawChunks) {
       const content =
-        crypto === undefined ? c.content : crypto.decString(c.content, "chunk.content");
+        crypto === undefined ? c.content : crypto.decString(c.content, AAD.chunkContent);
       states.set(c.id, {
         updatedAt: c.updatedAt,
         stored: c.content,
@@ -293,7 +294,7 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
         });
         continue;
       }
-      const content = crypto === undefined ? stored : crypto.decString(stored, "chunk.content");
+      const content = crypto === undefined ? stored : crypto.decString(stored, AAD.chunkContent);
       if (prev !== undefined && prev.content === content) {
         // 再保存で updatedAt だけ進んだ（内容は同一）。名詞列を引き継ぎ変更扱いにしない
         states.set(row.id, { updatedAt: row.updatedAt, stored, content, nouns: prev.nouns });

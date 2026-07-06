@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 
 /**
  * 統合チャンクモデル（docs/CHUNKS.md, 2026-07-06 決定）。
@@ -12,7 +13,7 @@ import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm
  * - 子を持つチャンク（旧・名前付きセッション相当）も親バッファの position 空間を
  *   共有する: 親バッファの行削除はその行の子孫ごと cascade で消える（受容済み）
  * - `content` が本文の唯一の保持者（raw / converted は廃止）。E2E 暗号 ON では
- *   暗号化する（AAD "chunk.content"）。ただし日付チャンクの content は date と
+ *   暗号化する（AAD ラベルは {@link AAD.chunkContent}）。ただし日付チャンクの content は date と
  *   同値の平文（date が平文である方針の帰結。復号もスキップする）
  */
 export const chunks = sqliteTable(
@@ -75,8 +76,8 @@ export const chunkUserTags = sqliteTable(
  */
 export const aadFixups = sqliteTable("aad_fixups", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  /** 付替え先フィールド: "chunk.content"（旧 session.name） / "chunkUserTag.name"（旧 sessionTag.name） */
-  kind: text("kind", { enum: ["chunk.content", "chunkUserTag.name"] }).notNull(),
+  /** 付替え先フィールド: {@link AAD.chunkContent}（旧 session.name） / {@link AAD.chunkUserTagName}（旧 sessionTag.name） */
+  kind: text("kind", { enum: [AAD.chunkContent, AAD.chunkUserTagName] }).notNull(),
   /** 対象行の id（kind に応じて chunks.id / chunk_user_tags.id） */
   rowId: integer("row_id").notNull(),
 });

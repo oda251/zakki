@@ -1,4 +1,5 @@
 import { eq, isNull } from "drizzle-orm";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 import { generateDek, wrapDek } from "@zakki/core/crypto/dek.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
@@ -101,7 +102,7 @@ export async function migratePlaintextToEncrypted(db: Db, ctx: CryptoContext): P
       plaintextByChunk.set(row.id, row.content);
       await tx
         .update(chunks)
-        .set({ content: ctx.encString(row.content, "chunk.content") })
+        .set({ content: ctx.encString(row.content, AAD.chunkContent) })
         .where(eq(chunks.id, row.id));
     }
 
@@ -109,7 +110,7 @@ export async function migratePlaintextToEncrypted(db: Db, ctx: CryptoContext): P
       await tx
         .update(chunkUserTags)
         .set({
-          name: ctx.encString(row.name, "chunkUserTag.name"),
+          name: ctx.encString(row.name, AAD.chunkUserTagName),
           nameFingerprint: ctx.fingerprint(row.name),
         })
         .where(eq(chunkUserTags.id, row.id));
@@ -119,7 +120,7 @@ export async function migratePlaintextToEncrypted(db: Db, ctx: CryptoContext): P
       await tx
         .update(tags)
         .set({
-          name: ctx.encString(row.name, "tag.name"),
+          name: ctx.encString(row.name, AAD.tagName),
           nameFingerprint: ctx.fingerprint(row.name),
         })
         .where(eq(tags.id, row.id));
@@ -135,7 +136,7 @@ export async function migratePlaintextToEncrypted(db: Db, ctx: CryptoContext): P
       await tx
         .update(embeddings)
         .set({
-          vector: Buffer.from(ctx.encVector(vec, "embedding.vector")),
+          vector: Buffer.from(ctx.encVector(vec, AAD.embeddingVector)),
           // 平文が分かれば新ハッシュへ。分からなければ温存し、暗号 ON 初回の
           // syncChunkEmbeddings が差分検知して張り替える。
           contentHash: plaintext === undefined ? row.contentHash : ctx.contentHash(plaintext),
@@ -163,13 +164,13 @@ export async function applyAadFixups(db: Db, ctx: CryptoContext): Promise<void> 
   if (fixups.length === 0) return;
   await db.transaction(async (tx) => {
     for (const fixup of fixups) {
-      if (fixup.kind === "chunk.content") {
+      if (fixup.kind === AAD.chunkContent) {
         const [row] = await tx.select().from(chunks).where(eq(chunks.id, fixup.rowId)).limit(1);
         if (row !== undefined) {
           const plain = ctx.decString(row.content, "session.name");
           await tx
             .update(chunks)
-            .set({ content: ctx.encString(plain, "chunk.content") })
+            .set({ content: ctx.encString(plain, AAD.chunkContent) })
             .where(eq(chunks.id, row.id));
         }
       } else {
@@ -182,7 +183,7 @@ export async function applyAadFixups(db: Db, ctx: CryptoContext): Promise<void> 
           const plain = ctx.decString(row.name, "sessionTag.name");
           await tx
             .update(chunkUserTags)
-            .set({ name: ctx.encString(plain, "chunkUserTag.name") })
+            .set({ name: ctx.encString(plain, AAD.chunkUserTagName) })
             .where(eq(chunkUserTags.id, row.id));
         }
       }

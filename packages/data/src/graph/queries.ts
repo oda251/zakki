@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { ResultAsync } from "neverthrow";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
@@ -140,7 +141,7 @@ function toNodes(
     content:
       crypto === undefined || r.ownDate !== null
         ? r.content
-        : crypto.decString(r.content, "chunk.content"),
+        : crypto.decString(r.content, AAD.chunkContent),
     date: r.date,
     polarity: r.polarity,
     tags: tagsByChunk.get(r.id) ?? [],
