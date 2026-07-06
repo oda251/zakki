@@ -1,5 +1,6 @@
 import { asc, eq, isNotNull } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
@@ -21,11 +22,11 @@ import { chunks } from "@zakki/data/db/schema.ts";
 /** 暗号 ON なら復号して平文 Chunk を返す。日付チャンク（date 非 NULL）は平文のまま */
 function decChunk(crypto: CryptoContext | undefined, c: Chunk): Chunk {
   if (crypto === undefined || c.date !== null) return c;
-  return { ...c, content: crypto.decString(c.content, "chunk.content") };
+  return { ...c, content: crypto.decString(c.content, AAD.chunkContent) };
 }
 
 function encContent(crypto: CryptoContext | undefined, content: string): string {
-  return crypto === undefined ? content : crypto.encString(content, "chunk.content");
+  return crypto === undefined ? content : crypto.encString(content, AAD.chunkContent);
 }
 
 export interface ChunkDraftInput {

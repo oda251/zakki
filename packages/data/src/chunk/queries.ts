@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
+import { AAD } from "@zakki/core/crypto/aad.ts";
 import { NEUTRAL_BAND } from "@zakki/core/analysis/sentiment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
@@ -35,7 +36,7 @@ interface RawChunkRow {
 function toChunkWithDate(db: Db, rows: RawChunkRow[]): ChunkWithDate[] {
   const crypto = getCrypto(db);
   if (crypto === undefined) return rows;
-  return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
+  return rows.map((r) => ({ ...r, content: crypto.decString(r.content, AAD.chunkContent) }));
 }
 
 /**
@@ -123,7 +124,7 @@ export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbEr
     const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, string[]>();
     for (const row of sorted) {
-      const name = crypto === undefined ? row.name : crypto.decString(row.name, "tag.name");
+      const name = crypto === undefined ? row.name : crypto.decString(row.name, AAD.tagName);
       const list = result.get(row.chunkId) ?? [];
       list.push(name);
       result.set(row.chunkId, list);
