@@ -3,12 +3,12 @@
  * DB 由来の型は @zakki/data から type-only で再輸出する（JSON 直列化可能なもののみ）。
  */
 import type { AliveNode, GraphData, GraphDelta } from "@zakki/data/graph/queries.ts";
-import type { Chunk } from "@zakki/data/db/schema.ts";
+import type { Chunk, ChunkUserTag, Correction, Tag } from "@zakki/data/db/schema.ts";
 import type { RelatedChunk } from "@zakki/data/embedding/semantic.ts";
 
 export type { AliveNode, GraphData, GraphDelta, RelatedChunk };
 export type { GraphEdge, GraphNode } from "@zakki/data/graph/queries.ts";
-export type { Chunk };
+export type { Chunk, ChunkUserTag, Correction, Tag };
 
 export interface HealthResponse {
   engine: string;
