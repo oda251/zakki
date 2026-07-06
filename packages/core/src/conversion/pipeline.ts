@@ -48,13 +48,19 @@ export class ConversionPipeline {
   private readonly inflight = new Set<string>();
 
   private readonly onConverted: (kana: string, converted: string) => void;
+  private readonly engine: KanaKanjiEngine;
+  private readonly onUpdate: () => void;
+  private readonly onError: (message: string) => void;
 
   constructor(
-    private readonly engine: KanaKanjiEngine,
-    private readonly onUpdate: () => void,
-    private readonly onError: (message: string) => void = () => {},
+    engine: KanaKanjiEngine,
+    onUpdate: () => void,
+    onError: (message: string) => void = () => {},
     options: PipelineOptions = {},
   ) {
+    this.engine = engine;
+    this.onUpdate = onUpdate;
+    this.onError = onError;
     this.onConverted = options.onConverted ?? (() => {});
     // キャッシュ → corrections の順にシードし、corrections を最優先にする
     for (const [kana, converted] of options.cache ?? []) {

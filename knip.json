@@ -1,0 +1,27 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.sh"],
+      "project": [],
+      "ignoreDependencies": ["dependency-cruiser", "@opentui/react"]
+    },
+    "apps/tui": {
+      "entry": ["src/cli/*.ts"],
+      "project": "src/**/*.{ts,tsx}"
+    },
+    "apps/web": {
+      "project": "src/**/*.{ts,tsx}"
+    },
+    "packages/core": {
+      "project": "src/**/*.ts",
+      "ignoreDependencies": ["@types/libsodium-wrappers-sumo"]
+    },
+    "packages/data": {
+      "project": "src/**/*.ts"
+    },
+    "packages/backend": {
+      "project": "src/**/*.ts"
+    }
+  }
+}

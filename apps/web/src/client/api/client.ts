@@ -11,11 +11,11 @@ import type {
 
 /** API エラー（fetch 失敗・非 2xx）。UI はメッセージ表示のみ */
 export class ApiRequestError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
     super(message);
+    this.status = status;
     this.name = "ApiRequestError";
   }
 }

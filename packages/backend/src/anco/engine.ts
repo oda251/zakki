@@ -68,11 +68,13 @@ export class AncoEngine implements KanaKanjiEngine {
   private pending: PendingRequest | null = null;
   private buffer = "";
 
-  constructor(
-    private readonly ancoPath: string = defaultAncoPath(),
-    /** zenz GGUF のパス。指定すると文脈校正（Zenzai）が有効になる */
-    private readonly zenzPath?: string,
-  ) {
+  private readonly ancoPath: string;
+  /** zenz GGUF のパス。指定すると文脈校正（Zenzai）が有効になる */
+  private readonly zenzPath?: string;
+
+  constructor(ancoPath: string = defaultAncoPath(), zenzPath?: string) {
+    this.ancoPath = ancoPath;
+    this.zenzPath = zenzPath;
     this.name = zenzPath === undefined ? "anco" : "anco+zenz";
   }
 

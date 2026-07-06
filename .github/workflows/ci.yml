@@ -50,6 +50,12 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Dependency rules (dependency-cruiser)
+        run: bun run depcruise
+
+      - name: Dead code / unused deps (knip)
+        run: bun run knip
+
       - name: Test
         run: bun test
 

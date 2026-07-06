@@ -14,6 +14,7 @@
     "typescript/consistent-type-imports": "error",
     "typescript/switch-exhaustiveness-check": "error",
     "no-unused-vars": "error",
+    "max-lines": ["warn", { "max": 500, "skipBlankLines": true, "skipComments": true }],
     "no-underscore-dangle": ["warn", { "allow": ["_unsafeUnwrap", "_unsafeUnwrapErr"] }],
     "no-restricted-imports": [
       "error",
