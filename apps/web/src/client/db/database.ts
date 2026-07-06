@@ -10,7 +10,7 @@
  * memory-storage を import しない — それらはテスト側の責務。
  */
 import { createRxDatabase } from "rxdb";
-import type { RxCollection, RxDatabase, RxJsonSchema, RxStorage } from "rxdb";
+import type { RxCollection, RxDatabase, RxDocument, RxJsonSchema, RxStorage } from "rxdb";
 import type { Chunk, ChunkUserTag, Correction, Tag } from "@zakki/web/shared/api-types.ts";
 
 /** RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ */
@@ -95,24 +95,27 @@ export async function createZakkiDb(storage: RxStorage<unknown, unknown>): Promi
   return db;
 }
 
+/** RxDocument<ChunkDoc> → ChunkDoc への field コピー（プレーンオブジェクト化） */
+export function toChunkDoc(d: RxDocument<ChunkDoc>): ChunkDoc {
+  const json = d.toJSON();
+  return {
+    id: json.id,
+    parentId: json.parentId,
+    position: json.position,
+    content: json.content,
+    date: json.date,
+    polarity: json.polarity,
+    updatedAt: json.updatedAt,
+  };
+}
+
+/** position 昇順の比較関数 */
+export const byPosition = (a: ChunkDoc, b: ChunkDoc): number => a.position - b.position;
+
 /** 当該 parentId の子を position 昇順で返す（RxDB sort/index を避け JS ソート） */
 export async function childrenQuery(db: ZakkiDatabase, parentId: string): Promise<ChunkDoc[]> {
   const docs = await db.chunks.find({ selector: { parentId } }).exec();
-  return docs
-    .map((d) => {
-      const json = d.toJSON();
-      const doc: ChunkDoc = {
-        id: json.id,
-        parentId: json.parentId,
-        position: json.position,
-        content: json.content,
-        date: json.date,
-        polarity: json.polarity,
-        updatedAt: json.updatedAt,
-      };
-      return doc;
-    })
-    .toSorted((a, b) => a.position - b.position);
+  return docs.map(toChunkDoc).toSorted(byPosition);
 }
 
 /** kana→chosen の Map（変換シード） */
