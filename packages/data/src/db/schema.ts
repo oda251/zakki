@@ -1,102 +1,85 @@
 import { sql } from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
- * 記録の入れ物（スペース）。デフォルトセッション（name = NULL）は日付ベース管理
- * （1 日 1 件、TUI が使う従来挙動）で、名前付きセッションは同日に複数持てる。
+ * 統合チャンクモデル（docs/CHUNKS.md, 2026-07-06 決定）。
+ * sessions / entries を廃止し、chunk 単一の自己参照ツリーで記録を持つ。
  *
- * E2E 暗号（ZAKKI_ENCRYPTION）では `name` を暗号化する（AAD "session.name"）。
- * ただし NULL は NULL のまま格納する — デフォルトセッション判定
- * （`name IS NULL`）を SQL で行うため。「名前付きか否か」がメタデータとして
- * 見える点は `date` が平文である現行方針と同水準として受容する。
- */
-export const sessions = sqliteTable(
-  "sessions",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    /** NULL = デフォルトセッション（日付ベース）。名前付きは暗号 ON で暗号文 */
-    name: text("name"),
-    /** ローカル日付 YYYY-MM-DD（平文。entries.date と同方針） */
-    date: text("date").notNull(),
-    createdAt: text("created_at").notNull(),
-    updatedAt: text("updated_at").notNull(),
-  },
-  (t) => [
-    // デフォルトセッションは 1 日 1 件（名前付きには効かない部分 unique）
-    uniqueIndex("sessions_default_date")
-      .on(t.date)
-      .where(sql`"name" IS NULL`),
-  ],
-);
-
-/**
- * セッションへのユーザ明示タグ。自動付与タグ（{@link tags}）とは独立の
- * 名前空間で、解析パス（analyzeAll の全消し再挿入・孤立タグ削除）の
- * ライフサイクルに干渉しない。一意制約は tags と同じく fingerprint
- * （ブラインドインデックス）に置く。暗号 OFF は fingerprint = 平文名。
- */
-export const sessionTags = sqliteTable(
-  "session_tags",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    sessionId: integer("session_id")
-      .notNull()
-      .references(() => sessions.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    /** ブラインドインデックス。暗号 OFF は平文名、ON は fingerprint(name) */
-    nameFingerprint: text("name_fingerprint").notNull(),
-    createdAt: text("created_at").notNull(),
-  },
-  (t) => [uniqueIndex("session_tags_unique").on(t.sessionId, t.nameFingerprint)],
-);
-
-/**
- * 1 セッションの生入力ログ（docs/CONCEPT.md データモデル素案）。
- * raw（ローマ字/かな）と converted を分離して保持する。変換・チャンク化は
- * 非可逆な自動処理であり、再処理（エンジン差し替え時の再変換）に原文が必要。
- *
- * entry ↔ session は 1:1（unique index）。`date` はセッションの日付の複製で、
- * 日付 join（listChunksWithDate / dailySentiment / digest）を無変更で保つために残す。
- */
-export const entries = sqliteTable(
-  "entries",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    sessionId: integer("session_id")
-      .notNull()
-      .references(() => sessions.id, { onDelete: "cascade" }),
-    /** ローカル日付 YYYY-MM-DD（sessions.date と同値） */
-    date: text("date").notNull(),
-    raw: text("raw").notNull().default(""),
-    converted: text("converted").notNull().default(""),
-    createdAt: text("created_at").notNull(),
-    updatedAt: text("updated_at").notNull(),
-  },
-  (t) => [uniqueIndex("entries_session_unique").on(t.sessionId)],
-);
-
-/**
- * 自動分割された意味単位。決定的チャンク化により entry のテキストから
- * 再生成されるため、(entry_id, position) を安定キーとして upsert する。
+ * - `parent_id IS NULL` = 日付チャンク（トップレベル。`date` に YYYY-MM-DD、1 日 1 件）
+ * - それ以外は親バッファの 1 行。`(parent_id, position)` を安定キーとして
+ *   決定的チャンク化（chunkText）の結果を upsert する
+ * - 子を持つチャンク（旧・名前付きセッション相当）も親バッファの position 空間を
+ *   共有する: 親バッファの行削除はその行の子孫ごと cascade で消える（受容済み）
+ * - `content` が本文の唯一の保持者（raw / converted は廃止）。E2E 暗号 ON では
+ *   暗号化する（AAD "chunk.content"）。ただし日付チャンクの content は date と
+ *   同値の平文（date が平文である方針の帰結。復号もスキップする）
  */
 export const chunks = sqliteTable(
   "chunks",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    entryId: integer("entry_id")
-      .notNull()
-      .references(() => entries.id, { onDelete: "cascade" }),
-    /** entry 内での出現順（0 始まり） */
+    /** NULL = 日付チャンク（トップレベル）。自己参照で任意深さのツリーを成す */
+    parentId: integer("parent_id").references((): AnySQLiteColumn => chunks.id, {
+      onDelete: "cascade",
+    }),
+    /** 親バッファ内の出現順（0 始まり）。日付チャンクは 0 固定（順序は date が持つ） */
     position: integer("position").notNull(),
-    /** タイトルは content からの純粋な派生（makeTitle）なので保持しない */
     content: text("content").notNull(),
-    /** ネガポジ極性 [-1,+1]（解析パスで算出・永続化）。未解析は null */
+    /** 日付チャンクのみ YYYY-MM-DD（平文）。それ以外は NULL */
+    date: text("date"),
+    /** ネガポジ極性 [-1,+1]（解析パスで算出・永続化）。未解析・日付チャンクは null */
     polarity: real("polarity"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (t) => [uniqueIndex("chunks_entry_position").on(t.entryId, t.position)],
+  (t) => [
+    // 兄弟内の安定キー。SQLite の unique は NULL を別値扱いするため、
+    // トップレベル（parent_id NULL）同士には効かない（一意性は date 側で担保）
+    uniqueIndex("chunks_parent_position").on(t.parentId, t.position),
+    // 日付チャンクは 1 日 1 件
+    uniqueIndex("chunks_date_unique")
+      .on(t.date)
+      .where(sql`"date" IS NOT NULL`),
+  ],
 );
+
+/**
+ * チャンクへのユーザ明示タグ（旧 session_tags の一般化）。自動付与タグ
+ * （{@link tags}）とは独立の名前空間で、解析パス（analyzeAll の全消し再挿入・
+ * 孤立タグ削除）のライフサイクルに干渉しない。一意制約は tags と同じく
+ * fingerprint（ブラインドインデックス）に置く。暗号 OFF は fingerprint = 平文名。
+ */
+export const chunkUserTags = sqliteTable(
+  "chunk_user_tags",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    chunkId: integer("chunk_id")
+      .notNull()
+      .references(() => chunks.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** ブラインドインデックス。暗号 OFF は平文名、ON は fingerprint(name) */
+    nameFingerprint: text("name_fingerprint").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("chunk_user_tags_unique").on(t.chunkId, t.nameFingerprint)],
+);
+
+/**
+ * chunk ツリー移行（0010）が残した AAD 付替えの宿題（暗号 ON の DB のみ意味を持つ）。
+ *
+ * SQL マイグレーションは復号できないため、旧テーブルから移送した暗号文は
+ * 旧 AAD（"session.name" / "sessionTag.name"）のまま格納されている。アンロック後に
+ * {@link import("@zakki/data/crypto/init.ts").applyAadFixups} が新 AAD へ暗号化し直し、
+ * 行を消す。暗号 OFF の DB では平文がそのまま正しいので、単に行を消すだけでよい。
+ */
+export const aadFixups = sqliteTable("aad_fixups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  /** 付替え先フィールド: "chunk.content"（旧 session.name） / "chunkUserTag.name"（旧 sessionTag.name） */
+  kind: text("kind", { enum: ["chunk.content", "chunkUserTag.name"] }).notNull(),
+  /** 対象行の id（kind に応じて chunks.id / chunk_user_tags.id） */
+  rowId: integer("row_id").notNull(),
+});
 
 /**
  * 手動修正（候補ローテーション）の学習記録（docs/FEATURES.md §ユーザー辞書の自動学習）。
@@ -196,7 +179,11 @@ export const chunkTags = sqliteTable(
   (t) => [uniqueIndex("chunk_tags_pair").on(t.chunkId, t.tagId)],
 );
 
-/** chunk 間の関連（docs/CONCEPT.md データモデル素案）。双方向とみなし from < to で正規化 */
+/**
+ * chunk 間の関連（docs/CONCEPT.md データモデル素案）。双方向とみなし from < to で正規化。
+ * 任意階層のチャンク同士で張れる（docs/CHUNKS.md）。日付チャンク間の時系列リンクは
+ * 保存せずグラフクエリで導出する。
+ */
 export const links = sqliteTable(
   "links",
   {
@@ -228,10 +215,8 @@ export const embeddings = sqliteTable("embeddings", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export type Session = typeof sessions.$inferSelect;
-export type SessionTag = typeof sessionTags.$inferSelect;
-export type Entry = typeof entries.$inferSelect;
 export type Chunk = typeof chunks.$inferSelect;
+export type ChunkUserTag = typeof chunkUserTags.$inferSelect;
 export type Correction = typeof corrections.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type Link = typeof links.$inferSelect;

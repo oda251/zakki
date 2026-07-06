@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
@@ -7,7 +7,8 @@ import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { chunks, chunkTags, links, tags } from "@zakki/data/db/schema.ts";
 import { computeLinks, computeLinksFor } from "./linker.ts";
-import { scoreSentiment } from "@zakki/core/analysis/sentiment.ts";
+import type { WritePlan } from "./plan.ts";
+import { planWrites } from "./plan.ts";
 import type { TagScore } from "./tagger.ts";
 import { computeTags } from "./tagger.ts";
 import { extractNouns } from "./tokenizer.ts";
@@ -50,12 +51,6 @@ interface AnalysisSnapshot {
 }
 
 const snapshots = new WeakMap<Db, AnalysisSnapshot>();
-
-/** 前回書き込んだタグ列と完全一致か（名前・スコア・順序。computeTags は決定的） */
-function tagListEquals(a: readonly TagScore[], b: readonly TagScore[] | undefined): boolean {
-  if (b === undefined || a.length !== b.length) return false;
-  return a.every((t, i) => t.name === b[i]?.name && t.score === b[i]?.score);
-}
 
 /** SQL の IN 句パラメータ上限を避けるための分割 */
 function batched<T>(items: readonly T[], size: number): T[][] {
@@ -103,6 +98,84 @@ async function ensureTagIds(
 }
 
 /**
+ * DB に現在書き込まれているタグを「チャンク id → タグ列（平文名+スコア）」で読む。
+ * 全量パスが plan の差分・bump 判定に使う旧状態（スナップショットに頼らない実体）。
+ * 順序は computeTags と同じ（スコア降順・名前昇順）に揃え、tagListEquals での比較を
+ * 決定的にする。暗号 ON はタグ名を復号する（全量パスは全 content を復号済みで、
+ * 追加コストは無視できる）。
+ */
+async function readOldTags(
+  db: Db,
+  crypto: CryptoContext | undefined,
+): Promise<Map<number, TagScore[]>> {
+  const rows = await db
+    .select({ chunkId: chunkTags.chunkId, score: chunkTags.score, name: tags.name })
+    .from(chunkTags)
+    .innerJoin(tags, eq(chunkTags.tagId, tags.id));
+  const result = new Map<number, TagScore[]>();
+  for (const row of rows) {
+    const name = crypto === undefined ? row.name : crypto.decString(row.name, "tag.name");
+    const list = result.get(row.chunkId) ?? [];
+    list.push({ name, score: row.score });
+    result.set(row.chunkId, list);
+  }
+  for (const list of result.values()) {
+    list.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  }
+  return result;
+}
+
+/** {@link planWrites} の出力を tx で機械的に適用する（全量・増分で共通の書き込み面）。 */
+async function applyPlan(
+  tx: Tx,
+  crypto: CryptoContext | undefined,
+  plan: WritePlan,
+  now: string,
+): Promise<void> {
+  // タグ: 変わったチャンクだけ delete → insert（削除チャンク分は FK cascade 済み）。
+  const idByName = await ensureTagIds(tx, crypto, plan.tagNames, now);
+  for (const { chunkId, tags: tagList } of plan.tagRewrites) {
+    await tx.delete(chunkTags).where(eq(chunkTags.chunkId, chunkId));
+    for (const tag of tagList) {
+      const tagId = idByName.get(tag.name);
+      if (tagId !== undefined) {
+        await tx.insert(chunkTags).values({ chunkId, tagId, score: tag.score });
+      }
+    }
+  }
+  // どのチャンクにも付かなくなったタグは削除する（乱立防止）
+  await tx.run(sql`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM chunk_tags)`);
+
+  // リンク: 全量は全 auto を張り替え、増分は対象チャンクが関与する auto だけ張り替える。
+  if (plan.relinkChunkIds === "all") {
+    await tx.delete(links).where(eq(links.origin, "auto"));
+  } else {
+    for (const ids of batched(plan.relinkChunkIds, 200)) {
+      await tx
+        .delete(links)
+        .where(
+          and(
+            eq(links.origin, "auto"),
+            or(inArray(links.fromChunkId, ids), inArray(links.toChunkId, ids)),
+          ),
+        );
+    }
+  }
+  for (const link of plan.insertLinks) {
+    await tx
+      .insert(links)
+      .values({ ...link, origin: "auto" })
+      .onConflictDoNothing();
+  }
+
+  // 極性: bump するチャンクは updatedAt も進める（差分取得が変更ノードを拾えるように）。
+  for (const { chunkId, polarity, bump } of plan.polarityWrites) {
+    const set = bump ? { polarity, updatedAt: now } : { polarity };
+    await tx.update(chunks).set(set).where(eq(chunks.id, chunkId));
+  }
+}
+
+/**
  * 全チャンクのタグ付けと関連付けを再計算して永続化する（docs/CONCEPT.md §3）。
  * 決定的・冪等な全量再計算で、「正」を回復する手段（CLI の stats など）。
  * 保存ごとのバックグラウンド解析には {@link analyzeChanged} を使う。
@@ -110,6 +183,7 @@ async function ensureTagIds(
 export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
+    // 日付チャンク（構造ノード, content = 日付）は解析対象にしない
     const rawChunks = await db
       .select({
         id: chunks.id,
@@ -117,7 +191,8 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
         updatedAt: chunks.updatedAt,
         polarity: chunks.polarity,
       })
-      .from(chunks);
+      .from(chunks)
+      .where(isNull(chunks.date));
     const oldPolarity = new Map(rawChunks.map((c) => [c.id, c.polarity]));
     // 解析（名詞抽出・極性）は平文に対して行う。暗号 ON は復号した content を使う。
     const states = new Map<number, ChunkState>();
@@ -135,61 +210,21 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
     const nounsByChunk = new Map([...states].map(([id, s]) => [id, s.nouns]));
     const tagsByChunk = computeTags(nounsByChunk);
     const linkCandidates = computeLinks(nounsByChunk);
+    // 旧タグは DB 実体から読む（全量パスは「正」の回復手段で、スナップショットに頼らない）。
+    const oldTags = await readOldTags(db, crypto);
     const now = new Date().toISOString();
 
-    await db.transaction(async (tx) => {
-      const names = new Set([...tagsByChunk.values()].flat().map((t) => t.name));
-      const idByName = await ensureTagIds(tx, crypto, names, now);
-
-      // タグ変化の検出（差分取得が chunks.updatedAt を頼るため）。ペイロードに現れるのは
-      // 「スコア降順のタグ名列」なので、順序付き tagId 列で比較する（スコア値だけの変化は
-      // 表示に影響せず、bump しない）。名前比較と違い復号が不要。
-      const oldTagIds = new Map<number, number[]>();
-      for (const row of await tx
-        .select()
-        .from(chunkTags)
-        .orderBy(sql`rowid`)) {
-        const list = oldTagIds.get(row.chunkId) ?? [];
-        list.push(row.tagId);
-        oldTagIds.set(row.chunkId, list);
-      }
-
-      await tx.delete(chunkTags);
-      const tagsChanged = new Set<number>();
-      for (const [chunkId, tagList] of tagsByChunk) {
-        const newIds: number[] = [];
-        for (const tag of tagList) {
-          const tagId = idByName.get(tag.name);
-          if (tagId !== undefined) {
-            await tx.insert(chunkTags).values({ chunkId, tagId, score: tag.score });
-            newIds.push(tagId);
-          }
-        }
-        if (newIds.join(",") !== (oldTagIds.get(chunkId) ?? []).join(",")) {
-          tagsChanged.add(chunkId);
-        }
-      }
-      // どのチャンクにも付かなくなったタグは削除する（乱立防止）
-      await tx.run(sql`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM chunk_tags)`);
-
-      await tx.delete(links).where(eq(links.origin, "auto"));
-      for (const link of linkCandidates) {
-        await tx
-          .insert(links)
-          .values({ ...link, origin: "auto" })
-          .onConflictDoNothing();
-      }
-
-      // ネガポジ極性（決定的, docs/FEATURES.md §整理・想起系 7）を算出して永続化する。
-      // 解析結果（極性・タグ列）が変わったチャンクだけ updatedAt を進める:
-      // 差分取得（getGraphDelta）が「変更ノード = updatedAt >= since」で拾えるように。
-      // 変化が無ければ書かない（冪等再実行で全ノード再送になるのを防ぐ）。
-      for (const [chunkId, state] of states) {
-        const polarity = scoreSentiment(state.content);
-        if (polarity === oldPolarity.get(chunkId) && !tagsChanged.has(chunkId)) continue;
-        await tx.update(chunks).set({ polarity, updatedAt: now }).where(eq(chunks.id, chunkId));
-      }
+    // 極性（決定的, docs/FEATURES.md §整理・想起系 7）は全 content から算出する。
+    const contentById = new Map([...states].map(([id, s]) => [id, s.content]));
+    const plan = planWrites({
+      newTags: tagsByChunk,
+      oldTags,
+      contentById,
+      oldPolarity,
+      changed: "all",
+      links: linkCandidates,
     });
+    await db.transaction((tx) => applyPlan(tx, crypto, plan, now));
 
     snapshots.set(db, { chunks: states, tags: tagsByChunk });
     return { taggedChunks: tagsByChunk.size, links: linkCandidates.length };
@@ -216,7 +251,10 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
     // 第 1 段: id + updatedAt だけを取得し、スナップショットとの比較で「動いた候補」を
     // 絞る。updatedAt が一致する行は content を取得しない（変更ゼロのパスでは
     // content 転送が一切発生しない）
-    const idRows = await db.select({ id: chunks.id, updatedAt: chunks.updatedAt }).from(chunks);
+    const idRows = await db
+      .select({ id: chunks.id, updatedAt: chunks.updatedAt })
+      .from(chunks)
+      .where(isNull(chunks.date));
     const candidateIds = idRows
       .filter((row) => {
         const prev = snapshot.chunks.get(row.id);
@@ -276,74 +314,32 @@ export function analyzeChanged(db: Db): ResultAsync<AnalysisSummary, DbError> {
 
     const nounsByChunk = new Map([...states].map(([id, s]) => [id, s.nouns]));
     const tagsByChunk = computeTags(nounsByChunk);
-    const dirtyTagChunks = [...tagsByChunk]
-      .filter(([id, list]) => !tagListEquals(list, snapshot.tags.get(id)))
-      .map(([id]) => id);
     const linkCandidates = computeLinksFor(nounsByChunk, changed);
+
+    // 極性は content のみの関数なので changed のチャンクだけ再計算する。旧極性も
+    // changed に限って読む（変更ゼロのパスでは polarity 取得も発生しない）。
+    const contentById = new Map([...changed].map((id) => [id, states.get(id)?.content ?? ""]));
+    const oldPolarity = new Map<number, number | null>();
+    for (const ids of batched([...changed], 200)) {
+      const rows = await db
+        .select({ id: chunks.id, polarity: chunks.polarity })
+        .from(chunks)
+        .where(inArray(chunks.id, ids));
+      for (const row of rows) oldPolarity.set(row.id, row.polarity);
+    }
     const now = new Date().toISOString();
 
-    await db.transaction(async (tx) => {
-      // タグ: 変わったチャンク分だけ delete → insert（削除チャンク分は FK cascade 済み）
-      const names = new Set(
-        dirtyTagChunks.flatMap((id) => (tagsByChunk.get(id) ?? []).map((t) => t.name)),
-      );
-      const idByName = await ensureTagIds(tx, crypto, names, now);
-      for (const chunkId of dirtyTagChunks) {
-        await tx.delete(chunkTags).where(eq(chunkTags.chunkId, chunkId));
-        for (const tag of tagsByChunk.get(chunkId) ?? []) {
-          const tagId = idByName.get(tag.name);
-          if (tagId !== undefined) {
-            await tx.insert(chunkTags).values({ chunkId, tagId, score: tag.score });
-          }
-        }
-      }
-      // どのチャンクにも付かなくなったタグは削除する（乱立防止）
-      await tx.run(sql`DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM chunk_tags)`);
-
-      // リンク: 変更チャンクが関与する auto リンクだけ張り替える
-      for (const ids of batched([...changed], 200)) {
-        await tx
-          .delete(links)
-          .where(
-            and(
-              eq(links.origin, "auto"),
-              or(inArray(links.fromChunkId, ids), inArray(links.toChunkId, ids)),
-            ),
-          );
-      }
-      for (const link of linkCandidates) {
-        await tx
-          .insert(links)
-          .values({ ...link, origin: "auto" })
-          .onConflictDoNothing();
-      }
-
-      // 極性は content のみの関数なので変更チャンクだけ再計算する。差分取得
-      // （getGraphDelta）が「変更ノード = updatedAt >= since」で拾えるよう、極性または
-      // 自身のタグ列が実際に変わったチャンクだけ updatedAt を進める。ここでの対象は
-      // あくまで changed（自身の content が変わったチャンク）に限る: corpus 変動で
-      // 他チャンクのタグ順位だけが揺れても、それは自身の変化ではないので bump しない
-      // （差分ペイロードを「ユーザの変更」に比例させる、analyzeChanged の設計方針）。
-      const dirtyTagSet = new Set(dirtyTagChunks);
-      const oldPolarity = new Map<number, number | null>();
-      for (const ids of batched([...changed], 200)) {
-        const rows = await tx
-          .select({ id: chunks.id, polarity: chunks.polarity })
-          .from(chunks)
-          .where(inArray(chunks.id, ids));
-        for (const row of rows) oldPolarity.set(row.id, row.polarity);
-      }
-      for (const chunkId of changed) {
-        const state = states.get(chunkId);
-        if (state === undefined) continue;
-        const polarity = scoreSentiment(state.content);
-        if (polarity === oldPolarity.get(chunkId) && !dirtyTagSet.has(chunkId)) {
-          await tx.update(chunks).set({ polarity }).where(eq(chunks.id, chunkId));
-          continue;
-        }
-        await tx.update(chunks).set({ polarity, updatedAt: now }).where(eq(chunks.id, chunkId));
-      }
+    // 旧タグは前回のスナップショット（前回 chunk_tags に書いた内容）。増分パスは
+    // 本プロセスが唯一のライタである前提で、DB を読み直さずスナップショットで差分を取る。
+    const plan = planWrites({
+      newTags: tagsByChunk,
+      oldTags: snapshot.tags,
+      contentById,
+      oldPolarity,
+      changed,
+      links: linkCandidates,
     });
+    await db.transaction((tx) => applyPlan(tx, crypto, plan, now));
 
     snapshots.set(db, { chunks: states, tags: tagsByChunk });
     return { taggedChunks: changed.size, links: linkCandidates.length };

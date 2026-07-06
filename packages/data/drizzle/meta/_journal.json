@@ -71,6 +71,13 @@
       "when": 1783182391764,
       "tag": "0009_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1783432800000,
+      "tag": "0010_chunk_tree",
+      "breakpoints": true
     }
   ]
 }

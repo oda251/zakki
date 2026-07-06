@@ -1,17 +1,21 @@
-import { asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import { NEUTRAL_BAND } from "@zakki/core/analysis/sentiment.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
-import { chunks, chunkTags, entries, links, tags } from "@zakki/data/db/schema.ts";
+import { ROOT_DATE_CTE } from "@zakki/data/chunk/sql.ts";
 
-/** 検索・エクスポート・関連表示で共有する「日付付きチャンク」ビュー */
+/**
+ * 検索・エクスポート・関連表示で共有する「日付付き本文チャンク」ビュー。
+ * date はツリーを遡った祖先の日付チャンクの date（本文チャンク自身は date を
+ * 持たない）。日付チャンク（構造ノード）はここには現れない。
+ */
 export interface ChunkWithDate {
   id: number;
-  entryId: number;
-  sessionId: number;
+  /** 本文チャンクは必ず親（日付チャンクまたはコンテナ）を持つ */
+  parentId: number;
   position: number;
   content: string;
   date: string;
@@ -19,29 +23,37 @@ export interface ChunkWithDate {
   polarity: number | null;
 }
 
+interface RawChunkRow {
+  id: number;
+  parentId: number;
+  position: number;
+  content: string;
+  date: string;
+  polarity: number | null;
+}
+
+function toChunkWithDate(db: Db, rows: RawChunkRow[]): ChunkWithDate[] {
+  const crypto = getCrypto(db);
+  if (crypto === undefined) return rows;
+  return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
+}
+
 /**
  * @param since 指定時は `chunks.updatedAt >= since` のみ返す（グラフ差分取得用）。
  *   同一ミリ秒の書き込みを取りこぼさないよう境界は含める（過剰送信側に倒す）。
  */
 export function listChunksWithDate(db: Db, since?: string): ResultAsync<ChunkWithDate[], DbError> {
-  const crypto = getCrypto(db);
   return tryDbAsync(async () => {
-    const base = db
-      .select({
-        id: chunks.id,
-        entryId: chunks.entryId,
-        sessionId: entries.sessionId,
-        position: chunks.position,
-        content: chunks.content,
-        date: entries.date,
-        polarity: chunks.polarity,
-      })
-      .from(chunks)
-      .innerJoin(entries, eq(chunks.entryId, entries.id));
-    const filtered = since === undefined ? base : base.where(gte(chunks.updatedAt, since));
-    const rows = await filtered.orderBy(asc(entries.date), asc(chunks.position));
-    if (crypto === undefined) return rows;
-    return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
+    const filter = since === undefined ? sql`` : sql`AND c.updated_at >= ${since}`;
+    const res = await db.run(sql`
+      ${ROOT_DATE_CTE}
+      SELECT c.id AS id, c.parent_id AS parentId, c.position AS position,
+             c.content AS content, r.root_date AS date, c.polarity AS polarity
+      FROM chunks c JOIN roots r ON c.id = r.id
+      WHERE c.parent_id IS NOT NULL ${filter}
+      ORDER BY r.root_date ASC, c.parent_id ASC, c.position ASC
+    `);
+    return toChunkWithDate(db, res.rows as unknown as RawChunkRow[]);
   });
 }
 
@@ -50,29 +62,25 @@ export function listChunksWithDate(db: Db, since?: string): ResultAsync<ChunkWit
  * 少数の対象だけ復号したいときに listChunksWithDate の全量復号を避ける。
  */
 export function listChunksByIds(db: Db, ids: number[]): ResultAsync<ChunkWithDate[], DbError> {
-  const crypto = getCrypto(db);
   return tryDbAsync(async () => {
     if (ids.length === 0) return [];
-    const rows = await db
-      .select({
-        id: chunks.id,
-        entryId: chunks.entryId,
-        sessionId: entries.sessionId,
-        position: chunks.position,
-        content: chunks.content,
-        date: entries.date,
-        polarity: chunks.polarity,
-      })
-      .from(chunks)
-      .innerJoin(entries, eq(chunks.entryId, entries.id))
-      .where(inArray(chunks.id, ids));
-    if (crypto === undefined) return rows;
-    return rows.map((r) => ({ ...r, content: crypto.decString(r.content, "chunk.content") }));
+    const idList = sql.join(
+      ids.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const res = await db.run(sql`
+      ${ROOT_DATE_CTE}
+      SELECT c.id AS id, c.parent_id AS parentId, c.position AS position,
+             c.content AS content, r.root_date AS date, c.polarity AS polarity
+      FROM chunks c JOIN roots r ON c.id = r.id
+      WHERE c.parent_id IS NOT NULL AND c.id IN (${idList})
+    `);
+    return toChunkWithDate(db, res.rows as unknown as RawChunkRow[]);
   });
 }
 
 /**
- * 指定チャンクとその前後（position 順の隣接 ±radius）を返す（関連の詳細展開用）。
+ * 指定チャンクとその前後（一覧順の隣接 ±radius）を返す（関連の詳細展開用）。
  * 全チャンクをメモリに保持せず、必要時に切り出す。
  */
 export function getChunkContext(
@@ -107,17 +115,14 @@ export function countTags(
 export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(async () => {
-    const rows = await db
-      .select({
-        chunkId: chunkTags.chunkId,
-        name: tags.name,
-        score: chunkTags.score,
-      })
-      .from(chunkTags)
-      .innerJoin(tags, eq(chunkTags.tagId, tags.id));
-    rows.sort((a, b) => b.score - a.score);
+    const res = await db.run(sql`
+      SELECT ct.chunk_id AS chunkId, t.name AS name, ct.score AS score
+      FROM chunk_tags ct JOIN tags t ON ct.tag_id = t.id
+    `);
+    const rows = res.rows as unknown as { chunkId: number; name: string; score: number }[];
+    const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, string[]>();
-    for (const row of rows) {
+    for (const row of sorted) {
       const name = crypto === undefined ? row.name : crypto.decString(row.name, "tag.name");
       const list = result.get(row.chunkId) ?? [];
       list.push(name);
@@ -130,7 +135,7 @@ export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbEr
 /** 日ごとのネガポジ極性の集計（docs/FEATURES.md §整理・想起系 7） */
 export interface DailySentiment {
   date: string;
-  /** その日のチャンク総数 */
+  /** その日の本文チャンク総数 */
   chunks: number;
   /** 極性が算出済み（解析済み）のチャンク数 */
   scored: number;
@@ -142,41 +147,44 @@ export interface DailySentiment {
 }
 
 /**
- * 日付ごとに極性を SQL 集計する（永続化された chunks.polarity を読む）。
+ * 日付（祖先の日付チャンク）ごとに極性を SQL 集計する（永続化された chunks.polarity を読む）。
  * 分類閾値は scoreSentiment と共有（NEUTRAL_BAND）。未算出（null）は average から除外し、
  * positive/negative/neutral にも数えない（scored が分母）。
  */
 export function dailySentiment(db: Db): ResultAsync<DailySentiment[], DbError> {
-  return tryDbAsync(() =>
-    db
-      .select({
-        date: entries.date,
-        chunks: sql<number>`count(*)`,
-        scored: sql<number>`count(${chunks.polarity})`,
-        average: sql<number | null>`avg(${chunks.polarity})`,
-        positive: sql<number>`sum(case when ${chunks.polarity} > ${NEUTRAL_BAND} then 1 else 0 end)`,
-        negative: sql<number>`sum(case when ${chunks.polarity} < ${-NEUTRAL_BAND} then 1 else 0 end)`,
-        neutral: sql<number>`sum(case when ${chunks.polarity} between ${-NEUTRAL_BAND} and ${NEUTRAL_BAND} then 1 else 0 end)`,
-      })
-      .from(chunks)
-      .innerJoin(entries, eq(chunks.entryId, entries.id))
-      .groupBy(entries.date)
-      .orderBy(asc(entries.date)),
-  );
+  return tryDbAsync(async () => {
+    const res = await db.run(sql`
+      ${ROOT_DATE_CTE}
+      SELECT r.root_date AS date,
+             count(*) AS chunks,
+             count(c.polarity) AS scored,
+             avg(c.polarity) AS average,
+             sum(CASE WHEN c.polarity > ${NEUTRAL_BAND} THEN 1 ELSE 0 END) AS positive,
+             sum(CASE WHEN c.polarity < ${-NEUTRAL_BAND} THEN 1 ELSE 0 END) AS negative,
+             sum(CASE WHEN c.polarity BETWEEN ${-NEUTRAL_BAND} AND ${NEUTRAL_BAND} THEN 1 ELSE 0 END) AS neutral
+      FROM chunks c JOIN roots r ON c.id = r.id
+      WHERE c.parent_id IS NOT NULL
+      GROUP BY r.root_date ORDER BY r.root_date ASC
+    `);
+    return res.rows as unknown as DailySentiment[];
+  });
 }
 
 /** chunk id → 関連 chunk id（スコア降順、双方向） */
 export function listLinksByChunk(db: Db): ResultAsync<Map<number, number[]>, DbError> {
   return tryDbAsync(async () => {
-    const rows = await db.select().from(links);
-    rows.sort((a, b) => b.score - a.score);
+    const res = await db.run(
+      sql`SELECT from_chunk_id AS fromChunkId, to_chunk_id AS toChunkId, score FROM links`,
+    );
+    const rows = res.rows as unknown as { fromChunkId: number; toChunkId: number; score: number }[];
+    const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, number[]>();
     const push = (from: number, to: number) => {
       const list = result.get(from) ?? [];
       list.push(to);
       result.set(from, list);
     };
-    for (const row of rows) {
+    for (const row of sorted) {
       push(row.fromChunkId, row.toChunkId);
       push(row.toChunkId, row.fromChunkId);
     }

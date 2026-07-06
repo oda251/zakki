@@ -1,19 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
 import { chunks, chunkTags, links, tags } from "@zakki/data/db/schema.ts";
-import { saveSnapshot } from "@zakki/data/entry/repository.ts";
+import { listChunksWithDate } from "@zakki/data/chunk/queries.ts";
+import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import { addManualLink } from "@zakki/data/link/repository.ts";
 import { analyzeAll, analyzeChanged } from "./service.ts";
 
 async function seed(db: Db, date: string, contents: string[]): Promise<void> {
-  (
-    await saveSnapshot(db, {
-      date,
-      raw: "",
-      converted: contents.join(""),
-      chunks: contents.map((content) => ({ content })),
-    })
-  )._unsafeUnwrap();
+  await seedDayChunks(db, date, contents);
 }
 
 /**
@@ -157,13 +151,17 @@ describe("analyzeChanged（増分解析）", () => {
     await seed(db, "2026-06-10", ["最初の話。", "全然関係ない別の話。"]);
     (await analyzeChanged(db))._unsafeUnwrap();
 
-    (await addManualLink(db, 1, 2))._unsafeUnwrap();
+    const body = (await listChunksWithDate(db))._unsafeUnwrap();
+    const [a, b] = body.map((c) => c.id);
+    if (a === undefined || b === undefined) throw new Error("seed 不足");
+
+    (await addManualLink(db, a, b))._unsafeUnwrap();
     await seed(db, "2026-06-10", ["最初の話を書き直した。", "全然関係ない別の話。"]);
     (await analyzeChanged(db))._unsafeUnwrap();
 
     const rows = await db.select().from(links);
     expect(
-      rows.some((r) => r.fromChunkId === 1 && r.toChunkId === 2 && r.origin === "manual"),
+      rows.some((r) => r.fromChunkId === a && r.toChunkId === b && r.origin === "manual"),
     ).toBe(true);
   });
 });

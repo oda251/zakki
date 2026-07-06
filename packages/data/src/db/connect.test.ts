@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Identity } from "@zakki/core/identity/types.ts";
-import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
+import { getOrCreateDateChunk } from "@zakki/data/chunk/repository.ts";
 import { openDb } from "./connect.ts";
 
 let dbPath: string;
@@ -18,8 +18,10 @@ describe("openDb (local-only)", () => {
 
   test("開いてマイグレーション済み・基本クエリが通る", async () => {
     const { db } = await openDb(local, dbPath);
-    const entry = (await getOrCreateEntry(db, "2026-06-12"))._unsafeUnwrap();
-    expect(entry.raw).toBe("");
+    const root = (await getOrCreateDateChunk(db, "2026-06-12"))._unsafeUnwrap();
+    expect(root.date).toBe("2026-06-12");
+    // 日付チャンクの content は date と同値の平文
+    expect(root.content).toBe("2026-06-12");
   });
 
   test("sync() は no-op の Ok を返す（同期先が無い）", async () => {
@@ -44,7 +46,7 @@ describe.skip("openDb (embedded replica)", () => {
     };
     const handle = await openDb(id, dbPath);
     expect(handle.db).toBeDefined();
-    const entry = (await getOrCreateEntry(handle.db, "2026-06-12"))._unsafeUnwrap();
-    expect(entry.raw).toBe("");
+    const root = (await getOrCreateDateChunk(handle.db, "2026-06-12"))._unsafeUnwrap();
+    expect(root.date).toBe("2026-06-12");
   });
 });

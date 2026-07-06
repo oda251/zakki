@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
+import type { ChunkWithDate } from "@zakki/data/chunk/queries.ts";
 import { buildIndex, searchChunks } from "./index.ts";
 
 const chunks: ChunkWithDate[] = [
   {
     id: 1,
-    entryId: 1,
-    sessionId: 1,
+    parentId: 10,
     position: 0,
     content: "自動保存の仕組みを実装した。",
     date: "2026-06-12",
@@ -14,8 +13,7 @@ const chunks: ChunkWithDate[] = [
   },
   {
     id: 2,
-    entryId: 1,
-    sessionId: 1,
+    parentId: 10,
     position: 1,
     content: "天気がよかったので散歩した。",
     date: "2026-06-12",
@@ -23,8 +21,7 @@ const chunks: ChunkWithDate[] = [
   },
   {
     id: 3,
-    entryId: 2,
-    sessionId: 1,
+    parentId: 11,
     position: 0,
     content: "Claudeと変換エンジンの話をした。",
     date: "2026-06-13",

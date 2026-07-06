@@ -2,8 +2,9 @@ import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
-import { entries } from "@zakki/data/db/schema.ts";
-import { saveSnapshot } from "@zakki/data/entry/repository.ts";
+import { isNotNull } from "drizzle-orm";
+import { chunks } from "@zakki/data/db/schema.ts";
+import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import { changePassphrase, listEnvelopeKinds, unlockWithPassphrase } from "./envelopes.ts";
 import type { UnlockPrompts } from "./unlock.ts";
 import { unlockOrSetup } from "./unlock.ts";
@@ -45,8 +46,8 @@ describe("unlockOrSetup 初回（封筒なし）", () => {
     expect(prompts.shown[0]).toMatch(/^[A-Z2-9]{4}(-[A-Z2-9]{4}){7}$/);
 
     // ラウンドトリップ
-    const ct = ctx.encString("やあ", "entry.raw");
-    expect(ctx.decString(ct, "entry.raw")).toBe("やあ");
+    const ct = ctx.encString("やあ", "chunk.content");
+    expect(ctx.decString(ct, "chunk.content")).toBe("やあ");
   });
 });
 
@@ -86,7 +87,7 @@ describe("unlockOrSetup 再起動（封筒あり）", () => {
     const ctx = await unlockOrSetup(db, keyfileKek(), prompts);
     expect(passphraseCalled).toBe(true);
     expect(getCrypto(db)).toBeDefined();
-    expect(ctx.decString(ctx.encString("x", "entry.raw"), "entry.raw")).toBe("x");
+    expect(ctx.decString(ctx.encString("x", "chunk.content"), "chunk.content")).toBe("x");
   });
 
   test("パスフレーズ違いは throw し、呼び出し側で再試行できる", async () => {
@@ -109,25 +110,24 @@ describe("unlockOrSetup 再起動（封筒あり）", () => {
 
 describe("changePassphrase はデータを再暗号化しない", () => {
   test("既存暗号文の at-rest バイトが変更後も不変", async () => {
-    // 初回セットアップで暗号 ON にし、エントリを 1 件書く
+    // 初回セットアップで暗号 ON にし、本文チャンクを 1 件書く
     await unlockOrSetup(db, keyfileKek(), fakePrompts("old"));
-    (
-      await saveSnapshot(db, {
-        date: "2026-06-21",
-        raw: "kyou",
-        converted: "きょう。",
-        chunks: [{ content: "きょう。" }],
-      })
-    )._unsafeUnwrap();
+    await seedDayChunks(db, "2026-06-21", ["きょう。"]);
 
-    const [before] = await db.select({ raw: entries.raw }).from(entries);
+    const [before] = await db
+      .select({ content: chunks.content })
+      .from(chunks)
+      .where(isNotNull(chunks.parentId));
     const dek = await unlockWithPassphrase(db, "old");
 
     await changePassphrase(db, dek, "newpass");
 
     // データ行の暗号文は 1 バイトも変わっていない（再暗号化なし）
-    const [after] = await db.select({ raw: entries.raw }).from(entries);
-    expect(after?.raw).toBe(before?.raw);
+    const [after] = await db
+      .select({ content: chunks.content })
+      .from(chunks)
+      .where(isNotNull(chunks.parentId));
+    expect(after?.content).toBe(before?.content);
 
     // 旧パスは失効、新パスとリカバリは引き続き同一 DEK を開く
     let oldThrew = false;

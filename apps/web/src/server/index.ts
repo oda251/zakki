@@ -18,12 +18,13 @@ import { createAnalysisEvents } from "./events.ts";
 const identity = resolveLocalIdentity();
 const { db, sync } = await openDb(identity);
 
+const headless = (what: string) => () =>
+  Promise.reject(
+    new Error(`web サーバは${what}に対応していません。先に TUI（bun start）で実行してください`),
+  );
+
 if (process.env["ZAKKI_ENCRYPTION"] === "1") {
   const keyfileKek = await loadOrCreateKeyfile();
-  const headless = (what: string) => () =>
-    Promise.reject(
-      new Error(`web サーバは${what}に対応していません。先に TUI（bun start）で実行してください`),
-    );
   try {
     await unlockOrSetup(db, keyfileKek, {
       newPassphrase: headless("初回セットアップ"),

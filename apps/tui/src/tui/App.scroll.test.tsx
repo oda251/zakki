@@ -4,7 +4,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { createDb } from "@zakki/data/db/client.ts";
-import { getOrCreateEntry } from "@zakki/data/entry/repository.ts";
+import { getOrCreateDateChunk } from "@zakki/data/chunk/repository.ts";
 import { App } from "./App.tsx";
 
 /**
@@ -14,7 +14,7 @@ import { App } from "./App.tsx";
  */
 async function setup(rawChunks: string[], width = 20, height = 6) {
   const db = await createDb(":memory:");
-  const entry = (await getOrCreateEntry(db, "2026-06-14"))._unsafeUnwrap();
+  const dateChunk = (await getOrCreateDateChunk(db, "2026-06-14"))._unsafeUnwrap();
   // チャンク間は改行区切り（実際の raw は Enter で行区切りが挿入される。区切りなしで
   // 連結すると同一「行」とみなされ scanLineGroups で 1 チャンクにマージされてしまう）
   const initialRaw = rawChunks.map((c) => wrapPaste(c)).join("\n");
@@ -22,7 +22,7 @@ async function setup(rawChunks: string[], width = 20, height = 6) {
     <App
       db={db}
       date="2026-06-14"
-      sessionId={entry.sessionId}
+      dateChunkId={dateChunk.id}
       initialRaw={initialRaw}
       vaultDir="/tmp/zakki-test-vault"
       engine={identityEngine}

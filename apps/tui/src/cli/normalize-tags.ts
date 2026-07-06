@@ -14,7 +14,7 @@ import {
 import { createDb } from "@zakki/data/db/client.ts";
 import { cosine } from "@zakki/data/embedding/vector.ts";
 import { createRuriEmbedder } from "@zakki/backend/embedding/embedder.ts";
-import { countTags, listTagsByChunk } from "@zakki/data/entry/queries.ts";
+import { countTags, listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import { detectLlm } from "@zakki/backend/llm/client.ts";
 
 const apply = process.argv.includes("--apply");

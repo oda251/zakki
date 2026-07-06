@@ -1,6 +1,6 @@
 import MiniSearch from "minisearch";
 import { readingText, toKatakana } from "@zakki/backend/analysis/tokenizer.ts";
-import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
+import type { ChunkWithDate } from "@zakki/data/chunk/queries.ts";
 import { convertRomaji } from "@zakki/core/romaji/convert.ts";
 
 /**

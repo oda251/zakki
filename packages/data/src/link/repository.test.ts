@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
 import { links } from "@zakki/data/db/schema.ts";
-import { saveSnapshot } from "@zakki/data/entry/repository.ts";
+import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import { addManualLink } from "./repository.ts";
 
 let db: Db;
@@ -9,15 +9,8 @@ let chunkIds: number[];
 
 beforeEach(async () => {
   db = await createDb(":memory:");
-  const saved = (
-    await saveSnapshot(db, {
-      date: "2026-07-05",
-      raw: "",
-      converted: "一。二。三。",
-      chunks: [{ content: "一。" }, { content: "二。" }, { content: "三。" }],
-    })
-  )._unsafeUnwrap();
-  chunkIds = saved.chunks.map((c) => c.id);
+  const { chunks } = await seedDayChunks(db, "2026-07-05", ["一。", "二。", "三。"]);
+  chunkIds = chunks.map((c) => c.id);
 });
 
 describe("addManualLink", () => {

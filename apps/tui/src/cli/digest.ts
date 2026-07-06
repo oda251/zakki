@@ -10,8 +10,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { generateDigest } from "@zakki/tui/digest/digest.ts";
 import { createDb } from "@zakki/data/db/client.ts";
-import { localDate } from "@zakki/data/entry/autosave.ts";
-import { countTags, listChunksWithDate, listTagsByChunk } from "@zakki/data/entry/queries.ts";
+import { localDate } from "@zakki/data/chunk/autosave.ts";
+import { countTags, listChunksWithDate, listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 import { detectLlm } from "@zakki/backend/llm/client.ts";
 

@@ -1,10 +1,12 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { asc } from "drizzle-orm";
+import { asc, isNotNull, isNull } from "drizzle-orm";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { createDb, type Db } from "@zakki/data/db/client.ts";
-import { chunks, embeddings, entries } from "@zakki/data/db/schema.ts";
-import { getEntryWithChunks, saveSnapshot } from "@zakki/data/entry/repository.ts";
+import { chunks, chunkUserTags, embeddings } from "@zakki/data/db/schema.ts";
+import { listChildren } from "@zakki/data/chunk/repository.ts";
+import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
+import { listUserTagsByChunk, setChunkUserTags } from "@zakki/data/chunk/user-tags.ts";
 import { loadVectors, syncChunkEmbeddings } from "@zakki/data/embedding/store.ts";
 import { initCrypto } from "./init.ts";
 
@@ -25,36 +27,21 @@ const fakeEmbedder: Embedder = {
   embed: (texts) => Promise.resolve(texts.map(() => Float32Array.from([0.5, -0.5]))),
 };
 
-const RAW = "kyouhaame";
-const CONVERTED = "きょうはあめ。だるい。";
+const DATE = "2026-06-21";
 const CONTENT0 = "きょうはあめ。";
 const CONTENT1 = "だるい。";
 
 describe("暗号 ON の at-rest", () => {
-  test("entries/chunks は平文で保存されず、読み出しでは復号される", async () => {
+  test("本文チャンクは平文で保存されず、読み出しでは復号される", async () => {
     await initCrypto(db, kek());
 
-    (
-      await saveSnapshot(db, {
-        date: "2026-06-21",
-        raw: RAW,
-        converted: CONVERTED,
-        chunks: [{ content: CONTENT0 }, { content: CONTENT1 }],
-      })
-    )._unsafeUnwrap();
+    const { root } = await seedDayChunks(db, DATE, [CONTENT0, CONTENT1]);
 
-    // schema 経由で列を直接読む（復号を経由しない at-rest の生値）
-    const [erow] = await db
-      .select({ raw: entries.raw, converted: entries.converted })
-      .from(entries);
-    expect(erow).toBeDefined();
-    expect(erow?.raw).not.toBe(RAW);
-    expect(erow?.raw).not.toContain(RAW);
-    expect(erow?.converted).not.toContain("きょう");
-
+    // schema 経由で本文チャンク（parent_id 非 NULL）を直接読む（復号を経由しない生値）
     const crows = await db
       .select({ content: chunks.content })
       .from(chunks)
+      .where(isNotNull(chunks.parentId))
       .orderBy(asc(chunks.position));
     expect(crows.map((c) => c.content)).not.toContain(CONTENT0);
     for (const c of crows) {
@@ -63,22 +50,48 @@ describe("暗号 ON の at-rest", () => {
     }
 
     // 通常の読み出し経路では平文へ復号される
-    const loaded = (await getEntryWithChunks(db, "2026-06-21"))._unsafeUnwrap();
-    expect(loaded?.entry.raw).toBe(RAW);
-    expect(loaded?.entry.converted).toBe(CONVERTED);
-    expect(loaded?.chunks.map((c) => c.content)).toEqual([CONTENT0, CONTENT1]);
+    const loaded = (await listChildren(db, root.id))._unsafeUnwrap();
+    expect(loaded.map((c) => c.content)).toEqual([CONTENT0, CONTENT1]);
+  });
+
+  test("日付チャンクの content は暗号化されず date と同値の平文", async () => {
+    await initCrypto(db, kek());
+    await seedDayChunks(db, DATE, [CONTENT0]);
+
+    const [dateRow] = await db
+      .select({ content: chunks.content, date: chunks.date })
+      .from(chunks)
+      .where(isNull(chunks.parentId));
+    expect(dateRow?.date).toBe(DATE);
+    // date が平文である方針の帰結として content も平文のまま（復号もスキップされる）
+    expect(dateRow?.content).toBe(DATE);
+  });
+
+  test("chunk_user_tags.name は平文で保存されず、読み出しでは復号される", async () => {
+    await initCrypto(db, kek());
+    const { chunks: children } = await seedDayChunks(db, DATE, [CONTENT0]);
+    const chunkId = children[0]?.id;
+    if (chunkId === undefined) throw new Error("seed 不足");
+    (await setChunkUserTags(db, chunkId, ["設計", "調査"]))._unsafeUnwrap();
+
+    const rows = await db
+      .select({ name: chunkUserTags.name, nameFingerprint: chunkUserTags.nameFingerprint })
+      .from(chunkUserTags);
+    expect(rows.length).toBe(2);
+    for (const r of rows) {
+      expect(r.name).not.toContain("設計");
+      expect(r.name).not.toContain("調査");
+      expect(r.nameFingerprint).not.toContain("設計");
+    }
+
+    // 読み出し経路は平文へ復号
+    const loaded = (await listUserTagsByChunk(db))._unsafeUnwrap();
+    expect(loaded.get(chunkId)).toEqual(["設計", "調査"]);
   });
 
   test("embeddings.vector は生 float バイトで保存されず、loadVectors で復号される", async () => {
     await initCrypto(db, kek());
-    (
-      await saveSnapshot(db, {
-        date: "2026-06-21",
-        raw: RAW,
-        converted: CONVERTED,
-        chunks: [{ content: CONTENT0 }],
-      })
-    )._unsafeUnwrap();
+    await seedDayChunks(db, DATE, [CONTENT0]);
     (await syncChunkEmbeddings(db, fakeEmbedder))._unsafeUnwrap();
 
     const [row] = await db

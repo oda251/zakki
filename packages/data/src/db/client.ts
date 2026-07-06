@@ -37,9 +37,9 @@ function toLibsqlUrl(path: string): string {
 }
 
 /**
- * libSQL クライアントを開いてマイグレーションを適用する共通処理。
+ * libSQL クライアントを開く共通処理（マイグレーションは行わない）。
  * `sync` を渡すと embedded replica（ローカルファイル＋リモート同期先）として開く。
- * 同期そのものはここでは行わない（構築はオフラインでも成功する）。
+ * 同期そのものもここでは行わない（構築はオフラインでも成功する）。
  */
 export async function openClient(
   path: string,
@@ -59,8 +59,19 @@ export async function openClient(
     await client.execute("PRAGMA busy_timeout = 5000");
   }
   const db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
   return { client, db };
+}
+
+/**
+ * マイグレーションを適用する。合成点（createDb / openDb）が接続直後に明示的に呼ぶ。
+ *
+ * 接続（openClient）から分離しているのは CF Workers 適合のため: drizzle migrator は
+ * 実行時に migrations フォルダを node:fs で読むため Workers では実行できない。
+ * Workers ターゲットは「migrate を呼ばない合成」（デプロイ時に primary へ適用済み）を
+ * 取る（docs/RESEARCH.md §6 の暗号文ストア方針）。
+ */
+export async function migrateDb(db: Db): Promise<void> {
+  await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
 }
 
 /**
@@ -69,5 +80,6 @@ export async function openClient(
  */
 export async function createDb(path: string = defaultDbPath()): Promise<Db> {
   const { db } = await openClient(path);
+  await migrateDb(db);
   return db;
 }

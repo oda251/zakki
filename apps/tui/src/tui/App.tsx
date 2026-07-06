@@ -13,10 +13,10 @@ import { stripPasteMarkers, wrapPaste } from "@zakki/core/conversion/paste.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
-import { nearestChunks } from "@zakki/data/embedding/semantic.ts";
-import { persistEntry } from "@zakki/data/entry/autosave.ts";
-import type { ChunkWithDate } from "@zakki/data/entry/queries.ts";
-import { getChunkContext, listChunksWithDate } from "@zakki/data/entry/queries.ts";
+import { persistChildren } from "@zakki/data/chunk/autosave.ts";
+import { deleteChunk, updateChunkContent } from "@zakki/data/chunk/repository.ts";
+import type { ChunkWithDate } from "@zakki/data/chunk/queries.ts";
+import { getChunkContext, listChunksWithDate } from "@zakki/data/chunk/queries.ts";
 import {
   editableBlockAt,
   freezeLiveTail,
@@ -24,7 +24,6 @@ import {
   splitDisplay,
 } from "@zakki/core/entry/records.ts";
 import type { Result } from "neverthrow";
-import { getEntryWithChunks } from "@zakki/data/entry/repository.ts";
 import { getEntryExportChunks } from "@zakki/tui/export/data.ts";
 import type { ExportError, ExportSummary } from "@zakki/tui/export/obsidian.ts";
 import { exportEntry } from "@zakki/tui/export/obsidian.ts";
@@ -32,21 +31,24 @@ import { convertRomaji } from "@zakki/core/romaji/convert.ts";
 import type { SearchIndex } from "@zakki/tui/search/index.ts";
 import { buildIndex, searchChunks } from "@zakki/tui/search/index.ts";
 import { searchSemantic } from "@zakki/tui/search/semantic.ts";
-import type { Cursor, ScreenLens } from "@zakki/core/input/controller.ts";
+import type { Cursor } from "@zakki/core/input/controller.ts";
 import {
   applyCursorKey,
   applyDialogKey,
   applyKey,
   applyMenuKey,
   applySearchKey,
-  clampCursor,
+  clampInputCursor,
+  screenLens,
 } from "@zakki/core/input/controller.ts";
 import { useStore } from "zustand";
 import { createEditorStore } from "@zakki/core/input/store.ts";
 import { Chunk } from "./chunk.tsx";
 import { Dialog } from "./dialog.tsx";
 import { matchesAction } from "@zakki/core/input/keymap.ts";
-import { useBarCursor, type BarCursorTarget } from "./native-cursor.ts";
+import { computeBarTarget, useBarCursor, type BarCursorTarget } from "./native-cursor.ts";
+import { selectAmbient, type AmbientItem } from "./ambient.ts";
+import { planEditCommit, type EditPlan } from "./edit-plan.ts";
 
 /** キーストローク単位の永続化（docs/CONCEPT.md）。打鍵停止後この時間で保存する */
 const SAVE_DEBOUNCE_MS = 300;
@@ -66,8 +68,8 @@ const DELETE_CONFIRM_MESSAGE = "このチャンクを削除しますか？";
 export interface AppProps {
   db: Db;
   date: string;
-  /** 起動時に解決済みの当日デフォルトセッション。保存のたびの再解決を省く */
-  sessionId: number;
+  /** 起動時に解決済みの当日の日付チャンク（トップレベル）id。保存のたびの再解決を省く */
+  dateChunkId: number;
   initialRaw: string;
   vaultDir: string;
   engine: KanaKanjiEngine;
@@ -82,13 +84,6 @@ export interface AppProps {
 }
 
 type SaveState = "saved" | "dirty" | "error";
-
-interface AmbientItem {
-  chunkId: number;
-  date: string;
-  /** タイトルは描画時に makeTitle で導出する（派生値は保持しない） */
-  content: string;
-}
 
 /**
  * 子要素を scrollbox の上端へ合わせる（docs/PANES.md §5 の表示窓制御）。
@@ -105,7 +100,7 @@ function anchorChildToTop(sb: ScrollBoxRenderable, childId: string): void {
 export function App({
   db,
   date,
-  sessionId,
+  dateChunkId,
   initialRaw,
   vaultDir,
   engine,
@@ -214,25 +209,7 @@ export function App({
   const refreshAmbient = useCallback(
     (vectors: ReadonlyMap<number, Float32Array>) => {
       void listChunksWithDate(db).match(
-        (all) => {
-          const todays = all.filter((c) => c.date === date);
-          const last = todays.at(-1);
-          const lastVector = last === undefined ? undefined : vectors.get(last.id);
-          if (last === undefined || lastVector === undefined) {
-            return;
-          }
-          const byId = new Map(all.map((c) => [c.id, c]));
-          const items = nearestChunks(vectors, lastVector, AMBIENT_LIMIT + 1)
-            .filter((n) => n.chunkId !== last.id)
-            .slice(0, AMBIENT_LIMIT)
-            .flatMap((n) => {
-              const chunk = byId.get(n.chunkId);
-              return chunk === undefined
-                ? []
-                : [{ chunkId: chunk.id, date: chunk.date, content: chunk.content }];
-            });
-          setAmbient(items);
-        },
+        (all) => setAmbient(selectAmbient(all, vectors, date, AMBIENT_LIMIT)),
         () => {},
       );
     },
@@ -257,18 +234,13 @@ export function App({
   const exit = useCallback(() => {
     // flush 保存（打鍵途中の n を確定）→ エクスポート → 端末復帰。
     // raw が正本なので未確定セグメントの変換完了は待たない（次回起動で回収）。
-    const snapshot = {
-      date,
-      sessionId,
-      raw: store.getState().raw,
-      converted: convertRaw(store.getState().raw, true).text,
-    };
+    const converted = convertRaw(store.getState().raw, true).text;
     const finish = () => {
       engine.close();
       renderer.destroy();
       process.exit(0);
     };
-    void persistEntry(db, snapshot).match(async () => {
+    void persistChildren(db, dateChunkId, converted).match(async () => {
       // export の成否に関わらず端末を復帰する（保存は完了済み）
       await exportCurrent();
       // ローカル保存は完了済み。リモート同期はベストエフォートで、失敗しても終了を妨げない
@@ -276,7 +248,7 @@ export function App({
       await sync();
       finish();
     }, finish);
-  }, [db, date, sessionId, renderer, engine, convertRaw, exportCurrent, sync, store]);
+  }, [db, dateChunkId, renderer, engine, convertRaw, exportCurrent, sync, store]);
 
   /** 関連の詳細を閉じる（一覧表示へ戻す） */
   const closeExpand = useCallback(() => {
@@ -326,130 +298,117 @@ export function App({
 
   /**
    * 詳細ペインの過去/当日チャンクの修正を開く（docs/PANES.md §7）。
-   * 対象 raw（当日=store の raw / 過去=DB）から editableBlockAt で領域を解決する。
-   * 末尾ライブ文は凍結リテラルが無いため、編集の初期値には DB の content を使う
-   * （確定時にその文だけが literal へ畳まれる, patchDetailChunk）。
+   * 編集の初期値はどのケースも DB の content（確定テキスト）でよい。凍結リテラルの
+   * 解決は当日の raw 反映時（commitEdit の resolveBlock）にのみ必要で、初期表示には不要。
    */
   const openDetailEdit = useCallback(
-    async (chunk: ChunkWithDate, viewIndex: number) => {
-      const targetRaw =
-        chunk.date === date
-          ? store.getState().raw
-          : await getEntryWithChunks(db, chunk.date).match(
-              (e) => e?.entry.raw ?? "",
-              (e) => {
-                setMessage(`読込: ${e.message}`);
-                return "";
-              },
-            );
-      const block = editableBlockAt(targetRaw, chunk.position);
-      if (block === null) {
-        setMessage("対象チャンクが見つかりません");
-        return;
-      }
-      // 凍結リテラルは本文を、ライブ末尾文は表示中の確定テキスト（DB content）を初期値にする
-      const initial = block.frozen ? block.text : chunk.content;
+    (chunk: ChunkWithDate, viewIndex: number) => {
       setEditing({
         target: { kind: "detail", date: chunk.date, position: chunk.position, chunkId: chunk.id },
-        text: initial,
-        cursor: initial.length,
-        old: initial,
+        text: chunk.content,
+        cursor: chunk.content.length,
+        old: chunk.content,
       });
       moveCursor({ pane: "detail", index: viewIndex, mode: "input" });
     },
-    [db, date, moveCursor, store, setEditing],
+    [moveCursor, setEditing],
   );
 
   /**
-   * 詳細ペイン経由の確定チャンク編集/削除を、対象エントリの raw に反映する（docs/PANES.md §7）。
-   * `nextText` が空文字なら削除（replaceBlock が領域を消す）。当日は store の raw を正本とし
-   * （ライブ末尾を失わない）、過去は DB から raw を再取得して即保存＋当該日を再エクスポートする。
-   * stale offset を避けるため、領域は呼び出し時点の raw から `editableBlockAt` で再解決する。
+   * EditPlan の DB / raw 効果だけを適用する共有インタプリタ（docs/PANES.md §4, §7）。
+   * カーソル移動・editing クリア・詳細の再取得は呼び出し側（commit / delete）が担い、
+   * ここは「何を書き込むか」だけを実行する（当日直下は raw 反映、過去・深い階層は id 直操作）。
+   * - rawReplace: 当日 raw のリテラル領域を置換（text="" は削除。ライブ末尾を失わない）。
+   * - detailUpdate / detailDelete: chunk id で直接 DB を更新/削除し、当該日を再エクスポート。
    */
-  const patchDetailChunk = useCallback(
-    async (chunk: { date: string; position: number }, nextText: string) => {
-      if (chunk.date === date) {
-        const block = editableBlockAt(store.getState().raw, chunk.position);
-        if (block === null) {
-          setMessage("対象チャンクが見つかりません");
+  const applyEditEffect = useCallback(
+    (plan: EditPlan) => {
+      switch (plan.kind) {
+        case "revert":
+          return;
+        case "rawReplace": {
+          const next = replaceBlock(store.getState().raw, plan.start, plan.end, plan.text);
+          setRaw(next);
+          setSaveState("dirty");
           return;
         }
-        const next = replaceBlock(store.getState().raw, block.start, block.end, nextText);
-        setRaw(next);
-        setSaveState("dirty");
-        return;
-      }
-      await getEntryWithChunks(db, chunk.date).match(
-        async (entry) => {
-          const targetRaw = entry?.entry.raw ?? "";
-          const block = editableBlockAt(targetRaw, chunk.position);
-          if (block === null) {
-            setMessage("対象チャンクが見つかりません");
-            return;
-          }
-          const next = replaceBlock(targetRaw, block.start, block.end, nextText);
-          await persistEntry(db, {
-            date: chunk.date,
-            raw: next,
-            converted: convertRaw(next).text,
-          }).match(
+        case "detailUpdate":
+        case "detailDelete": {
+          const op =
+            plan.kind === "detailDelete"
+              ? deleteChunk(db, plan.chunkId)
+              : updateChunkContent(db, plan.chunkId, plan.text);
+          void op.match(
             async () => {
-              const exported = await exportFor(chunk.date);
+              const exported = await exportFor(plan.date);
               exported?.mapErr((e) => setMessage(`export: ${e.message}`));
             },
             (e) => setMessage(`保存: ${e.message}`),
           );
-        },
-        (e) => setMessage(`読込: ${e.message}`),
-      );
+          return;
+        }
+      }
     },
-    [db, date, convertRaw, exportFor, store, setRaw],
+    [db, exportFor, store, setRaw],
   );
 
   /**
    * 修正を確定: リテラル領域を打ち直したプレーンテキストで置換する（変換しない）。
    * 空確定は削除しない（元のテキストに戻す＝変更なしで閉じる, docs/PANES.md §4）。
-   * 削除は View への d → 確認ダイアログ経由でのみ行う。
+   * 分類は planEditCommit（純関数）に委ね、shell は plan の interpret と
+   * カーソル移動・詳細再取得だけを行う。削除は View への d → 確認ダイアログ経由でのみ行う。
    */
   const commitEdit = useCallback(() => {
     const current = store.getState().editing;
     if (current === null) {
       return;
     }
-    const text = current.text.trim();
     const pane = store.getState().cursor.pane;
     const index = store.getState().cursor.index;
+    // parentId は表示中の contextChunks から引く（見つからなければ id 直更新側へ倒れて安全）。
+    const target = current.target;
+    const parentId =
+      target.kind === "detail"
+        ? (contextChunks.find((c) => c.id === target.chunkId)?.parentId ?? -1)
+        : -1;
+    const plan = planEditCommit(current, {
+      today: date,
+      dateChunkId,
+      parentId,
+      resolveBlock: (position) => {
+        const block = editableBlockAt(store.getState().raw, position);
+        return block === null ? null : { start: block.start, end: block.end };
+      },
+    });
     // 空確定は編集を破棄して元に戻す（削除はしない）。その View（select）へ戻る。
-    if (text === "") {
+    if (plan !== null && plan.kind === "revert") {
       setEditing(null);
       moveCursor({ pane, index, mode: "select" });
       return;
     }
     if (current.target.kind === "main") {
-      const next = replaceBlock(
-        store.getState().raw,
-        current.target.start,
-        current.target.end,
-        text,
-      );
-      setRaw(next);
-      setSaveState("dirty");
+      if (plan !== null) {
+        applyEditEffect(plan);
+      }
       setEditing(null);
       // 確定後はそのチャンク（View, select）にカーソルを戻す。
       moveCursor({ pane, index, mode: "select" });
       return;
     }
-    // ── detail: 対象エントリの raw に反映（patchDetailChunk が当日/過去を分岐）──
-    const { date: targetDate, position, chunkId } = current.target;
+    // ── detail: 当日直下（raw 反映）/過去・深い階層（id 直更新）/解決失敗（エラー表示）。
     setEditing(null);
-    void patchDetailChunk({ date: targetDate, position }, text);
+    if (plan === null) {
+      setMessage("対象チャンクが見つかりません");
+    } else {
+      applyEditEffect(plan);
+    }
     // 表示中の詳細を最新へ更新し、当該 detail View(select) にカーソルを戻す
-    void getChunkContext(db, chunkId, CONTEXT_RADIUS).match(
+    void getChunkContext(db, current.target.chunkId, CONTEXT_RADIUS).match(
       (ctx) => setContextChunks(ctx),
       () => {},
     );
     moveCursor({ pane, index, mode: "select" });
-  }, [moveCursor, db, patchDetailChunk, store, setRaw, setEditing]);
+  }, [moveCursor, db, applyEditEffect, store, setEditing, contextChunks, date, dateChunkId]);
 
   /**
    * 確定チャンクの実削除（リテラル領域を空に置換, docs/PANES.md §4）。
@@ -457,13 +416,11 @@ export function App({
    */
   const deleteBlock = useCallback(
     (block: { start: number; end: number }) => {
-      const next = replaceBlock(store.getState().raw, block.start, block.end, "");
-      setRaw(next);
-      setSaveState("dirty");
-      // 削除で要素が消えるので clampCursor（レンダー時）が直上 / New へ補正する
+      applyEditEffect({ kind: "rawReplace", start: block.start, end: block.end, text: "" });
+      // 削除で要素が消えるので clampInputCursor（レンダー時）が直上 / New へ補正する
       moveCursor({ pane: "main", index: store.getState().cursor.index, mode: "select" });
     },
-    [moveCursor, store, setRaw],
+    [applyEditEffect, moveCursor, store],
   );
 
   /** 削除の確認ダイアログを開く（OK で deleteBlock を呼ぶ）。d 直行・メニュー共通。 */
@@ -479,19 +436,28 @@ export function App({
 
   /**
    * 詳細ペインの過去/当日チャンクの実削除（docs/PANES.md §7）。
-   * date+position から領域を再解決し空に置換する。当日は store の raw、過去は
-   * DB 保存＋再エクスポート。削除で要素が消えるため closeExpand しカーソルを関連へ戻す。
+   * 当日直下は store の raw から領域を消し（rawReplace, text=""）、過去・深い階層は
+   * chunk id で直接削除する（detailDelete）。削除で要素が消えるため closeExpand し
+   * カーソルを関連へ戻す。
    */
   const deleteDetailChunk = useCallback(
     (chunk: ChunkWithDate) => {
-      // 空テキストで置換＝削除（patchDetailChunk が当日/過去を分岐）
-      void patchDetailChunk({ date: chunk.date, position: chunk.position }, "");
+      if (chunk.date === date && chunk.parentId === dateChunkId) {
+        const block = editableBlockAt(store.getState().raw, chunk.position);
+        if (block === null) {
+          setMessage("対象チャンクが見つかりません");
+        } else {
+          applyEditEffect({ kind: "rawReplace", start: block.start, end: block.end, text: "" });
+        }
+      } else {
+        applyEditEffect({ kind: "detailDelete", chunkId: chunk.id, date: chunk.date });
+      }
       // 詳細を閉じてカーソルを関連へ戻す（展開元の ambient index、無ければ 0）
       closeExpand();
       const ai = ambient.findIndex((a) => a.chunkId === expandedChunkId);
       moveCursor({ pane: "related", index: ai < 0 ? 0 : ai, mode: "select" });
     },
-    [patchDetailChunk, closeExpand, ambient, expandedChunkId, moveCursor],
+    [applyEditEffect, date, dateChunkId, store, closeExpand, ambient, expandedChunkId, moveCursor],
   );
 
   /** 詳細削除の確認ダイアログを開く（OK で deleteDetailChunk）。d 直行・メニュー共通。 */
@@ -571,11 +537,7 @@ export function App({
     // ── 単一カーソル（メイン / 関連 / 詳細 を配線） ──
     // この tick の確定チャンク数からレンズを作る。related=関連件数、detail=詳細表示件数。
     const frozenNow = splitDisplay(store.getState().raw).frozen;
-    const lens: ScreenLens = {
-      main: frozenNow.length,
-      related: ambient.length,
-      detail: contextChunks.length,
-    };
+    const lens = screenLens(frozenNow.length, ambient.length, contextChunks.length);
     const cur = store.getState().cursor;
 
     // select 上（View を指す）: カーソル系の intent で処理する
@@ -595,7 +557,7 @@ export function App({
           } else if (intent.pane === "detail") {
             const chunk = contextChunks[intent.index];
             if (chunk !== undefined) {
-              void openDetailEdit(chunk, intent.index);
+              openDetailEdit(chunk, intent.index);
             }
           }
           return;
@@ -641,7 +603,7 @@ export function App({
                 {
                   label: "編集",
                   onChoose: () => {
-                    void openDetailEdit(chunk, viewIndex);
+                    openDetailEdit(chunk, viewIndex);
                   },
                 },
                 { label: "削除", onChoose: () => requestDeleteDetail(chunk) },
@@ -747,12 +709,12 @@ export function App({
         setRaw(frozen.raw);
       }
       const current = store.getState().raw;
-      // 2. 永続化（converted から決定的チャンク化）
+      // 2. 永続化（converted を Enter 区切りで日付チャンク直下の子チャンクへ投影）
       const converted = convertRaw(current).text;
-      void persistEntry(db, { date, sessionId, raw: current, converted }).match(
+      void persistChildren(db, dateChunkId, converted).match(
         (saved) => {
           setSaveState("saved");
-          setChunkCount(saved.chunks.length);
+          setChunkCount(saved?.length ?? 0);
           if (backgroundTimer.current !== null) {
             clearTimeout(backgroundTimer.current);
           }
@@ -766,7 +728,7 @@ export function App({
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // conversionVersion: 非同期変換が確定したら再保存・再凍結する
-  }, [db, date, sessionId, raw, conversionVersion, convertRaw, convertSettled, runBackgroundPass]);
+  }, [db, dateChunkId, raw, conversionVersion, convertRaw, convertSettled, runBackgroundPass]);
 
   // セマンティック検索（docs/FEATURES.md 候補8）。実体は search/semantic.ts に委譲する
   useEffect(() => {
@@ -803,18 +765,16 @@ export function App({
   );
   // 現在のレンズ（メイン / 関連 / 詳細）でカーソルを有効域へ補正する
   // （New 追従・チャンク削除時のフォールバック）。
-  const lens = useMemo<ScreenLens>(
-    () => ({ main: frozen.length, related: ambient.length, detail: contextChunks.length }),
+  const lens = useMemo(
+    () => screenLens(frozen.length, ambient.length, contextChunks.length),
     [frozen.length, ambient.length, contextChunks.length],
   );
-  const clamped = useMemo<Cursor>(() => {
-    // New（入力位置）は末尾に追従させる: 編集中でない main の input は常に末尾 New。
-    // 文の確定（freeze）でチャンクが増減しても、New が後ろのチャンクに取り残されない。
-    if (editing === null && cursor.pane === "main" && cursor.mode === "input") {
-      return { pane: "main", index: lens.main, mode: "input" };
-    }
-    return clampCursor(cursor, lens);
-  }, [cursor, lens, editing]);
+  // New（入力位置）は末尾に追従させる（clampInputCursor, docs/PANES.md §3）。文の確定
+  // （freeze）でチャンクが増減しても New が後ろのチャンクに取り残されない。
+  const clamped = useMemo<Cursor>(
+    () => clampInputCursor(cursor, lens, editing !== null),
+    [cursor, lens, editing],
+  );
   useEffect(() => {
     if (
       clamped.pane !== cursor.pane ||
@@ -844,32 +804,19 @@ export function App({
   // 端末ネイティブ縦棒カーソルの描画対象（src/tui/native-cursor.ts）。
   // 修正中はその編集箇所、それ以外で New 入力中なら末尾（確定テキスト＋打鍵途中ローマ字の
   // 直後）。select 中・モーダル表示中・検索中は null（カーソルを隠す）。
-  const barTarget = useMemo<BarCursorTarget | null>(() => {
-    if (mode === "search" || dialog !== null || menu !== null) {
-      return null;
-    }
-    if (editing !== null) {
-      if (editing.target.kind === "main") {
-        return {
-          scope: "main",
-          id: `chunk-${editing.target.start}`,
-          text: editing.text,
-          offset: editing.cursor,
-        };
-      }
-      return {
-        scope: "detail",
-        id: `detail-${clamped.index}`,
-        text: editing.text,
-        offset: editing.cursor,
-      };
-    }
-    if (newFocused) {
-      const text = live.text + live.pending;
-      return { scope: "main", id: "chunk-new", text, offset: text.length };
-    }
-    return null;
-  }, [mode, dialog, menu, editing, clamped.index, newFocused, live.text, live.pending]);
+  const barTarget = useMemo<BarCursorTarget | null>(
+    () =>
+      computeBarTarget({
+        mode,
+        hasDialog: dialog !== null,
+        hasMenu: menu !== null,
+        editing,
+        clampedIndex: clamped.index,
+        newFocused,
+        liveText: live.text + live.pending,
+      }),
+    [mode, dialog, menu, editing, clamped.index, newFocused, live.text, live.pending],
+  );
 
   useBarCursor(renderer, barTarget, { main: mainScrollRef, detail: detailScrollRef });
 

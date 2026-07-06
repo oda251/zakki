@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { EditBuffer, EditorView, type CliRenderer, type ScrollBoxRenderable } from "@opentui/core";
+import type { Editing } from "@zakki/core/input/store.ts";
 import { globalDisplayCol, visualPosition } from "./width.ts";
 
 /**
@@ -15,6 +16,48 @@ export interface BarCursorTarget {
   id: string;
   text: string;
   offset: number;
+}
+
+/**
+ * 端末ネイティブ縦棒カーソルの描画対象を導出する純粋関数（docs/PANES.md §3）。
+ * - 検索中・モーダル（ダイアログ / メニュー）表示中は null（カーソルを隠す）。
+ * - 修正中はその編集箇所（main は該当リテラル、detail は表示 index）。
+ * - それ以外で New 入力中なら末尾（確定テキスト＋打鍵途中ローマ字の直後）。
+ * liveText は「確定テキスト＋打鍵途中ローマ字」を連結済みで渡す（offset は末尾）。
+ */
+export function computeBarTarget(args: {
+  mode: "write" | "search";
+  hasDialog: boolean;
+  hasMenu: boolean;
+  editing: Editing | null;
+  clampedIndex: number;
+  newFocused: boolean;
+  liveText: string;
+}): BarCursorTarget | null {
+  const { mode, hasDialog, hasMenu, editing, clampedIndex, newFocused, liveText } = args;
+  if (mode === "search" || hasDialog || hasMenu) {
+    return null;
+  }
+  if (editing !== null) {
+    if (editing.target.kind === "main") {
+      return {
+        scope: "main",
+        id: `chunk-${editing.target.start}`,
+        text: editing.text,
+        offset: editing.cursor,
+      };
+    }
+    return {
+      scope: "detail",
+      id: `detail-${clampedIndex}`,
+      text: editing.text,
+      offset: editing.cursor,
+    };
+  }
+  if (newFocused) {
+    return { scope: "main", id: "chunk-new", text: liveText, offset: liveText.length };
+  }
+  return null;
 }
 
 /** 折り返し計測に十分な高さ。チャンクは有界なので内部スクロールは起こさない */
