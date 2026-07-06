@@ -14,6 +14,8 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
 });
 
+const byName = (a: string, b: string) => a.localeCompare(b);
+
 const chunk = (over: Partial<IndexedChunk> & { id: number }): IndexedChunk => ({
   parentId: 1,
   position: 0,
@@ -27,9 +29,8 @@ const chunk = (over: Partial<IndexedChunk> & { id: number }): IndexedChunk => ({
 describe("plaintext-index", () => {
   test("openPlaintextIndex は所定の object store 一式を作る", async () => {
     const idx = await openPlaintextIndex("t-schema");
-    const cmp = (a: string, b: string) => a.localeCompare(b);
-    expect([...idx.db.objectStoreNames].toSorted(cmp)).toEqual(
-      ["chunk_user_tags", "chunks", "corrections", "meta", "tags"].toSorted(cmp),
+    expect([...idx.db.objectStoreNames].toSorted(byName)).toEqual(
+      ["chunk_user_tags", "chunks", "corrections", "meta", "tags"].toSorted(byName),
     );
     idx.close();
   });

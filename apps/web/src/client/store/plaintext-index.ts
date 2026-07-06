@@ -117,25 +117,35 @@ export function openPlaintextIndex(name: string = DEFAULT_DB_NAME): Promise<Plai
   });
 }
 
+/** delta の 1 セクション（upsert→delete の順）を tx 内の store へ適用する */
+function applySection(
+  tx: IDBTransaction,
+  store: string,
+  section: { upsert?: unknown[]; delete?: IDBValidKey[] } | undefined,
+): void {
+  if (section === undefined) return;
+  const s = tx.objectStore(store);
+  for (const v of section.upsert ?? []) s.put(v);
+  for (const k of section.delete ?? []) s.delete(k);
+}
+
 function createPlaintextIndex(db: IDBDatabase): PlaintextIndex {
+  /** 対象ストアの readwrite tx を張り、fn で操作して完了を待つ（変更系の共通形） */
+  const write = (stores: string | string[], fn: (tx: IDBTransaction) => void): Promise<void> => {
+    const tx = db.transaction(stores, "readwrite");
+    fn(tx);
+    return wrapTx(tx);
+  };
+
   return {
     db,
 
-    async putChunk(c) {
-      const tx = db.transaction("chunks", "readwrite");
-      tx.objectStore("chunks").put(c);
-      await wrapTx(tx);
-    },
+    putChunk: (c) => write("chunks", (tx) => tx.objectStore("chunks").put(c)),
+    deleteChunk: (id) => write("chunks", (tx) => tx.objectStore("chunks").delete(id)),
 
     getChunk(id) {
       const tx = db.transaction("chunks", "readonly");
       return wrapRequest<IndexedChunk | undefined>(tx.objectStore("chunks").get(id));
-    },
-
-    async deleteChunk(id) {
-      const tx = db.transaction("chunks", "readwrite");
-      tx.objectStore("chunks").delete(id);
-      await wrapTx(tx);
     },
 
     getAllChunks() {
@@ -145,21 +155,19 @@ function createPlaintextIndex(db: IDBDatabase): PlaintextIndex {
 
     async getChildren(parentId) {
       // IndexedDB の index は null キーを含めないため、日付チャンク（parentId=null）は全走査する
+      const tx = db.transaction("chunks", "readonly");
       if (parentId === null) {
-        const all = await this.getAllChunks();
+        const all = await wrapRequest<IndexedChunk[]>(tx.objectStore("chunks").getAll());
         return all.filter((c) => c.parentId === null).toSorted(byPosition);
       }
-      const tx = db.transaction("chunks", "readonly");
       const index = tx.objectStore("chunks").index("by_parent");
       const items = await wrapRequest<IndexedChunk[]>(index.getAll(parentId));
       return items.toSorted(byPosition);
     },
 
-    async putUserTag(t) {
-      const tx = db.transaction("chunk_user_tags", "readwrite");
-      tx.objectStore("chunk_user_tags").put(t);
-      await wrapTx(tx);
-    },
+    putUserTag: (t) => write("chunk_user_tags", (tx) => tx.objectStore("chunk_user_tags").put(t)),
+    deleteUserTag: (id) =>
+      write("chunk_user_tags", (tx) => tx.objectStore("chunk_user_tags").delete(id)),
 
     getUserTagsByChunk(chunkId) {
       const tx = db.transaction("chunk_user_tags", "readonly");
@@ -167,35 +175,15 @@ function createPlaintextIndex(db: IDBDatabase): PlaintextIndex {
       return wrapRequest<IndexedUserTag[]>(index.getAll(chunkId));
     },
 
-    async deleteUserTag(id) {
-      const tx = db.transaction("chunk_user_tags", "readwrite");
-      tx.objectStore("chunk_user_tags").delete(id);
-      await wrapTx(tx);
-    },
-
-    async putTag(t) {
-      const tx = db.transaction("tags", "readwrite");
-      tx.objectStore("tags").put(t);
-      await wrapTx(tx);
-    },
+    putTag: (t) => write("tags", (tx) => tx.objectStore("tags").put(t)),
+    deleteTag: (id) => write("tags", (tx) => tx.objectStore("tags").delete(id)),
 
     getTag(id) {
       const tx = db.transaction("tags", "readonly");
       return wrapRequest<IndexedTag | undefined>(tx.objectStore("tags").get(id));
     },
 
-    async deleteTag(id) {
-      const tx = db.transaction("tags", "readwrite");
-      tx.objectStore("tags").delete(id);
-      await wrapTx(tx);
-    },
-
-    async putCorrection(c) {
-      const tx = db.transaction("corrections", "readwrite");
-      tx.objectStore("corrections").put(c);
-      await wrapTx(tx);
-    },
-
+    putCorrection: (c) => write("corrections", (tx) => tx.objectStore("corrections").put(c)),
     async getCorrections() {
       const tx = db.transaction("corrections", "readonly");
       const rows = await wrapRequest<IndexedCorrection[]>(tx.objectStore("corrections").getAll());
@@ -207,49 +195,27 @@ function createPlaintextIndex(db: IDBDatabase): PlaintextIndex {
       const row = await wrapRequest<MetaRow | undefined>(tx.objectStore("meta").get("cursor"));
       return row?.value;
     },
+    setCursor: (value) =>
+      write("meta", (tx) => tx.objectStore("meta").put({ key: "cursor", value } satisfies MetaRow)),
 
-    async setCursor(value) {
-      const tx = db.transaction("meta", "readwrite");
-      tx.objectStore("meta").put({ key: "cursor", value } satisfies MetaRow);
-      await wrapTx(tx);
-    },
+    applyDelta(delta) {
+      const stores: string[] = [];
+      if (delta.chunks) stores.push("chunks");
+      if (delta.userTags) stores.push("chunk_user_tags");
+      if (delta.tags) stores.push("tags");
+      if (delta.corrections) stores.push("corrections");
+      if (delta.cursor !== undefined) stores.push("meta");
+      if (stores.length === 0) return Promise.resolve();
 
-    async applyDelta(delta) {
-      const storeNames: string[] = [];
-      if (delta.chunks) storeNames.push("chunks");
-      if (delta.userTags) storeNames.push("chunk_user_tags");
-      if (delta.tags) storeNames.push("tags");
-      if (delta.corrections) storeNames.push("corrections");
-      if (delta.cursor !== undefined) storeNames.push("meta");
-      if (storeNames.length === 0) return;
-
-      const tx = db.transaction(storeNames, "readwrite");
-
-      if (delta.chunks) {
-        const store = tx.objectStore("chunks");
-        for (const c of delta.chunks.upsert ?? []) store.put(c);
-        for (const id of delta.chunks.delete ?? []) store.delete(id);
-      }
-      if (delta.userTags) {
-        const store = tx.objectStore("chunk_user_tags");
-        for (const t of delta.userTags.upsert ?? []) store.put(t);
-        for (const id of delta.userTags.delete ?? []) store.delete(id);
-      }
-      if (delta.tags) {
-        const store = tx.objectStore("tags");
-        for (const t of delta.tags.upsert ?? []) store.put(t);
-        for (const id of delta.tags.delete ?? []) store.delete(id);
-      }
-      if (delta.corrections) {
-        const store = tx.objectStore("corrections");
-        for (const c of delta.corrections.upsert ?? []) store.put(c);
-        for (const kana of delta.corrections.delete ?? []) store.delete(kana);
-      }
-      if (delta.cursor !== undefined) {
-        tx.objectStore("meta").put({ key: "cursor", value: delta.cursor } satisfies MetaRow);
-      }
-
-      await wrapTx(tx);
+      return write(stores, (tx) => {
+        applySection(tx, "chunks", delta.chunks);
+        applySection(tx, "chunk_user_tags", delta.userTags);
+        applySection(tx, "tags", delta.tags);
+        applySection(tx, "corrections", delta.corrections);
+        if (delta.cursor !== undefined) {
+          tx.objectStore("meta").put({ key: "cursor", value: delta.cursor } satisfies MetaRow);
+        }
+      });
     },
 
     close() {
