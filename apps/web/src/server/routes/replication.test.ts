@@ -14,6 +14,7 @@ import { createApp } from "@zakki/web/server/app.ts";
 import { createAnalysisEvents } from "@zakki/web/server/events.ts";
 import type { Checkpoint, PullResult } from "@zakki/web/server/replication/protocol.ts";
 import type { WireDoc } from "@zakki/web/server/replication/store.ts";
+import { wire } from "@zakki/web/server/replication/test-fixtures.ts";
 
 /**
  * issue #42: RxDB replication の HTTP endpoint（app.test.ts の流儀）。
@@ -46,17 +47,11 @@ function post(path: string, body: unknown): Request {
   });
 }
 
-const wire = (id: string, updatedAt: string, over: Record<string, unknown> = {}): WireDoc => ({
-  id,
-  updatedAt,
-  _deleted: false,
-  content: `enc:${id}`,
-  ...over,
-});
-
+// rows は wire JSON としてそのまま送る（client の Wire 型と server の WireDoc の
+// 結合をテストの型付けで作らないため unknown で受ける。実際の経路も JSON over HTTP）
 const push = (
   collection: string,
-  rows: { assumedMasterState: WireDoc | null; newDocumentState: WireDoc }[],
+  rows: { assumedMasterState: unknown; newDocumentState: unknown }[],
 ) => app.request(post(`/api/replication/${collection}/push`, { rows }));
 
 const pull = (collection: string, checkpoint: Checkpoint | null, limit: number) =>

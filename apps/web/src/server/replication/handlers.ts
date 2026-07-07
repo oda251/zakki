@@ -10,14 +10,18 @@ import type { ReplicationStore, WireDoc } from "@zakki/web/server/replication/st
  * サーバは wire doc の中身を復号せず、暗号文のまま pull/push を仲介するだけ。
  */
 
-/** cp より後の差分を limit 件まで返す（store.listAll → selectChanges） */
+/**
+ * cp より後の差分を limit 件まで返す。絞り込み・順序・limit は SQL 側
+ * （store.listChanges）で行い、checkpoint の算出は protocol の selectChanges に
+ * 委ねる（入力は絞り込み済みなので selectChanges は事実上 checkpoint 算出のみ）。
+ */
 export function handlePull(
   store: ReplicationStore,
   collection: string,
   cp: Checkpoint | null,
   limit: number,
 ): ResultAsync<PullResult<WireDoc>, DbError> {
-  return store.listAll(collection).map((docs) => selectChanges(docs, cp, limit));
+  return store.listChanges(collection, cp, limit).map((docs) => selectChanges(docs, cp, limit));
 }
 
 /**

@@ -15,10 +15,7 @@ export type ChunkDocData = ChunkDoc & { _deleted: boolean };
 export type ChunkUserTagDocData = ChunkUserTagDoc & { _deleted: boolean };
 export type TagDocData = TagDoc & { _deleted: boolean };
 
-// issue #42: server の WireDoc（ReplDoc & Record<string, unknown>）へ構造的に
-// 代入できるよう、`interface` ではなく `type` で宣言する（interface は明示的な
-// index signature を持たない限り index signature 付きの型に代入できないため）。
-export type ChunkWire = {
+export interface ChunkWire {
   id: string;
   parentId: string | null;
   position: number;
@@ -27,22 +24,22 @@ export type ChunkWire = {
   polarity: number | null;
   updatedAt: string;
   _deleted: boolean;
-};
+}
 
-export type ChunkUserTagWire = {
+export interface ChunkUserTagWire {
   id: string;
   chunkId: string;
   name: string;
   nameFingerprint: string;
   _deleted: boolean;
-};
+}
 
-export type TagWire = {
+export interface TagWire {
   id: string;
   name: string;
   nameFingerprint: string;
   _deleted: boolean;
-};
+}
 
 /** チャンク doc → wire。日付チャンクは content を暗号化しない */
 export function chunkPush(fc: FieldCrypto, doc: ChunkDocData): ChunkWire {

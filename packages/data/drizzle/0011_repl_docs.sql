@@ -6,3 +6,5 @@ CREATE TABLE `repl_docs` (
 	`data` text NOT NULL,
 	PRIMARY KEY(`collection`, `id`)
 );
+--> statement-breakpoint
+CREATE INDEX `repl_docs_collection_updated` ON `repl_docs` (`collection`,`updated_at`,`id`);

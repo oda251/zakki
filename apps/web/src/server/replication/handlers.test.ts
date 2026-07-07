@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb } from "@zakki/data/db/connect.ts";
 import { handlePull, handlePush } from "@zakki/web/server/replication/handlers.ts";
-import type { ReplicationStore, WireDoc } from "@zakki/web/server/replication/store.ts";
+import type { ReplicationStore } from "@zakki/web/server/replication/store.ts";
 import { createReplicationStore } from "@zakki/web/server/replication/store.ts";
+import { wire } from "@zakki/web/server/replication/test-fixtures.ts";
 
 /**
  * issue #42: store × protocol の合成（handlePull / handlePush）。
@@ -13,14 +14,6 @@ let store: ReplicationStore;
 beforeEach(async () => {
   const db = await createDb(":memory:");
   store = createReplicationStore(db);
-});
-
-const wire = (id: string, updatedAt: string, over: Record<string, unknown> = {}): WireDoc => ({
-  id,
-  updatedAt,
-  _deleted: false,
-  content: `enc:${id}`,
-  ...over,
 });
 
 describe("handlePull", () => {

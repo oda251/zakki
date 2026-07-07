@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import {
   blob,
+  index,
   integer,
   primaryKey,
   real,
@@ -229,9 +230,10 @@ export const embeddings = sqliteTable("embeddings", {
  * domain schema（chunks/tags 等）に依存せず、collection ごとの wire doc を
  * 不透明な暗号文コンテナとして持つだけの dumb store（#28: サーバは復号しない）。
  *
- * `data` が wire doc（id/updatedAt/_deleted + 任意フィールド）の JSON 全体。
- * `updated_at`/`deleted` は `data` からの冗長な複製で、将来の SQL 側絞り込み
- * （変更分の WHERE 句等）のために持つ（正本は `data`）。
+ * `data` が wire doc（id/updatedAt/_deleted + 任意フィールド）の JSON 全体で正本。
+ * `updated_at` は `data` からの冗長な複製で、pull の差分絞り込み
+ * （checkpoint 反復の WHERE / ORDER BY / LIMIT）に使う。`deleted` も複製で、
+ * 現状読み手は無く、将来の tombstone 整理（compaction）用に持つ。
  */
 export const replDocs = sqliteTable(
   "repl_docs",
@@ -242,7 +244,11 @@ export const replDocs = sqliteTable(
     deleted: integer("deleted", { mode: "boolean" }).notNull(),
     data: text("data").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.collection, t.id] })],
+  (t) => [
+    primaryKey({ columns: [t.collection, t.id] }),
+    // pull の差分クエリ（WHERE collection AND (updated_at, id) > cp ORDER BY 同順）用
+    index("repl_docs_collection_updated").on(t.collection, t.updatedAt, t.id),
+  ],
 );
 
 export type Chunk = typeof chunks.$inferSelect;

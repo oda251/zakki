@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "68e35a8e-1400-4b08-baa2-ecb030af7371",
+  "id": "ee56f83a-d9e2-4301-a9da-74d45b13b131",
   "prevId": "4de672fa-795b-4773-9ddd-3c1c664402ca",
   "tables": {
     "aad_fixups": {
@@ -63,10 +63,7 @@
       "indexes": {
         "chunk_tags_pair": {
           "name": "chunk_tags_pair",
-          "columns": [
-            "chunk_id",
-            "tag_id"
-          ],
+          "columns": ["chunk_id", "tag_id"],
           "isUnique": true
         }
       },
@@ -75,12 +72,8 @@
           "name": "chunk_tags_chunk_id_chunks_id_fk",
           "tableFrom": "chunk_tags",
           "tableTo": "chunks",
-          "columnsFrom": [
-            "chunk_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["chunk_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -88,12 +81,8 @@
           "name": "chunk_tags_tag_id_tags_id_fk",
           "tableFrom": "chunk_tags",
           "tableTo": "tags",
-          "columnsFrom": [
-            "tag_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tag_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -144,10 +133,7 @@
       "indexes": {
         "chunk_user_tags_unique": {
           "name": "chunk_user_tags_unique",
-          "columns": [
-            "chunk_id",
-            "name_fingerprint"
-          ],
+          "columns": ["chunk_id", "name_fingerprint"],
           "isUnique": true
         }
       },
@@ -156,12 +142,8 @@
           "name": "chunk_user_tags_chunk_id_chunks_id_fk",
           "tableFrom": "chunk_user_tags",
           "tableTo": "chunks",
-          "columnsFrom": [
-            "chunk_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["chunk_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -233,17 +215,12 @@
       "indexes": {
         "chunks_parent_position": {
           "name": "chunks_parent_position",
-          "columns": [
-            "parent_id",
-            "position"
-          ],
+          "columns": ["parent_id", "position"],
           "isUnique": true
         },
         "chunks_date_unique": {
           "name": "chunks_date_unique",
-          "columns": [
-            "date"
-          ],
+          "columns": ["date"],
           "isUnique": true,
           "where": "\"date\" IS NOT NULL"
         }
@@ -253,12 +230,8 @@
           "name": "chunks_parent_id_chunks_id_fk",
           "tableFrom": "chunks",
           "tableTo": "chunks",
-          "columnsFrom": [
-            "parent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["parent_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -419,12 +392,8 @@
           "name": "embeddings_chunk_id_chunks_id_fk",
           "tableFrom": "embeddings",
           "tableTo": "chunks",
-          "columnsFrom": [
-            "chunk_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["chunk_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -520,10 +489,7 @@
       "indexes": {
         "links_pair": {
           "name": "links_pair",
-          "columns": [
-            "from_chunk_id",
-            "to_chunk_id"
-          ],
+          "columns": ["from_chunk_id", "to_chunk_id"],
           "isUnique": true
         }
       },
@@ -532,12 +498,8 @@
           "name": "links_from_chunk_id_chunks_id_fk",
           "tableFrom": "links",
           "tableTo": "chunks",
-          "columnsFrom": [
-            "from_chunk_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["from_chunk_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -545,12 +507,8 @@
           "name": "links_to_chunk_id_chunks_id_fk",
           "tableFrom": "links",
           "tableTo": "chunks",
-          "columnsFrom": [
-            "to_chunk_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["to_chunk_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -598,14 +556,17 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "repl_docs_collection_updated": {
+          "name": "repl_docs_collection_updated",
+          "columns": ["collection", "updated_at", "id"],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {
         "repl_docs_collection_id_pk": {
-          "columns": [
-            "collection",
-            "id"
-          ],
+          "columns": ["collection", "id"],
           "name": "repl_docs_collection_id_pk"
         }
       },
@@ -647,9 +608,7 @@
       "indexes": {
         "tags_name_fingerprint_unique": {
           "name": "tags_name_fingerprint_unique",
-          "columns": [
-            "name_fingerprint"
-          ],
+          "columns": ["name_fingerprint"],
           "isUnique": true
         }
       },
