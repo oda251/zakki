@@ -15,9 +15,16 @@ import { sodium } from "@zakki/core/crypto/sodium.ts";
  * 事前に {@link import("@zakki/core/crypto/sodium.ts").ready} を完了させておくこと。
  */
 
-/** ランダムな 32 バイトの DEK を生成する。 */
+/**
+ * DEK の鍵長（バイト）。XChaCha20-Poly1305 の鍵長（`crypto_aead_xchacha20poly1305_ietf_KEYBYTES`
+ * = 32）に一致する。DEK を包む KEK（keyfile / パスフレーズ由来）も同じ AEAD を使うため
+ * 同一長（kdf.ts の導出長・keyfile の生成長がこれを参照する）。
+ */
+export const DEK_BYTES = 32;
+
+/** ランダムな {@link DEK_BYTES} バイトの DEK を生成する。 */
 export function generateDek(): Uint8Array {
-  return sodium.randombytes_buf(32);
+  return sodium.randombytes_buf(DEK_BYTES);
 }
 
 /**

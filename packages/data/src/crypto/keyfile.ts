@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEK_BYTES } from "@zakki/core/crypto/dek.ts";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
+import { APP_DIR } from "@zakki/data/util/paths.ts";
 
 /**
  * ローカルキーファイルによる KEK（鍵暗号鍵）管理（Phase 5 の唯一のアンロック手段）。
@@ -12,11 +14,12 @@ import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
  * KEK の中身は **絶対にログ出力しない**。
  */
 
-const KEYFILE_BYTES = 32;
+// KEK は DEK と同じ AEAD（XChaCha20-Poly1305）の鍵なので、長さも DEK_BYTES（32）と同一。
+const KEYFILE_BYTES = DEK_BYTES;
 
 /** keyfile のパス（`<configHome>/zakki/keyfile`）。configHome は解決済み XDG 設定ディレクトリ */
 export function keyfilePath(configHome: string): string {
-  return join(configHome, "zakki", "keyfile");
+  return join(configHome, APP_DIR, "keyfile");
 }
 
 /**
@@ -33,7 +36,7 @@ export async function loadOrCreateKeyfile(configHome: string): Promise<Uint8Arra
     const buf = readFileSync(path);
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   }
-  mkdirSync(join(configHome, "zakki"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(configHome, APP_DIR), { recursive: true, mode: 0o700 });
   const kek = sodium.randombytes_buf(KEYFILE_BYTES);
   writeFileSync(path, kek, { mode: 0o600 });
   return kek;
