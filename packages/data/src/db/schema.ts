@@ -1,6 +1,15 @@
 import { sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
-import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  blob,
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { AAD } from "@zakki/core/crypto/aad.ts";
 
 /**
@@ -215,6 +224,32 @@ export const embeddings = sqliteTable("embeddings", {
   vector: blob("vector", { mode: "buffer" }).notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+/**
+ * RxDB replication（issue #42, #40）のサーバ側汎用テーブル。
+ * domain schema（chunks/tags 等）に依存せず、collection ごとの wire doc を
+ * 不透明な暗号文コンテナとして持つだけの dumb store（#28: サーバは復号しない）。
+ *
+ * `data` が wire doc（id/updatedAt/_deleted + 任意フィールド）の JSON 全体で正本。
+ * `updated_at` は `data` からの冗長な複製で、pull の差分絞り込み
+ * （checkpoint 反復の WHERE / ORDER BY / LIMIT）に使う。`deleted` も複製で、
+ * 現状読み手は無く、将来の tombstone 整理（compaction）用に持つ。
+ */
+export const replDocs = sqliteTable(
+  "repl_docs",
+  {
+    collection: text("collection").notNull(),
+    id: text("id").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    deleted: integer("deleted", { mode: "boolean" }).notNull(),
+    data: text("data").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.collection, t.id] }),
+    // pull の差分クエリ（WHERE collection AND (updated_at, id) > cp ORDER BY 同順）用
+    index("repl_docs_collection_updated").on(t.collection, t.updatedAt, t.id),
+  ],
+);
 
 export type Chunk = typeof chunks.$inferSelect;
 export type ChunkTag = typeof chunkTags.$inferSelect;

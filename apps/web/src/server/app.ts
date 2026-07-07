@@ -5,6 +5,7 @@ import { chunkRoutes } from "./routes/chunks.ts";
 import { conversionRoutes } from "./routes/convert.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { graphRoutes } from "./routes/graph.ts";
+import { replicationRoutes } from "./routes/replication.ts";
 
 /**
  * API アプリの合成（テスト可能な純関数）。依存は {@link AppDeps} で注入する。
@@ -19,6 +20,7 @@ export function createApp(deps: AppDeps): Hono {
   api.route("/", conversionRoutes(deps));
   api.route("/", graphRoutes(deps));
   api.route("/", eventRoutes(deps));
+  api.route("/replication", replicationRoutes(deps));
 
   app.route(API_BASE, api);
   return app;

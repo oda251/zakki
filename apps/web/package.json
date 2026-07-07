@@ -14,6 +14,7 @@
     "@zakki/backend": "workspace:*",
     "@zakki/core": "workspace:*",
     "@zakki/data": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.9.12",
     "neverthrow": "^8.2.0",
     "react": "^19.2.7",

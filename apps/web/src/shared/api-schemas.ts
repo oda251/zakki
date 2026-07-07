@@ -36,6 +36,34 @@ export const SaveConversionSchema = v.object({ kana: v.string(), converted: v.st
 /** POST /api/conversion/corrections */
 export const SaveCorrectionSchema = v.object({ kana: v.string(), chosen: v.string() });
 
+// --- replication（server/routes/replication.ts, issue #42） ---
+
+/**
+ * wire doc: id/updatedAt/_deleted は必須。他フィールドは暗号文（#28）なので
+ * 中身は検査せず passthrough する（looseObject）。
+ */
+export const WireDocSchema = v.looseObject({
+  id: v.string(),
+  updatedAt: v.string(),
+  _deleted: v.boolean(),
+});
+
+/** POST /api/replication/:collection/pull */
+export const ReplicationPullSchema = v.object({
+  checkpoint: v.nullable(v.object({ id: v.string(), updatedAt: v.string() })),
+  limit: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+
+/** POST /api/replication/:collection/push */
+export const ReplicationPushSchema = v.object({
+  rows: v.array(
+    v.object({
+      assumedMasterState: v.nullable(WireDocSchema),
+      newDocumentState: WireDocSchema,
+    }),
+  ),
+});
+
 // --- 派生型（client の送信形はここから得る） ---
 
 export type DateChunkRequest = v.InferInput<typeof DateChunkSchema>;

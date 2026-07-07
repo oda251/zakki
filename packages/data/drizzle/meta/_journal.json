@@ -78,6 +78,13 @@
       "when": 1783432800000,
       "tag": "0010_chunk_tree",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1783440000000,
+      "tag": "0011_repl_docs",
+      "breakpoints": true
     }
   ]
 }
