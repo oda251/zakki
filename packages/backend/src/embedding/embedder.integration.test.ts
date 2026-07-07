@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { cosine } from "@zakki/data/embedding/vector.ts";
-import { EMBEDDING_DIMS } from "@zakki/core/embedding/types.ts";
-import { createRuriEmbedder } from "./embedder.ts";
+import { createRuriEmbedder, EMBEDDING_DIMS } from "./embedder.ts";
 
 // ruri-v3-30m（非公式 ONNX、q8）の実モデル統合テスト。
 // 初回はモデルダウンロードが走る（約37MB、以後キャッシュ）ため、

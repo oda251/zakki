@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { API_BASE } from "@zakki/web/shared/api-base.ts";
 import type { AppDeps } from "./deps.ts";
 import { chunkRoutes } from "./routes/chunks.ts";
 import { conversionRoutes } from "./routes/convert.ts";
@@ -19,6 +20,6 @@ export function createApp(deps: AppDeps): Hono {
   api.route("/", graphRoutes(deps));
   api.route("/", eventRoutes(deps));
 
-  app.route("/api", api);
+  app.route(API_BASE, api);
   return app;
 }

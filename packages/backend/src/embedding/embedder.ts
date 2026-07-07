@@ -8,7 +8,18 @@ import type { Embedder } from "@zakki/core/embedding/types.ts";
  * 意味類似にはプレフィックスなしの入力を使う（ruri-v3 の 1+3 プレフィックス方式）。
  */
 
-export const EMBEDDING_MODEL = "sirasagi62/ruri-v3-30m-ONNX";
+/** DB（embeddings.model 列）へ永続化する embedder 名（data/embedding/store.ts が保存する） */
+export const EMBEDDING_MODEL_NAME = "ruri-v3-30m";
+
+/** transformers.js へ渡す Hugging Face 上のモデル識別子（{@link EMBEDDING_MODEL_NAME} の非公式 ONNX 版） */
+export const EMBEDDING_MODEL = `sirasagi62/${EMBEDDING_MODEL_NAME}-ONNX`;
+
+/**
+ * このモデルの出力次元。実行時のベクトル復元は buffer 長から次元を導く
+ * （data/embedding/vector.ts）ため、これはモデル契約の検証用
+ * （warmup / 統合テスト）にのみ使う。
+ */
+export const EMBEDDING_DIMS = 256;
 
 type FeatureExtractor = Awaited<ReturnType<typeof pipeline<"feature-extraction">>>;
 
@@ -34,7 +45,7 @@ export function createRuriEmbedder(): Embedder {
     return loading;
   };
   return {
-    name: "ruri-v3-30m",
+    name: EMBEDDING_MODEL_NAME,
     async embed(texts: string[]): Promise<Float32Array[]> {
       if (texts.length === 0) {
         return [];

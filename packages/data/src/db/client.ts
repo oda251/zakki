@@ -5,6 +5,7 @@ import type { Client } from "@libsql/client";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
+import { APP_DIR } from "@zakki/data/util/paths.ts";
 import * as schema from "./schema.ts";
 
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -19,7 +20,7 @@ const MIGRATIONS_FOLDER = join(import.meta.dir, "..", "..", "drizzle");
 
 /** 既定の DB パス。dataHome は解決済みの XDG データディレクトリ（合成点が渡す） */
 export function defaultDbPath(dataHome: string): string {
-  return join(dataHome, "zakki", "zakki.sqlite");
+  return join(dataHome, APP_DIR, "zakki.sqlite");
 }
 
 /**

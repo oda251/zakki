@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as v from "valibot";
 import type { Identity } from "@zakki/core/identity/types.ts";
+import { APP_DIR } from "@zakki/data/util/paths.ts";
 
 /** 設定ファイル（identity.json）の許容スキーマ。いずれも任意。未知キーは無視 */
 const IdentityFileSchema = v.object({
@@ -21,7 +22,7 @@ export interface IdentityOverrides {
 
 /** 設定ファイルのパス（<configHome>/zakki/identity.json） */
 export function identityConfigPath(configHome: string): string {
-  return join(configHome, "zakki", "identity.json");
+  return join(configHome, APP_DIR, "identity.json");
 }
 
 /**

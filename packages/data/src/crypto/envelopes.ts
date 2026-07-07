@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { unwrapDek, wrapDek } from "@zakki/core/crypto/dek.ts";
-import { deriveKey, generateSalt } from "@zakki/core/crypto/kdf.ts";
+import { defaultKdfParams, deriveKey, generateSalt } from "@zakki/core/crypto/kdf.ts";
 import { sodium } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { EnvelopeKind } from "@zakki/data/db/schema.ts";
@@ -20,9 +20,9 @@ import { keyEnvelopes } from "@zakki/data/db/schema.ts";
  * 事前に {@link import("@zakki/core/crypto/sodium.ts").ready} 完了が前提。
  */
 
-/** 既定の Argon2id パラメータ（INTERACTIVE プリセット）。封筒ごとに保存する。 */
-const DEFAULT_OPS = sodium.crypto_pwhash_OPSLIMIT_INTERACTIVE;
-const DEFAULT_MEM = sodium.crypto_pwhash_MEMLIMIT_INTERACTIVE;
+// 既定の Argon2id パラメータは core 側の defaultKdfParams()（INTERACTIVE プリセット）が
+// SSOT（issue #56）。sodium 定数は ready 後にしか値が入らないため、モジュール評価時に
+// 捕捉せず各関数の呼び出し時に読む。封筒には使ったパラメータを保存する。
 
 /** Buffer ⇄ Uint8Array のゼロコピー写し（drizzle blob は Buffer で返る）。 */
 function toBytes(buf: Buffer): Uint8Array {
@@ -80,22 +80,24 @@ export async function addPassphraseEnvelope(
   passphrase: string,
 ): Promise<void> {
   const salt = generateSalt();
-  const kek = deriveKey(passphrase, salt, DEFAULT_OPS, DEFAULT_MEM);
+  const { opsLimit, memLimit } = defaultKdfParams();
+  const kek = deriveKey(passphrase, salt, opsLimit, memLimit);
   await upsertEnvelope(db, "passphrase", wrapDek(dek, kek), {
     salt,
-    ops: DEFAULT_OPS,
-    mem: DEFAULT_MEM,
+    ops: opsLimit,
+    mem: memLimit,
   });
 }
 
 /** リカバリコードから KEK を導出して DEK を wrap し、kind='recovery' を upsert する。 */
 export async function addRecoveryEnvelope(db: Db, dek: Uint8Array, code: string): Promise<void> {
   const salt = generateSalt();
-  const kek = deriveKey(code, salt, DEFAULT_OPS, DEFAULT_MEM);
+  const { opsLimit, memLimit } = defaultKdfParams();
+  const kek = deriveKey(code, salt, opsLimit, memLimit);
   await upsertEnvelope(db, "recovery", wrapDek(dek, kek), {
     salt,
-    ops: DEFAULT_OPS,
-    mem: DEFAULT_MEM,
+    ops: opsLimit,
+    mem: memLimit,
   });
 }
 
@@ -157,8 +159,8 @@ async function unlockWithDerived(
   if (row === undefined || row.kdfSalt === null) {
     throw new Error(`${kind} envelope not found`);
   }
-  const ops = row.kdfOps ?? DEFAULT_OPS;
-  const mem = row.kdfMem ?? DEFAULT_MEM;
+  const ops = row.kdfOps ?? defaultKdfParams().opsLimit;
+  const mem = row.kdfMem ?? defaultKdfParams().memLimit;
   const kek = deriveKey(secret, toBytes(row.kdfSalt), ops, mem);
   return unwrapDek(toBytes(row.wrappedDek), kek);
 }

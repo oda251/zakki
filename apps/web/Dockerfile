@@ -44,7 +44,10 @@ RUN if [ "$WITH_ZENZ" = "1" ]; then \
 WORKDIR /app
 COPY --from=build /app /app
 
-# DB・キーファイルは /data（volume）へ。anco/zenz は env で /opt を指す
+# DB・キーファイルは /data（volume）へ。anco/zenz は env で /opt を指す。
+# 3777 の既定値定義は packages/core/src/config/env.ts の DEFAULT_WEB_PORT（issue #56）。
+# Dockerfile からは TS を参照できないため、変更時はここ（ENV/EXPOSE）と
+# docker-compose.yml の ports も揃える
 ENV XDG_DATA_HOME=/data \
     ZAKKI_ANCO_PATH=/opt/zakki/anco/anco \
     ZAKKI_ZENZ_PATH=/opt/zakki/models/zenz-v3.1-small-Q5_K_M.gguf \

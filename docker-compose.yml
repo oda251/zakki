@@ -7,6 +7,8 @@ services:
       #   WITH_ZENZ: "1"        # zenz GGUF（文脈校正）を焼く場合
       #   WARMUP_EMBEDDER: "0"  # embedding モデルの焼き込みを省く場合
     ports:
+      # 3777 の既定値定義は packages/core/src/config/env.ts の DEFAULT_WEB_PORT（issue #56）。
+      # compose からは TS を参照できないため、変更時はここと apps/web/Dockerfile も揃える
       - "3777:3777"
     volumes:
       - zakki-data:/data
