@@ -6,11 +6,12 @@ import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import { docId, numId } from "@zakki/web/client/db/ids.ts";
 import { getOrCreateDateChunkDoc, saveChildrenDocs } from "@zakki/web/client/db/writes.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
-import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /**
  * issue #44: buffer store の RxDB 移行。GET /api/chunks/date・GET /api/chunks/:id を
  * 廃し、ローカル RxDB（リロード時は IndexedDB レプリカ）からバッファを復元する。
+ * どのチャンクを開くかは URL が SSOT（#52）: openToday / openChunk は router の
+ * controller が呼び、グラフ store への手動同期は無い（ドリル位置は URL から導出）。
  */
 let dbs: ZakkiDatabase[] = [];
 async function open(): Promise<ZakkiDatabase> {
@@ -22,12 +23,11 @@ async function open(): Promise<ZakkiDatabase> {
 beforeEach(() => {
   useBufferStore.setState({
     db: null,
-    current: null,
+    currentId: null,
     initialRaw: null,
     initialChunkIds: [],
     error: null,
   });
-  useGraphStore.setState({ drillId: null, selectedNodeId: null });
 });
 
 afterEach(async () => {
@@ -38,19 +38,19 @@ afterEach(async () => {
 const T1 = "2026-07-07T00:00:01.000Z";
 
 describe("useBufferStore", () => {
-  test("openToday: 日付チャンクを作成してバッファに開き、グラフをドリルする", async () => {
+  test("openToday: 日付チャンクを作成してバッファに開く", async () => {
     const db = await open();
     useBufferStore.getState().connect(db);
     await useBufferStore.getState().openToday();
 
     const today = localDate();
     const state = useBufferStore.getState();
-    expect(state.current?.date).toBe(today);
+    const doc = await db.chunks.findOne({ selector: { date: today } }).exec();
+    expect(doc).not.toBeNull();
+    expect(state.currentId).toBe(numId(doc?.id ?? ""));
     expect(state.initialRaw).toBe("");
     expect(state.initialChunkIds).toEqual([]);
     expect(state.error).toBeNull();
-    expect(useGraphStore.getState().drillId).toBe(state.current?.id ?? null);
-    expect(await db.chunks.findOne({ selector: { date: today } }).exec()).not.toBeNull();
   });
 
   test("openChunk: 子チャンクから initialRaw / initialChunkIds を再構成する", async () => {
@@ -66,7 +66,7 @@ describe("useBufferStore", () => {
 
     await useBufferStore.getState().openChunk(numId(parent.id));
     const state = useBufferStore.getState();
-    expect(state.current?.id).toBe(numId(parent.id));
+    expect(state.currentId).toBe(numId(parent.id));
     expect(state.initialRaw).toBe(buildRaw(["一", "二"]));
     expect(state.initialChunkIds).toEqual(children.map((c) => numId(c.id)));
   });
@@ -78,6 +78,33 @@ describe("useBufferStore", () => {
     expect(useBufferStore.getState().error).toContain("999");
   });
 
+  test("連打ナビ: A→B の連続要求は応答順によらず B（最後の要求）が勝つ", async () => {
+    const db = await open();
+    useBufferStore.getState().connect(db);
+    const a = await getOrCreateDateChunkDoc(db, "2026-07-06", T1);
+    const b = await getOrCreateDateChunkDoc(db, "2026-07-07", T1);
+
+    const first = useBufferStore.getState().openChunk(numId(a.id));
+    const second = useBufferStore.getState().openChunk(numId(b.id));
+    await Promise.all([first, second]);
+    expect(useBufferStore.getState().currentId).toBe(numId(b.id));
+  });
+
+  test("連打ナビ: 旧要求の応答が後着しても新要求の状態を上書きしない（世代トークン）", async () => {
+    const db = await open();
+    useBufferStore.getState().connect(db);
+    const a = await getOrCreateDateChunkDoc(db, "2026-07-06", T1);
+
+    // A（正常・await 2 回で遅い）→ 999（存在せず・await 1 回で速い）を連続要求。
+    // 世代トークンが無いと A の後着応答が currentId / error を巻き戻す
+    const first = useBufferStore.getState().openChunk(numId(a.id));
+    const second = useBufferStore.getState().openChunk(999);
+    await Promise.all([first, second]);
+    const state = useBufferStore.getState();
+    expect(state.error).toContain("999");
+    expect(state.currentId).toBeNull();
+  });
+
   test("docId round-trip: 大きなクライアント採番 id でも開ける", async () => {
     const db = await open();
     useBufferStore.getState().connect(db);
@@ -85,7 +112,7 @@ describe("useBufferStore", () => {
     const children = await saveChildrenDocs(db, parent.id, [{ content: "深い" }], T1);
     const childId = numId(children[0]?.id ?? "");
     await useBufferStore.getState().openChunk(childId);
-    expect(useBufferStore.getState().current?.id).toBe(childId);
+    expect(useBufferStore.getState().currentId).toBe(childId);
     expect(docId(childId)).toBe(children[0]?.id ?? "");
   });
 });

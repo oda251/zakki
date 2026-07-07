@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { chunkText, makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
@@ -10,22 +10,24 @@ import { applyKey } from "@zakki/core/input/controller.ts";
 import { createEditorStore } from "@zakki/core/input/store.ts";
 import { api } from "@zakki/web/client/api/client.ts";
 import { chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
-import { chainLinks, newChunkIds } from "@zakki/web/client/composer/auto-link.ts";
+import { newChunkIds, planAutoLink } from "@zakki/web/client/composer/auto-link.ts";
 import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { docId, numId } from "@zakki/web/client/db/ids.ts";
 import { addLinkDocs, saveChildrenDocs, upsertCorrection } from "@zakki/web/client/db/writes.ts";
-import type { BufferChunk } from "@zakki/web/client/store/buffer.ts";
-import { useGraphStore } from "@zakki/web/client/store/graph.ts";
+import { currentHref } from "@zakki/web/client/router/history.ts";
+import { selectNode } from "@zakki/web/client/router/navigate.ts";
+import { parseRoute } from "@zakki/web/client/router/route.ts";
+import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 
 type SaveState = "saved" | "dirty" | "error";
 
 interface ComposerProps {
   /** 保存先のローカル RxDB（#44）。replication が非同期にサーバへ反映する */
   db: ZakkiDatabase;
-  /** 現在のバッファ（親チャンク）。id が子チャンクの保存先（docs/CHUNKS.md §入力・保存） */
-  parent: BufferChunk;
+  /** 現在のバッファ（親チャンク）の id = 子チャンクの保存先（docs/CHUNKS.md §入力・保存） */
+  parentId: number;
   initialRaw: string;
   /** ロード時点の既存チャンク id（初回保存で全チャンクが「新規」扱いになるのを防ぐ） */
   initialChunkIds: readonly number[];
@@ -40,13 +42,16 @@ interface ComposerProps {
  * - ASCII 打鍵 → applyKey（ローマ字ログ）
  * - IME（compositionend）・ペースト → wrapPaste で凍結リテラル直行（docs/RECORDS.md）
  *
+ * 保存は effect で state を監視せず、入力イベント（と変換の onUpdate）から
+ * デバウンス保存関数を直接叩く（issue #52。useEffect なし）。
+ *
  * docs の「PC 判定（UA）」ゲートは未実装（スコープ判断）: モバイルの仮想キーボードは
  * ほぼ composition イベント経由で入力されるため上記 2 ルートで吸収できる。物理キーボード
  * 接続のモバイル等で挙動を分けたくなったら UA 判定を足す。
  */
 export function Composer({
   db,
-  parent,
+  parentId,
   initialRaw,
   initialChunkIds,
   corrections,
@@ -65,36 +70,82 @@ export function Composer({
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [message, setMessage] = useState("");
   const [focused, setFocused] = useState(false);
-  const editInputRef = useRef<HTMLInputElement | null>(null);
   // 自動リンク（数珠繋ぎ）の「新規」判定基準。保存応答のたびに更新する
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
-  // 新規チャンクを「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す。
-  // リンクは links コレクションへ永続化し（#77）、グラフへは liveQuery 購読で
-  // 反映される（replication が非同期にサーバへ push する）
+  // 新規チャンクを「選択中の投稿」（保存予約時点の ?select=）から数珠繋ぎに自動リンクし、
+  // 選択を最新へ移す。リンクは links コレクションへ永続化し（#77）、グラフへは
+  // liveQuery 購読で反映される（replication が非同期にサーバへ push する）。
+  // バッファ切替後に後着した保存では planAutoLink が null を返し、切替先への
+  // 誤リンク・?select= の誤上書きをしない（保存本体は走らせてデータを保全する）
   const linkNewChunks = useCallback(
-    (savedChunks: readonly { id: number }[]) => {
+    (savedChunks: readonly { id: number }[], anchor: number | null) => {
       const fresh = newChunkIds(knownChunkIds.current, savedChunks);
       knownChunkIds.current = savedChunks.map((c) => c.id);
-      if (fresh.length === 0) return;
-      const anchor = useGraphStore.getState().selectedNodeId;
-      void addLinkDocs(db, chainLinks(anchor, fresh)).catch((e: unknown) => {
+      const plan = planAutoLink({
+        parentId,
+        anchor,
+        chunk: parseRoute(currentHref()).chunk,
+        currentId: useBufferStore.getState().currentId,
+        freshIds: fresh,
+      });
+      if (plan === null) return;
+      void addLinkDocs(db, plan.links).catch((e: unknown) => {
         setMessage(`リンクの保存に失敗: ${errorMessage(e)}`);
       });
-      useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
+      selectNode(plan.select);
     },
-    [db],
+    [db, parentId],
   );
 
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();
 
-  // 変換合成（機能ロジック）は core と共有し、副作用（永続化・エラー表示）だけ注入する
+  // 保存: 300ms デバウンスで凍結 → 変換 → ローカル RxDB へ投影（#44）。
+  // グラフは liveQuery 購読で自動反映されるため楽観的更新は不要。
+  // サーバへは replication が非同期に push する。呼び出し元は入力イベントハンドラと
+  // 変換の onUpdate（非同期変換の確定・候補ローテーション）。バッファ切替で
+  // アンマウントされても保留中の保存はそのまま走らせ、直前の入力を失わない。
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const conversionRef = useRef<ReturnType<typeof createConversionSession> | null>(null);
+  const scheduleSave = useCallback(() => {
+    // アンカー（数珠繋ぎの起点）は予約時点で捕捉する: 発火（300ms 後）までにバッファが
+    // 切り替わっても、切替先 URL の ?select= を誤って読まない（PR #79 レビュー対応）
+    const anchor = parseRoute(currentHref()).select;
+    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
+      const session = conversionRef.current;
+      if (session === null) return;
+      const frozen = freezeLiveTail(store.getState().raw, session.convertSettled);
+      if (frozen.changed) {
+        setRaw(frozen.raw);
+      }
+      const converted = session.convertRaw(store.getState().raw).text;
+      saveChildrenDocs(db, docId(parentId), chunkText(converted))
+        .then((saved) => {
+          setSaveState("saved");
+          linkNewChunks(
+            saved.map((c) => ({ id: numId(c.id) })),
+            anchor,
+          );
+        })
+        .catch((e: unknown) => {
+          setSaveState("error");
+          setMessage(errorMessage(e));
+        });
+    }, SAVE_DEBOUNCE_MS);
+  }, [store, setRaw, db, parentId, linkNewChunks]);
+
+  // 変換合成（機能ロジック）は core と共有し、副作用（永続化・エラー表示・再保存）だけ注入する
   const conversion = useMemo(
     () =>
       createConversionSession(remoteEngine, {
         corrections,
         cache: conversionCache,
-        onUpdate: bump,
+        onUpdate: () => {
+          bump();
+          scheduleSave();
+        },
         onError: (m) => setMessage(`変換エラー: ${m}`),
         onConverted: (kana, conv) => {
           void api.saveConversion(kana, conv).catch(() => setMessage("変換キャッシュの保存に失敗"));
@@ -103,7 +154,18 @@ export function Composer({
           void upsertCorrection(db, kana, chosen).catch(() => setMessage("学習の保存に失敗"));
         },
       }),
-    [corrections, conversionCache, bump, db],
+    [corrections, conversionCache, bump, scheduleSave, db],
+  );
+  conversionRef.current = conversion;
+
+  // raw の編集（＝保存対象の変化）を一手に引き受け、dirty 表示とデバウンス保存を駆動する
+  const editRaw = useCallback(
+    (next: string) => {
+      setRaw(next);
+      setSaveState("dirty");
+      scheduleSave();
+    },
+    [setRaw, scheduleSave],
   );
 
   // 追記入力（ゲート通過後の ASCII 打鍵）
@@ -116,52 +178,23 @@ export function Composer({
       e.preventDefault();
       const action = applyKey(store.getState().raw, key);
       if (action.type === "edit") {
-        setRaw(action.raw);
-        setSaveState("dirty");
+        editRaw(action.raw);
       } else if (action.type === "rotate") {
-        conversion.rotateLastSegment(store.getState().raw);
+        conversion.rotateLastSegment(store.getState().raw); // 保存は onUpdate 経由
       }
       // open-search / exit は TUI 専用（web ではブラウザ機能に任せる）
     },
-    [store, setRaw, conversion],
+    [store, editRaw, conversion],
   );
 
   // IME 確定・ペースト → 凍結リテラル直行（打鍵ペースト扱い, docs/RECORDS.md）
   const appendLiteral = useCallback(
     (text: string) => {
       if (text === "") return;
-      setRaw(store.getState().raw + wrapPaste(text));
-      setSaveState("dirty");
+      editRaw(store.getState().raw + wrapPaste(text));
     },
-    [store, setRaw],
+    [store, editRaw],
   );
-
-  // 保存: 300ms デバウンスで凍結 → 変換 → ローカル RxDB へ投影（#44）。
-  // グラフは liveQuery 購読で自動反映されるため楽観的更新は不要。
-  // サーバへは replication が非同期に push する
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const frozen = freezeLiveTail(store.getState().raw, conversion.convertSettled);
-      if (frozen.changed) {
-        setRaw(frozen.raw);
-      }
-      const current = store.getState().raw;
-      const converted = conversion.convertRaw(current).text;
-      saveChildrenDocs(db, docId(parent.id), chunkText(converted))
-        .then((saved) => {
-          setSaveState("saved");
-          linkNewChunks(saved.map((c) => ({ id: numId(c.id) })));
-        })
-        .catch((e: unknown) => {
-          setSaveState("error");
-          setMessage(errorMessage(e));
-        });
-    }, SAVE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-    // 依存は parent.id のみ（保存先キー）。同一 id のまま buffer store が current を新
-    // オブジェクトで差し替える経路（rename 後の openChunk 等）があり、オブジェクト依存だと
-    // 保留中の保存デバウンスが無意味に破棄・張り直しされるため素性で依存させる
-  }, [raw, conversionVersion, db, parent.id, store, setRaw, conversion, linkNewChunks]);
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
   const openEdit = useCallback(
@@ -176,29 +209,21 @@ export function Composer({
     [setEditing],
   );
 
-  useEffect(() => {
-    if (editing !== null) {
-      editInputRef.current?.focus();
-    }
-  }, [editing]);
-
   const commitEdit = useCallback(() => {
     const current = store.getState().editing;
     if (current === null || current.target.kind !== "main") return;
     // 空のまま確定は元に戻す（削除しない, docs/PANES.md §5）
     const text = current.text.trim() === "" ? current.old : current.text;
-    setRaw(replaceBlock(store.getState().raw, current.target.start, current.target.end, text));
+    editRaw(replaceBlock(store.getState().raw, current.target.start, current.target.end, text));
     setEditing(null);
-    setSaveState("dirty");
-  }, [store, setRaw, setEditing]);
+  }, [store, editRaw, setEditing]);
 
   const deleteChunk = useCallback(
     (block: { start: number; end: number }) => {
-      setRaw(replaceBlock(store.getState().raw, block.start, block.end, ""));
+      editRaw(replaceBlock(store.getState().raw, block.start, block.end, ""));
       setEditing(null);
-      setSaveState("dirty");
     },
-    [store, setRaw, setEditing],
+    [store, editRaw, setEditing],
   );
 
   // 表示: 確定チャンク列（行グループ単位、DB チャンクと 1:1）+ ライブ末尾
@@ -233,9 +258,9 @@ export function Composer({
         editingStart === block.start && editing !== null ? (
           <input
             key={`edit-${block.start}`}
-            ref={editInputRef}
             className="composer__edit"
             value={editing.text}
+            autoFocus
             onChange={(e) => setEditing({ ...editing, text: e.target.value })}
             onKeyDown={(e) => {
               e.stopPropagation();
