@@ -1,5 +1,6 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
+import { syncWithAnalysisReset } from "@zakki/backend/analysis/service.ts";
 import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { loadConversionCache } from "@zakki/data/conversion/cache.ts";
 import { loadCorrections } from "@zakki/data/conversion/corrections.ts";
@@ -36,6 +37,9 @@ const configHome = xdgConfigHome(config.xdgConfigHome);
 // 開く処理はオフライン安全（ネットワーク I/O なし）。
 const identity = resolveLocalIdentity(config, configHome);
 const { db, sync } = await openDb(identity, defaultDbPath(dataHome));
+// sync がリモートの変更を取り込んだら増分解析のスナップショットを破棄する（issue #55）。
+// 以降の sync 呼び出し（起動時・保存後の App 内）はすべてこのラッパを通す。
+const syncAndReset = syncWithAnalysisReset({ db, sync });
 // E2E 暗号はオプトイン（ZAKKI_ENCRYPTION=1）。有効時は keyfile の KEK でまず無言
 // アンロックを試み、初回は DEK を生成してキーファイル／パスフレーズ／リカバリ封筒を
 // 作る（リカバリコードを一度だけ表示）。キーファイルが使えない場合はパスフレーズを
@@ -74,7 +78,7 @@ try {
 }
 // 起動時の同期はベストエフォート。オフラインや未設定は正常系なので、失敗しても
 // 起動は続行する（ローカルレプリカでそのまま動く）。
-await sync();
+await syncAndReset();
 const date = localDate();
 // 当日の日付チャンク（トップレベル）を用意し、その直下の子チャンクからバッファ（raw）を
 // 再構成する（docs/CHUNKS.md）。raw / converted 列は廃止したため、子チャンクの content が
@@ -120,6 +124,6 @@ createRoot(renderer).render(
     corrections={corrections}
     conversionCache={conversionCache}
     embedder={embedder}
-    sync={sync}
+    sync={syncAndReset}
   />,
 );

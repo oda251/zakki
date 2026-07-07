@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { syncWithAnalysisReset } from "@zakki/backend/analysis/service.ts";
 import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import type { ZakkiConfig } from "@zakki/core/config/env.ts";
@@ -34,6 +35,9 @@ export async function bootstrapServer(
 
   const identity = resolveLocalIdentity(config, configHome);
   const { db, sync } = await openDb(identity, defaultDbPath(dataHome));
+  // sync がリモートの変更を取り込んだら増分解析のスナップショットを破棄する（issue #55）。
+  // 以降の sync 呼び出しはすべてこのラッパを通す（単一ライタ前提の強制）。
+  const syncAndReset = syncWithAnalysisReset({ db, sync });
 
   if (config.encryption) {
     const keyfileKek = await loadOrCreateKeyfile(configHome);
@@ -54,7 +58,7 @@ export async function bootstrapServer(
   // アンロック済み・暗号 OFF（封筒なし）の DB では no-op。
   await assertCryptoReady(db);
 
-  await sync();
+  await syncAndReset();
 
   const engine = resolveDefaultEngine(config, dataHome);
   const embedder = resolveDefaultEmbedder(config.noEmbedding);

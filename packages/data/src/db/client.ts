@@ -13,9 +13,18 @@ import type * as schema from "./schema.ts";
  */
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
 
+/**
+ * sync 1 回分の結果（issue #55）。pulled=true はリモートのフレームを適用し、
+ * ローカル DB が「本プロセスの書き込み以外」で変化したことを示す。呼び出し側は
+ * これを見て増分解析のスナップショットを破棄する（単一ライタ前提の回復）。
+ */
+export interface SyncOutcome {
+  readonly pulled: boolean;
+}
+
 /** アプリが使う DB ハンドル。クエリ用の Db と、ベストエフォートの同期口を持つ */
 export interface DbHandle {
   readonly db: Db;
-  /** リモートプライマリと push/pull する。ローカル専用なら no-op の Ok を返す */
-  readonly sync: () => Promise<Result<void, DbError>>;
+  /** リモートプライマリと push/pull する。ローカル専用なら no-op の Ok（pulled=false）を返す */
+  readonly sync: () => Promise<Result<SyncOutcome, DbError>>;
 }

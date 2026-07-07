@@ -8,7 +8,7 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import type { Result } from "neverthrow";
 import { ok } from "neverthrow";
 import type { Identity } from "@zakki/core/identity/types.ts";
-import type { Db, DbHandle } from "@zakki/data/db/client.ts";
+import type { Db, DbHandle, SyncOutcome } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { APP_DIR } from "@zakki/data/util/app-dir.ts";
@@ -115,13 +115,18 @@ export async function openDb(identity: Identity, dbPath: string): Promise<DbHand
   }
   const { db } = await openClient(dbPath);
   await migrateDb(db);
-  // ローカル専用: 同期先が無いので no-op
-  return { db, sync: () => Promise.resolve(ok(undefined)) };
+  // ローカル専用: 同期先が無いので no-op（取り込みなし）
+  return { db, sync: () => Promise.resolve(ok({ pulled: false })) };
 }
 
-/** embedded replica の同期。エラーは DbError に写す（呼び出し側がベストエフォート判断する） */
-async function syncReplica(client: Client): Promise<Result<void, DbError>> {
+/**
+ * embedded replica の同期。エラーは DbError に写す（呼び出し側がベストエフォート判断する）。
+ * pull 結果（Replicated.frames_synced）から「リモートのフレームを実際に適用したか」を
+ * 返す（issue #55）。0 / undefined は no-op で、増分解析の基準は破れていない。
+ */
+async function syncReplica(client: Client): Promise<Result<SyncOutcome, DbError>> {
   return await tryDbAsync(async () => {
-    await client.sync();
+    const replicated = await client.sync();
+    return { pulled: replicated !== undefined && replicated.frames_synced > 0 };
   });
 }
