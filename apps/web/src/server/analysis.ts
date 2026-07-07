@@ -1,9 +1,7 @@
 import { runAnalysisPass } from "@zakki/backend/analysis/pass.ts";
+import { ANALYZE_DEBOUNCE_MS } from "@zakki/core/config/timing.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import type { Db } from "@zakki/data/db/client.ts";
-
-/** 保存（キーストローク単位）より粗くてよい解析のデバウンス間隔 */
-export const ANALYZE_DEBOUNCE_MS = 2000;
 
 export interface AnalysisScheduler {
   /** 保存成功後に呼ぶ。デバウンスして解析パスを 1 回にまとめる */

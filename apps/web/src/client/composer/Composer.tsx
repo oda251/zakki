@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { SAVE_DEBOUNCE_MS } from "@zakki/core/config/timing.ts";
 import { createConversionSession } from "@zakki/core/conversion/compose.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { freezeLiveTail, replaceBlock, splitDisplay } from "@zakki/core/entry/records.ts";
@@ -13,9 +14,6 @@ import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 import type { Chunk } from "@zakki/web/shared/api-types.ts";
-
-/** キーストローク単位の永続化（TUI と同じ間合い, apps/tui/src/tui/App.tsx） */
-const SAVE_DEBOUNCE_MS = 300;
 
 type SaveState = "saved" | "dirty" | "error";
 

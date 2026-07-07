@@ -4,6 +4,7 @@ import { useKeyboard, usePaste, useRenderer } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { runAnalysisPass } from "@zakki/backend/analysis/pass.ts";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { ANALYZE_DEBOUNCE_MS, SAVE_DEBOUNCE_MS } from "@zakki/core/config/timing.ts";
 import { fmtPolarity, moodColor, scoreSentiment } from "@zakki/core/analysis/sentiment.ts";
 import { saveConversion } from "@zakki/data/conversion/cache.ts";
 import { saveCorrection } from "@zakki/data/conversion/corrections.ts";
@@ -50,10 +51,6 @@ import { computeBarTarget, useBarCursor, type BarCursorTarget } from "./native-c
 import { selectAmbient, type AmbientItem } from "./ambient.ts";
 import { planEditCommit, type EditPlan } from "./edit-plan.ts";
 
-/** キーストローク単位の永続化（docs/CONCEPT.md）。打鍵停止後この時間で保存する */
-const SAVE_DEBOUNCE_MS = 300;
-/** 解析（タグ・関連・埋め込み）と vault への反映は保存より粗くてよい */
-const ANALYZE_EXPORT_DEBOUNCE_MS = 2000;
 const SEARCH_RESULT_LIMIT = 8;
 /** 全文ヒットと重複しない「意味が近い」補足の最大件数 */
 const MAX_SEMANTIC_EXTRA = 4;
@@ -718,7 +715,7 @@ export function App({
           if (backgroundTimer.current !== null) {
             clearTimeout(backgroundTimer.current);
           }
-          backgroundTimer.current = setTimeout(runBackgroundPass, ANALYZE_EXPORT_DEBOUNCE_MS);
+          backgroundTimer.current = setTimeout(runBackgroundPass, ANALYZE_DEBOUNCE_MS);
         },
         (e) => {
           setSaveState("error");
