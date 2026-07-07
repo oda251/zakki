@@ -9,7 +9,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { analyzeAll } from "@zakki/backend/analysis/service.ts";
 import { fmtPolarity, moodLabel } from "@zakki/core/analysis/sentiment.ts";
-import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/connect.ts";
 import { dailySentiment } from "@zakki/data/chunk/queries.ts";
 import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import { loadConfigOrExit } from "@zakki/tui/config.ts";

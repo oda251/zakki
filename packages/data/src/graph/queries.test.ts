@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { chunks, links } from "@zakki/data/db/schema.ts";
 import { getOrCreateDateChunk, saveChildren } from "@zakki/data/chunk/repository.ts";
 import { setChunkUserTags } from "@zakki/data/chunk/user-tags.ts";

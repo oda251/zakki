@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
-import { createDb } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import { assertCryptoReady } from "./guard.ts";
 import { initCrypto } from "./init.ts";

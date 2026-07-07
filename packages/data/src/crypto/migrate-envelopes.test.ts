@@ -4,7 +4,8 @@ import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { generateDek, wrapDek } from "@zakki/core/crypto/dek.ts";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { unlockWithKeyfile } from "./envelopes.ts";
 
 let db: Db;

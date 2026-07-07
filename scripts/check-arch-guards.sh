@@ -62,4 +62,26 @@ else
   echo "OK: AAD literal guard (issue #47)"
 fi
 
+# ---------------------------------------------------------------------------
+# Guard 3: web サーバの Bun 固有 API 禁止（issue #29）
+#
+# apps/web/src/server は標準 Fetch ハンドラ（Hono）で構成し、Workers/Node へ
+# 可搬に保つ。Bun.serve / hono/bun（Bun.file 依存の静的配信）等の Bun 固有 API
+# は bun 用起動アダプタ（index.ts）だけに置く。
+# ---------------------------------------------------------------------------
+BUN_API_PATTERN='Bun\.|hono/bun|from "bun"|from '\''bun'\'''
+BUN_API_ALLOW=(
+  ':!apps/web/src/server/index.ts' # bun 用起動アダプタ（Bun.serve・静的配信）
+  ':!*.test.ts'                    # テストランナーは bun:test（bun 前提でよい）
+  ':!*.test.tsx'
+)
+if hits=$(git grep -nE "$BUN_API_PATTERN" -- 'apps/web/src/server/*.ts' 'apps/web/src/server/**/*.ts' "${BUN_API_ALLOW[@]}"); then
+  echo "NG: web サーバ本体で Bun 固有 API を使用しています（issue #29 / #59）"
+  echo "    標準 Fetch / Hono の可搬 API に寄せるか、起動アダプタ（index.ts）へ移してください。"
+  echo "$hits"
+  status=1
+else
+  echo "OK: web server Bun API guard (issue #29)"
+fi
+
 exit $status

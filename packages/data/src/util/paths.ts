@@ -1,13 +1,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/**
- * XDG ディレクトリ配下に作るアプリ用サブディレクトリ名の SSOT（issue #56）。
- * 例: `<dataHome>/zakki/zakki.sqlite`（db/client.ts）、`<configHome>/zakki/keyfile`
- * （crypto/keyfile.ts）、`<configHome>/zakki/identity.json`（identity/local.ts）、
- * anco/zenz の既定パス（backend/anco/engine.ts）。
- */
-export const APP_DIR = "zakki";
+// アプリ用サブディレクトリ名（APP_DIR）は util/app-dir.ts へ分離した（issue #29）。
+// このモジュールは homedir（node:os）に依存するため、合成点だけが使う。
 
 /**
  * XDG データディレクトリ。override は合成点が検証済み config から渡す

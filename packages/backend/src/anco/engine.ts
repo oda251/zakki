@@ -5,7 +5,7 @@ import { errAsync, ResultAsync } from "neverthrow";
 import type { EngineError, KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
-import { APP_DIR } from "@zakki/data/util/paths.ts";
+import { APP_DIR } from "@zakki/data/util/app-dir.ts";
 import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;

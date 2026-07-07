@@ -11,7 +11,7 @@ import {
   proposeTagMerges,
   type TagWithCount,
 } from "@zakki/backend/analysis/normalizer.ts";
-import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/connect.ts";
 import { cosine } from "@zakki/data/embedding/vector.ts";
 import { createRuriEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { countTags, listTagsByChunk } from "@zakki/data/chunk/queries.ts";

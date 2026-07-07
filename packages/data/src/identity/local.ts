@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as v from "valibot";
 import type { Identity } from "@zakki/core/identity/types.ts";
-import { APP_DIR } from "@zakki/data/util/paths.ts";
+import { APP_DIR } from "@zakki/data/util/app-dir.ts";
 
 /** 設定ファイル（identity.json）の許容スキーマ。いずれも任意。未知キーは無視 */
 const IdentityFileSchema = v.object({

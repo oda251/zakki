@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
 import { sql } from "drizzle-orm";
-import { createDb } from "./client.ts";
+import { createDb } from "./connect.ts";
 
 /**
  * 0010_chunk_tree マイグレーションの検証。
