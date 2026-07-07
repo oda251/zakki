@@ -17,10 +17,10 @@ zakki のクラウドインフラを Pulumi（TypeScript）で宣言的に管理
 ```bash
 cd infra
 
-# 1) 依存と Turso プロバイダ SDK を導入（初回のみ）
-#    Terraform ブリッジのローカルパッケージとして SDK を生成する。
-pulumi package add terraform-provider celest-dev/turso
-npm install   # または bun install（このディレクトリ単体で）
+# 1) 依存と Turso プロバイダ SDK を導入（clone 後の初回のみ）
+#    Pulumi.yaml の packages 定義（celest-dev/turso, ブリッジ v1.1.4）から
+#    ローカル SDK（sdks/turso, .gitignore 済み）を再生成し、npm 依存も入れる。
+pulumi install
 
 # 2) stack を作成
 pulumi stack init dev      # 本番は prod
@@ -62,14 +62,15 @@ turso db tokens create <databaseName>
 - **ユーザごとの Turso DB** — マルチユーザ化後は実行時に Turso Platform API で生成する（Phase 7 バックエンド）。
 - **Cloudflare Worker / DNS / コントロールプレーン DB** — Phase 7 で本ファイルに追加拡張する。
 
-## 注意 / 未検証
+## 検証状況（2026-07-07 時点）
 
-- Turso の Terraform プロバイダ本体（`celest-dev/terraform-provider-turso`）は 2025-02 に
-  アーカイブ済み。最新 Turso API との互換は要確認（未検証）。リソース/プロパティ名が変わって
-  いる場合は `pulumi package add` で生成された SDK の型に合わせて `index.ts` を調整する。
-- 生成されるパッケージ名（`index.ts` の `import * as turso from "@pulumi/turso"`）は生成方式で
-  変わりうる。生成後の実名に合わせる（未検証）。
-- 本スタックは Turso アカウント前提のため、本リポジトリ内では `pulumi up` 未実行（コードのみ）。
+- **検証済み**: `pulumi install`（Pulumi CLI v3.231.0）で SDK 生成 →
+  `tsc --noEmit` がエラーなしで通ること。生成パッケージ名は `@pulumi/turso`、
+  `turso.Group`（name/primary/locations/extensions）・`turso.Database`（name/group）の
+  プロパティ名も生成型と一致。SDK 生成に Turso の認証は不要（プロバイダスキーマのみ使用）。
+- **未検証**: 実際の `pulumi up`（Turso アカウント + `TURSO_API_TOKEN` が必要）。
+  プロバイダ本体（`celest-dev/terraform-provider-turso` v0.2.3）は 2025-02 に
+  アーカイブ済みで、最新 Turso API とのランタイム互換は `pulumi up` 実行時に要確認。
 
 出典:
 
