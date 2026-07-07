@@ -1,14 +1,15 @@
+import { combineLatest } from "rxjs";
 import { create } from "zustand";
-import { api } from "@zakki/web/client/api/client.ts";
+import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import { chunksView, userTagsView } from "@zakki/web/client/db/live.ts";
 import type { GraphData } from "@zakki/web/shared/api-types.ts";
 import {
   addManualEdges,
-  applySavedChildren,
   EMPTY_FILTER,
   type GraphFilter,
-  mergeDelta,
   parentOf,
 } from "@zakki/web/client/store/graph-core.ts";
+import { nodesFromDocs } from "@zakki/web/client/store/graph-docs.ts";
 
 export const NODE_NEUTRAL = "var(--node-neutral)";
 
@@ -17,8 +18,10 @@ export function sessionColor(slot: number | undefined): string {
 }
 
 /**
- * グラフ状態の zustand ストア（imperative shell）。状態遷移は graph-core.ts の
- * 純関数へ委譲し、ここは API 呼び出し・エラー写像・購読の配線だけを持つ。
+ * グラフ状態の zustand ストア（imperative shell）。ノードは RxDB liveQuery 購読
+ * （connect）から nodesFromDocs で導出し、手動 fetch / キャッシュを持たない（#44）。
+ * エッジ: 意味リンクはサーバ解析の産物で replication 対象外のため、当面は
+ * 数珠繋ぎ（addManualEdges）のセッションローカル分のみ（links コレクションは将来）。
  */
 interface GraphState {
   data: GraphData | null;
@@ -27,15 +30,11 @@ interface GraphState {
   drillId: number | null;
   filter: GraphFilter;
   selectedNodeId: number | null;
-  load: () => Promise<void>;
-  /** SSE（解析完了）後の再取得。前回 version からの差分だけを受けてマージする。初回は全量 */
-  loadDelta: () => Promise<void>;
-  /** 保存応答の子チャンク列をグラフへ即時反映する（楽観的更新） */
-  applySaved: (
-    parent: { id: number; date: string },
-    children: readonly { id: number; content: string }[],
-  ) => void;
-  /** 数珠繋ぎリンクの即時反映 */
+  /** RxDB 購読を開始する（main.tsx の合成点から一度呼ぶ）。戻り値は購読解除 */
+  connect: (db: ZakkiDatabase) => () => void;
+  /** 起動失敗（bootstrap 例外）の表示。connect 前に UI へエラーを出す唯一の経路 */
+  fail: (message: string) => void;
+  /** 数珠繋ぎリンクの即時反映（セッションローカル） */
   addManualEdges: (links: readonly { from: number; to: number }[]) => void;
   /** チャンクの中へ潜る（dblclick）。selectId 指定時はそのノードを選択状態にする */
   drillTo: (id: number | null, selectId?: number | null) => void;
@@ -46,37 +45,33 @@ interface GraphState {
   selectNode: (id: number | null) => void;
 }
 
-export const useGraphStore = create<GraphState>((set, get) => ({
+export const useGraphStore = create<GraphState>((set) => ({
   data: null,
   error: null,
   drillId: null,
   filter: EMPTY_FILTER,
   selectedNodeId: null,
 
-  load: async () => {
-    try {
-      const data = await api.graph();
-      set({ data, error: null });
-    } catch (e) {
-      set({ error: e instanceof Error ? e.message : String(e) });
-    }
+  connect: (db) => {
+    const sub = combineLatest([chunksView(db), userTagsView(db)]).subscribe({
+      next: ([chunks, userTags]) => {
+        set((s) => {
+          const nodes = nodesFromDocs(chunks, userTags);
+          // 手動エッジは doc 再 emit を跨いで維持し、消えたノードのものだけ落とす
+          const alive = new Set(nodes.map((n) => n.id));
+          const edges = (s.data?.edges ?? []).filter((e) => alive.has(e.from) && alive.has(e.to));
+          return { data: { version: "", nodes, edges }, error: null };
+        });
+      },
+      error: (e: unknown) => {
+        set({ error: e instanceof Error ? e.message : String(e) });
+      },
+    });
+    return () => sub.unsubscribe();
   },
 
-  loadDelta: async () => {
-    const { data, load } = get();
-    // version="" は空 DB 起動直後（初回保存前）の getGraph 応答。since には使えないので全量 load
-    if (data === null || data.version === "") return load();
-    try {
-      const delta = await api.graphDelta(data.version);
-      // マージ基準は応答受信時点の data（取得中の applySaved 等の楽観的更新を上書きしない）
-      set((s) => (s.data === null ? s : { data: mergeDelta(s.data, delta), error: null }));
-    } catch (e) {
-      set({ error: e instanceof Error ? e.message : String(e) });
-    }
-  },
-
-  applySaved: (parent, children) => {
-    set((s) => (s.data === null ? s : { data: applySavedChildren(s.data, parent, children) }));
+  fail: (message) => {
+    set({ error: message });
   },
 
   addManualEdges: (drafts) => {

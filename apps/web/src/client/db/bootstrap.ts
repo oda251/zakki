@@ -49,15 +49,26 @@ const defaultPrompt = (attempt: number): Promise<string | null> =>
     ),
   );
 
-/** DB を開き、アンロックできれば replication を開始して初回同期完了まで待つ */
+/**
+ * DB を開き、アンロックできれば replication を開始する。初回同期は待たない
+ * （UI はローカルレプリカを即座に読める local-first。オフラインで pull が
+ * pending のままでも起動がブロックされない, #44）。
+ */
 export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise<ClientDb> {
-  // 3 つは互いに独立（sodium 初期化・IndexedDB オープン・封筒フェッチ）なので重ねる
+  // 3 つは互いに独立（sodium 初期化・IndexedDB オープン・封筒フェッチ）なので重ねる。
+  // 封筒フェッチ失敗（オフライン・サーバ未起動）は「同期なし・local のみ」に落とす
   const [, db, envelopes] = await Promise.all([
     ready(),
     createZakkiDb(options.storage ?? getRxStorageDexie(), options.dbName),
-    fetchEnvelopes(options.fetchFn),
+    fetchEnvelopes(options.fetchFn).catch((err: unknown) => {
+      console.warn(`zakki-db: 封筒の取得に失敗（local のみで起動）: ${String(err)}`);
+      return null;
+    }),
   ]);
-  const dek = await unlockWithPrompt(envelopes, options.promptFn ?? defaultPrompt);
+  const dek =
+    envelopes === null
+      ? null
+      : await unlockWithPrompt(envelopes, options.promptFn ?? defaultPrompt);
   if (dek === null) {
     return { db, replication: null };
   }
@@ -67,13 +78,11 @@ export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise
     resyncIntervalMs: DEFAULT_RESYNC_INTERVAL_MS,
     ...options.replicationOptions,
   });
-  const states = Object.values(replication);
-  for (const state of states) {
+  for (const state of Object.values(replication)) {
     // 秘密（DEK・平文）は載せない。エラー種別のみログする
     state.error$.subscribe((err: { message: string }) =>
       console.error(`zakki-replication: ${err.message}`),
     );
   }
-  await Promise.all(states.map((state) => state.awaitInitialReplication()));
   return { db, replication };
 }

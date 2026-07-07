@@ -49,7 +49,8 @@ module.exports = {
     },
     {
       name: "web-client-server-boundary",
-      comment: "web の client ↔ server 相互 import 禁止（shared のみ共有点）。テストは純ロジックの検証で越境してよい",
+      comment:
+        "web の client ↔ server 相互 import 禁止（shared のみ共有点）。テストは純ロジックの検証で越境してよい",
       severity: "error",
       from: { path: "^apps/web/src/client", pathNot: "\\.test\\.(ts|tsx)$" },
       to: { path: "^apps/web/src/server", dependencyTypesNot: ["type-only"] },

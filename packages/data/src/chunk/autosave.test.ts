@@ -3,7 +3,8 @@ import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { getOrCreateDateChunk, listChildren } from "./repository.ts";
-import { localDate, persistChildren } from "./autosave.ts";
+import { localDate } from "@zakki/core/util/local-date.ts";
+import { persistChildren } from "./autosave.ts";
 
 let db: Db;
 

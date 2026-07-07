@@ -92,7 +92,30 @@ describe("bootstrapClientDb", () => {
 
     const handle = await boot(() => Promise.resolve(PASSPHRASE));
     expect(handle.replication).not.toBeNull();
+    // bootstrap は初回同期を待たずに返る（オフラインで UI がブロックされないため, #44）。
+    // 同期完了は replication states を await して確認する
+    await Promise.all(
+      Object.values(handle.replication ?? {}).map((state) => state.awaitInitialReplication()),
+    );
     expect((await handle.db.chunks.findOne("1").exec())?.content).toBe("別デバイスからの記録");
+  });
+
+  test("E3: 封筒フェッチ失敗（オフライン相当）→ replication null で DB は local で使える", async () => {
+    fetchFn = () => Promise.reject(new Error("network down"));
+    const handle = await boot(() => Promise.resolve(PASSPHRASE));
+    expect(handle.replication).toBeNull();
+    await handle.db.chunks.insert({
+      id: "offline",
+      parentId: null,
+      position: 0,
+      content: "オフラインでも書ける",
+      date: null,
+      polarity: null,
+      updatedAt: "2026-07-07T00:00:01.000Z",
+    });
+    expect((await handle.db.chunks.findOne("offline").exec())?.content).toBe(
+      "オフラインでも書ける",
+    );
   });
 
   test("E2: 封筒なし（暗号未プロビジョン）→ replication は null（平文を wire に出さない）", async () => {
