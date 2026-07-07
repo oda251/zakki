@@ -48,6 +48,17 @@ module.exports = {
       to: { path: "^apps/" },
     },
     {
+      name: "backend-no-schema-internals",
+      comment:
+        "@zakki/backend から data の schema.ts への直接 import 禁止（issue #53 / #59）。" +
+        "どのテーブルにどう書くか（永続化）は data の適用関数・クエリ" +
+        "（analysis/apply.ts・analysis/queries.ts 等）に封じ込める。" +
+        "テストは DB 実体の検証で参照してよい",
+      severity: "error",
+      from: { path: "^packages/backend/src", pathNot: "\\.test\\.(ts|tsx)$" },
+      to: { path: "^packages/data/src/db/schema\\.ts$" },
+    },
+    {
       name: "web-client-server-boundary",
       comment:
         "web の client ↔ server 相互 import 禁止（shared のみ共有点）。テストは純ロジックの検証で越境してよい",

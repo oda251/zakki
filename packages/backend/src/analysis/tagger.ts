@@ -3,10 +3,10 @@
  * 入力は「チャンク id → 名詞列（重複あり）」。コーパスは全チャンク。
  */
 
-export interface TagScore {
-  name: string;
-  score: number;
-}
+import type { TagScore } from "@zakki/data/analysis/apply.ts";
+
+// タグ 1 件のスコア付き表現。永続化契約（chunk_tags 行の平文表現）として data 層が定義する
+export type { TagScore } from "@zakki/data/analysis/apply.ts";
 
 const MAX_TAGS_PER_CHUNK = 3;
 

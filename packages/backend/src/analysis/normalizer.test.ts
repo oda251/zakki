@@ -6,12 +6,8 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import { listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import type { TextGenerator } from "@zakki/backend/llm/client.ts";
-import {
-  applyTagMerges,
-  filterProposalsWithLlm,
-  levenshtein,
-  proposeTagMerges,
-} from "./normalizer.ts";
+import { applyTagMerges } from "@zakki/data/analysis/apply.ts";
+import { filterProposalsWithLlm, levenshtein, proposeTagMerges } from "./normalizer.ts";
 
 describe("levenshtein", () => {
   test("基本ケース", () => {

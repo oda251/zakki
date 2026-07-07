@@ -1,27 +1,15 @@
 /**
  * 解析パス（全量 {@link ../analysis/service.ts:analyzeAll} / 増分 analyzeChanged）が
  * DB へ書き込む内容を宣言する純関数プラン。「何を書くか・どの条件で書くか」を
- * {@link planWrites} に閉じ込め、service 側の tx はこのプランを機械的に適用する
- * だけにする（読み取り・判定・書き込みの交錯を解く）。タグ id は DB 採番のため
- * プランは名前で持ち、適用時に解決する。
+ * {@link planWrites} に閉じ込め、適用（{@link WritePlan} を機械的に書く applyAnalysisPlan）
+ * は data 層が握る（issue #53）。タグ id は DB 採番のためプランは名前で持ち、
+ * 適用時に解決する。
  */
 
 import { scoreSentiment } from "@zakki/core/analysis/sentiment.ts";
+import type { WritePlan } from "@zakki/data/analysis/apply.ts";
 import type { LinkCandidate } from "./linker.ts";
 import type { TagScore } from "./tagger.ts";
-
-export interface WritePlan {
-  /** 確保すべきタグ名（tagRewrites で挿入するタグの名前集合） */
-  tagNames: ReadonlySet<string>;
-  /** chunk_tags を張り替えるチャンク（delete → insert）。新旧タグ列が変わったチャンクのみ */
-  tagRewrites: { chunkId: number; tags: TagScore[] }[];
-  /** auto リンクの張替え範囲。"all" = 全 auto を削除、配列 = そのチャンクが関与する auto のみ */
-  relinkChunkIds: number[] | "all";
-  /** 挿入する auto リンク（呼び出し側で computeLinks / computeLinksFor 済み） */
-  insertLinks: LinkCandidate[];
-  /** 極性の書き込み。bump = updatedAt を進めるか（差分取得が変更ノードを拾えるように） */
-  polarityWrites: { chunkId: number; polarity: number; bump: boolean }[];
-}
 
 export interface PlanInput {
   /** 今回計算したタグ（解析対象チャンク全件）。Map 反復順が適用順になる */
