@@ -32,7 +32,10 @@
       "indexes": {
         "chunk_tags_pair": {
           "name": "chunk_tags_pair",
-          "columns": ["chunk_id", "tag_id"],
+          "columns": [
+            "chunk_id",
+            "tag_id"
+          ],
           "isUnique": true
         }
       },
@@ -41,8 +44,12 @@
           "name": "chunk_tags_chunk_id_chunks_id_fk",
           "tableFrom": "chunk_tags",
           "tableTo": "chunks",
-          "columnsFrom": ["chunk_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "chunk_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -50,8 +57,12 @@
           "name": "chunk_tags_tag_id_tags_id_fk",
           "tableFrom": "chunk_tags",
           "tableTo": "tags",
-          "columnsFrom": ["tag_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "tag_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -123,12 +134,17 @@
       "indexes": {
         "chunks_parent_position": {
           "name": "chunks_parent_position",
-          "columns": ["parent_id", "position"],
+          "columns": [
+            "parent_id",
+            "position"
+          ],
           "isUnique": true
         },
         "chunks_date_unique": {
           "name": "chunks_date_unique",
-          "columns": ["date"],
+          "columns": [
+            "date"
+          ],
           "isUnique": true,
           "where": "\"date\" IS NOT NULL"
         }
@@ -138,8 +154,12 @@
           "name": "chunks_parent_id_chunks_id_fk",
           "tableFrom": "chunks",
           "tableTo": "chunks",
-          "columnsFrom": ["parent_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "parent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -300,8 +320,12 @@
           "name": "embeddings_chunk_id_chunks_id_fk",
           "tableFrom": "embeddings",
           "tableTo": "chunks",
-          "columnsFrom": ["chunk_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "chunk_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -397,7 +421,10 @@
       "indexes": {
         "links_pair": {
           "name": "links_pair",
-          "columns": ["from_chunk_id", "to_chunk_id"],
+          "columns": [
+            "from_chunk_id",
+            "to_chunk_id"
+          ],
           "isUnique": true
         }
       },
@@ -406,8 +433,12 @@
           "name": "links_from_chunk_id_chunks_id_fk",
           "tableFrom": "links",
           "tableTo": "chunks",
-          "columnsFrom": ["from_chunk_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "from_chunk_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -415,8 +446,12 @@
           "name": "links_to_chunk_id_chunks_id_fk",
           "tableFrom": "links",
           "tableTo": "chunks",
-          "columnsFrom": ["to_chunk_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "to_chunk_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -460,7 +495,9 @@
       "indexes": {
         "tags_name_fingerprint_unique": {
           "name": "tags_name_fingerprint_unique",
-          "columns": ["name_fingerprint"],
+          "columns": [
+            "name_fingerprint"
+          ],
           "isUnique": true
         }
       },
@@ -511,7 +548,10 @@
       "indexes": {
         "chunk_user_tags_unique": {
           "name": "chunk_user_tags_unique",
-          "columns": ["chunk_id", "name_fingerprint"],
+          "columns": [
+            "chunk_id",
+            "name_fingerprint"
+          ],
           "isUnique": true
         }
       },
@@ -520,8 +560,12 @@
           "name": "chunk_user_tags_chunk_id_chunks_id_fk",
           "tableFrom": "chunk_user_tags",
           "tableTo": "chunks",
-          "columnsFrom": ["chunk_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "chunk_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
