@@ -12,9 +12,7 @@ import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { chunkPush } from "@zakki/web/client/db/modifiers.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
-import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
 import { createApp } from "@zakki/web/server/app.ts";
-import { createAnalysisEvents } from "@zakki/web/server/events.ts";
 
 /**
  * issue #43: 起動シーケンス（受け入れ基準 3）。unlock（封筒 → パスフレーズ → DEK）から
@@ -31,13 +29,7 @@ let nameSeq = 0;
 beforeEach(async () => {
   await ready();
   serverDb = await createDb(":memory:");
-  app = createApp({
-    db: serverDb,
-    engine: identityEngine,
-    embedder: null,
-    analysis: createAnalysisScheduler(serverDb, null, () => {}, 0),
-    events: createAnalysisEvents(),
-  });
+  app = createApp({ db: serverDb, engine: identityEngine });
   fetchFn = async (input, init) => app.request(input, init);
 });
 

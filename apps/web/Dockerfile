@@ -1,8 +1,7 @@
 # zakki Web（apps/web）: API サーバ + ビルド済み SPA 配信
 #
 # build:  docker compose build（または docker build -f apps/web/Dockerfile .）
-# 引数:   ANCO_REF=vX.Y.Z（anco Release タグ）、WITH_ZENZ=1（zenz GGUF を焼く）、
-#         WARMUP_EMBEDDER=0（embedding モデルの焼き込みを省く）
+# 引数:   ANCO_REF=vX.Y.Z（anco Release タグ）、WITH_ZENZ=1（zenz GGUF を焼く）
 
 # ---- build: 依存解決と SPA ビルド ----
 FROM oven/bun:1 AS build
@@ -53,9 +52,8 @@ ENV XDG_DATA_HOME=/data \
     ZAKKI_ZENZ_PATH=/opt/zakki/models/zenz-v3.1-small-Q5_K_M.gguf \
     ZAKKI_WEB_PORT=3777
 
-# embedding モデル（約37MB）をイメージへ焼き込み、初回リクエストのダウンロード待ちを避ける
-ARG WARMUP_EMBEDDER=1
-RUN if [ "$WARMUP_EMBEDDER" = "1" ]; then bun apps/web/src/server/warmup.ts; fi
+# embedding モデルの焼き込み（warmup）は #45 でサーバ解析ごと撤去した
+# （web サーバは embedder を持たない。解析のクライアント移設は #28/#26）
 
 EXPOSE 3777
 VOLUME /data

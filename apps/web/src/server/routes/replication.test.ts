@@ -9,9 +9,7 @@ import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import type { ChunkDocData, ChunkWire } from "@zakki/web/client/db/modifiers.ts";
 import { chunkPull, chunkPush } from "@zakki/web/client/db/modifiers.ts";
-import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
 import { createApp } from "@zakki/web/server/app.ts";
-import { createAnalysisEvents } from "@zakki/web/server/events.ts";
 import type { Checkpoint, PullResult } from "@zakki/web/server/replication/protocol.ts";
 import type { WireDoc } from "@zakki/web/server/replication/store.ts";
 import { wire } from "@zakki/web/server/replication/test-fixtures.ts";
@@ -25,13 +23,7 @@ let app: Hono;
 
 beforeEach(async () => {
   db = await createDb(":memory:");
-  app = createApp({
-    db,
-    engine: identityEngine,
-    embedder: null,
-    analysis: createAnalysisScheduler(db, null, () => {}, 0),
-    events: createAnalysisEvents(),
-  });
+  app = createApp({ db, engine: identityEngine });
 });
 
 async function json<T>(res: Response): Promise<T> {

@@ -5,16 +5,14 @@ services:
       dockerfile: apps/web/Dockerfile
       # args:
       #   WITH_ZENZ: "1"        # zenz GGUF（文脈校正）を焼く場合
-      #   WARMUP_EMBEDDER: "0"  # embedding モデルの焼き込みを省く場合
     ports:
       # 3777 の既定値定義は packages/core/src/config/env.ts の DEFAULT_WEB_PORT（issue #56）。
       # compose からは TS を参照できないため、変更時はここと apps/web/Dockerfile も揃える
       - "3777:3777"
     volumes:
       - zakki-data:/data
-    # environment:
-    #   ZAKKI_ENCRYPTION: "1"   # E2E 暗号（初回セットアップは TUI 側で。keyfile を /data に置く）
-    #   ZAKKI_NO_EMBEDDING: "1" # 関連・セマンティック機能を無効化
+    # web サーバは DEK を持たず復号しない（#45）: ZAKKI_ENCRYPTION / ZAKKI_NO_EMBEDDING は
+    # サーバでは参照されない（TUI 専用）。アンロックはクライアント（ブラウザ）が行う
 
 volumes:
   zakki-data:

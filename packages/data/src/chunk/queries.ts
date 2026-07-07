@@ -26,7 +26,7 @@ export interface ChunkWithDate extends Pick<Chunk, "id" | "position" | "content"
 }
 
 /**
- * listChunksWithDate / listChunksByIds の SELECT 別名列に 1:1 対応する生 Row
+ * listChunksWithDate の SELECT 別名列に 1:1 対応する生 Row
  * （chunk/sql.ts の ROOT_DATE_CTE 参照）。形は ChunkWithDate と同一で、
  * content が暗号文のままでありうる点だけが異なる（復号は toChunkWithDate）。
  */
@@ -52,28 +52,6 @@ export function listChunksWithDate(db: Db, since?: string): ResultAsync<ChunkWit
       FROM chunks c JOIN roots r ON c.id = r.id
       WHERE c.parent_id IS NOT NULL ${filter}
       ORDER BY r.root_date ASC, c.parent_id ASC, c.position ASC
-    `);
-    return toChunkWithDate(db, rowsAs<RawChunkRow>(res));
-  });
-}
-
-/**
- * id 指定でチャンクを読む（日付付き・復号済み）。近傍ハイドレート等、
- * 少数の対象だけ復号したいときに listChunksWithDate の全量復号を避ける。
- */
-export function listChunksByIds(db: Db, ids: number[]): ResultAsync<ChunkWithDate[], DbError> {
-  return tryDbAsync(async () => {
-    if (ids.length === 0) return [];
-    const idList = sql.join(
-      ids.map((id) => sql`${id}`),
-      sql`, `,
-    );
-    const res = await db.run(sql`
-      ${ROOT_DATE_CTE}
-      SELECT c.id AS id, c.parent_id AS parentId, c.position AS position,
-             c.content AS content, r.root_date AS date, c.polarity AS polarity
-      FROM chunks c JOIN roots r ON c.id = r.id
-      WHERE c.parent_id IS NOT NULL AND c.id IN (${idList})
     `);
     return toChunkWithDate(db, rowsAs<RawChunkRow>(res));
   });

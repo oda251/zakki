@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, isNotNull } from "drizzle-orm";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { Db } from "@zakki/data/db/client.ts";
-import { chunks } from "@zakki/data/db/schema.ts";
+import { chunks, chunkUserTags, links } from "@zakki/data/db/schema.ts";
 import { getDateChunk, getOrCreateDateChunk, saveChildren } from "@zakki/data/chunk/repository.ts";
 import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import {
@@ -11,7 +11,6 @@ import {
   listLinksByChunk,
   listTagsByChunk,
 } from "@zakki/data/chunk/queries.ts";
-import { listUserTagsByChunk, setChunkUserTags } from "@zakki/data/chunk/user-tags.ts";
 import { analyzeAll } from "./service.ts";
 
 let db: Db;
@@ -44,10 +43,10 @@ describe("analyzeAll", () => {
     expect(tags.get(c1)).toContain("辞書");
 
     // c1↔c2 は「変換」「辞書」を共有して関連、c3 は孤立
-    const links = (await listLinksByChunk(db))._unsafeUnwrap();
-    expect(links.get(c1)).toEqual([c2]);
-    expect(links.get(c2)).toEqual([c1]);
-    expect(links.get(c3)).toBeUndefined();
+    const linkMap = (await listLinksByChunk(db))._unsafeUnwrap();
+    expect(linkMap.get(c1)).toEqual([c2]);
+    expect(linkMap.get(c2)).toEqual([c1]);
+    expect(linkMap.get(c3)).toBeUndefined();
   });
 
   test("再実行で冪等（タグ・リンクが重複しない）", async () => {
@@ -105,18 +104,18 @@ describe("analyzeAll", () => {
     }
   });
 
-  test("manual リンク（自動リンク機能で付与）は analyzeAll の auto 張り替え後も残る", async () => {
+  test("manual リンク（origin='manual' の既存行）は analyzeAll の auto 張り替え後も残る", async () => {
     await seed("2026-06-12", ["最初の話。", "全然関係ない別の話。"]);
-    const { addManualLink } = await import("@zakki/data/link/repository.ts");
     const chunkRows = (await listChunksWithDate(db))._unsafeUnwrap();
     const [a, b] = chunkRows.map((c) => c.id);
     if (a === undefined || b === undefined) throw new Error("seed 不足");
 
-    (await addManualLink(db, a, b))._unsafeUnwrap();
+    // 旧 addManualLink（#45 で web 経路ごと撤去）と同じ from < to 正規化行を直接挿入する
+    await db.insert(links).values({ fromChunkId: a, toChunkId: b, score: 1, origin: "manual" });
     (await analyzeAll(db))._unsafeUnwrap();
 
-    const links = (await listLinksByChunk(db))._unsafeUnwrap();
-    expect(links.get(a)).toContain(b);
+    const linkMap = (await listLinksByChunk(db))._unsafeUnwrap();
+    expect(linkMap.get(a)).toContain(b);
   });
 
   test("解析結果が変わったチャンクは updatedAt が進み、冪等再実行では進まない", async () => {
@@ -147,15 +146,27 @@ describe("analyzeAll", () => {
 
   test("ユーザ明示タグは解析の全消し再挿入・孤立削除に干渉されない", async () => {
     // コンテナチャンク（saveChildren で子を持たせたチャンク）にユーザタグを付ける
+    // （書込み経路は web クライアントの RxDB へ移行済み。ここでは既存行として直接挿入）
     const root = (await getOrCreateDateChunk(db, "2026-06-12"))._unsafeUnwrap();
     const [container] = (await saveChildren(db, root.id, [{ content: "調査" }]))._unsafeUnwrap();
     if (container === undefined) throw new Error("seed 不足");
     (await saveChildren(db, container.id, [{ content: "変換辞書の話。" }]))._unsafeUnwrap();
-    (await setChunkUserTags(db, container.id, ["web", "設計"]))._unsafeUnwrap();
+    const now = new Date().toISOString();
+    await db.insert(chunkUserTags).values(
+      ["web", "設計"].map((name) => ({
+        chunkId: container.id,
+        name,
+        nameFingerprint: name,
+        createdAt: now,
+      })),
+    );
 
     (await analyzeAll(db))._unsafeUnwrap();
 
-    const userTags = (await listUserTagsByChunk(db))._unsafeUnwrap();
-    expect(userTags.get(container.id)).toEqual(["web", "設計"]);
+    const rows = await db.select().from(chunkUserTags);
+    expect(rows.map((r) => [r.chunkId, r.name])).toEqual([
+      [container.id, "web"],
+      [container.id, "設計"],
+    ]);
   });
 });

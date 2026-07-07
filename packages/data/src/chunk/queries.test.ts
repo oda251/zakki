@@ -8,7 +8,6 @@ import {
   countTags,
   dailySentiment,
   getChunkContext,
-  listChunksByIds,
   listChunksWithDate,
   listLinksByChunk,
   listTagsByChunk,
@@ -66,16 +65,6 @@ describe("listChunksWithDate", () => {
     const since = "2026-01-01T00:00:00.000Z";
     const rows = (await listChunksWithDate(db, since))._unsafeUnwrap();
     expect(rows.map((c) => c.id)).toEqual([b]);
-  });
-});
-
-describe("listChunksByIds", () => {
-  test("指定 id のみ日付付きで返す（空は空配列）", async () => {
-    const [a, b] = await seedDay("2026-07-05", ["一。", "二。"]);
-    if (a === undefined || b === undefined) throw new Error("seed 不足");
-    const rows = (await listChunksByIds(db, [b]))._unsafeUnwrap();
-    expect(rows.map((c) => [c.id, c.content, c.date])).toEqual([[b, "二。", "2026-07-05"]]);
-    expect((await listChunksByIds(db, []))._unsafeUnwrap()).toEqual([]);
   });
 });
 

@@ -25,7 +25,6 @@ beforeEach(() => {
     current: null,
     initialRaw: null,
     initialChunkIds: [],
-    related: [],
     error: null,
   });
   useGraphStore.setState({ drillId: null, selectedNodeId: null });

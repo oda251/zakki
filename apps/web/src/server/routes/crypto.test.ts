@@ -7,9 +7,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { Hono } from "hono";
 import { openEnvelope } from "@zakki/web/client/db/unlock.ts";
-import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
 import { createApp } from "@zakki/web/server/app.ts";
-import { createAnalysisEvents } from "@zakki/web/server/events.ts";
 import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
 
 /**
@@ -23,13 +21,7 @@ let app: Hono;
 beforeEach(async () => {
   await ready();
   db = await createDb(":memory:");
-  app = createApp({
-    db,
-    engine: identityEngine,
-    embedder: null,
-    analysis: createAnalysisScheduler(db, null, () => {}, 0),
-    events: createAnalysisEvents(),
-  });
+  app = createApp({ db, engine: identityEngine });
 });
 
 async function getEnvelopes(): Promise<{ envelopes: CryptoEnvelope[] }> {
