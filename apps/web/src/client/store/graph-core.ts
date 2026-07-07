@@ -2,8 +2,9 @@ import type { GraphData, GraphEdge, GraphNode } from "@zakki/web/shared/api-type
 
 /**
  * グラフ表示の純粋ロジック（functional core）。zustand ストア（graph.ts）は
- * ここの純関数へ状態遷移を委譲し、自身は配線（API 呼び出し・購読）だけを持つ。
- * ドリル表示・差分マージ・楽観的更新はすべて (data, 入力) → data の純関数。
+ * ここの純関数へ状態遷移を委譲し、自身は配線（liveQuery 購読）だけを持つ。
+ * ドリル表示・カウント再導出はすべて (data, 入力) → data の純関数
+ * （かつての差分マージ・楽観的更新は #44 の liveQuery 移行で消えた）。
  */
 
 export interface GraphFilter {
@@ -121,8 +122,10 @@ export function breadcrumbPath(data: GraphData, drillId: number | null): GraphNo
 }
 
 /**
- * childCount / descendantCount をクライアント側で再導出する（楽観的更新の後処理）。
- * サーバの再帰 CTE と同じ定義。O(n) の親マップ走査。
+ * childCount / descendantCount を parentId 関係から再導出する。O(n) の親マップ走査。
+ * これが唯一の定義（issue #58 項目 14: かつてサーバ SQL（再帰 CTE）と二重定義だったが、
+ * #45 の読取撤去で一本化された。呼び出しは graph-docs.ts の RxDB doc 投影のみ。
+ * 型・派生値の位置づけは `@zakki/data/graph/queries.ts` と docs/CHUNKS.md §導出値と描画）。
  */
 export function recomputeCounts(nodes: readonly GraphNode[]): GraphNode[] {
   const childCount = new Map<number, number>();
