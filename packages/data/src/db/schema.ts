@@ -217,6 +217,7 @@ export const embeddings = sqliteTable("embeddings", {
 });
 
 export type Chunk = typeof chunks.$inferSelect;
+export type ChunkTag = typeof chunkTags.$inferSelect;
 export type ChunkUserTag = typeof chunkUserTags.$inferSelect;
 export type Correction = typeof corrections.$inferSelect;
 export type Tag = typeof tags.$inferSelect;

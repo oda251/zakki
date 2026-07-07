@@ -5,6 +5,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
+import type { Chunk, Link } from "@zakki/data/db/schema.ts";
 import { listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import { ROOT_DATE_CTE } from "@zakki/data/chunk/sql.ts";
 import { listUserTagsByChunk } from "@zakki/data/chunk/user-tags.ts";
@@ -13,16 +14,16 @@ import { listUserTagsByChunk } from "@zakki/data/chunk/user-tags.ts";
  * グラフビューのノード = chunk ツリーの全ノード（日付チャンク・コンテナ・本文）。
  * childCount / descendantCount は列に持たない派生値で、ここで再帰 CTE により付与する
  * （docs/CHUNKS.md §導出値と描画）。web クライアントはこれを全量受けてドリル表示する。
+ *
+ * 列はモデル（schema.ts の {@link Chunk}）から派生させる。schema の列変更は
+ * ここで型エラーとして検出される（#50）。parentId が null = 日付チャンク（トップレベル）。
  */
-export interface GraphNode {
-  id: number;
-  /** null = 日付チャンク（トップレベル） */
-  parentId: number | null;
-  position: number;
-  content: string;
+export interface GraphNode extends Pick<
+  Chunk,
+  "id" | "parentId" | "position" | "content" | "polarity"
+> {
   /** 祖先（自身を含む）の日付チャンクの date */
-  date: string;
-  polarity: number | null;
+  date: NonNullable<Chunk["date"]>;
   /** 自動タグ（chunk_tags 由来、スコア降順） */
   tags: string[];
   /** ユーザ明示タグ（chunk_user_tags 由来） */
@@ -33,12 +34,15 @@ export interface GraphNode {
   descendantCount: number;
 }
 
-/** グラフビューのエッジ。links（from < to 正規化済み）+ 導出の時系列リンク（chrono） */
+/**
+ * グラフビューのエッジ。links（from < to 正規化済み）+ 導出の時系列リンク（chrono）。
+ * 列は {@link Link} から派生（"chrono" のみ保存しない導出 origin）。
+ */
 export interface GraphEdge {
-  from: number;
-  to: number;
-  score: number;
-  origin: "auto" | "manual" | "chrono";
+  from: Link["fromChunkId"];
+  to: Link["toChunkId"];
+  score: Link["score"];
+  origin: Link["origin"] | "chrono";
 }
 
 export interface GraphData {
@@ -49,8 +53,7 @@ export interface GraphData {
 }
 
 /** 差分応答での生存ノード（削除検出 + 派生値の更新。id 昇順） */
-export interface AliveNode {
-  id: number;
+export interface AliveNode extends Pick<Chunk, "id"> {
   childCount: number;
   descendantCount: number;
 }
@@ -75,20 +78,20 @@ export interface GraphDelta {
 function maxChunkUpdatedAt(db: Db): ResultAsync<string, DbError> {
   return tryDbAsync(async () => {
     const res = await db.run(sql`SELECT max(updated_at) AS max FROM chunks`);
-    const rows = res.rows as unknown as { max: string | null }[];
+    const rows = res.rows as unknown as { max: Chunk["updatedAt"] | null }[];
     return rows[0]?.max ?? "";
   });
 }
 
-interface RawNodeRow {
-  id: number;
-  parentId: number | null;
-  position: number;
-  content: string;
-  date: string;
+/**
+ * listNodeRows の SELECT 別名列に 1:1 対応する生 Row（content は暗号文のままでありうる。
+ * 復号は toNodes）。列は {@link Chunk} から派生（chunk/sql.ts の ROOT_DATE_CTE も参照）。
+ */
+interface RawNodeRow extends Pick<Chunk, "id" | "parentId" | "position" | "content" | "polarity"> {
+  /** 祖先（自身を含む）の日付チャンクの date（ROOT_DATE_CTE の root_date） */
+  date: NonNullable<Chunk["date"]>;
   /** 自身の date 列（日付チャンク判定 = 復号スキップ判定） */
-  ownDate: string | null;
-  polarity: number | null;
+  ownDate: Chunk["date"];
 }
 
 /** 全ノード（since 指定時は updatedAt >= since のみ）を root date 付きで読む */
@@ -170,7 +173,9 @@ function chronoEdges(db: Db): ResultAsync<GraphEdge[], DbError> {
     const res = await db.run(
       sql`SELECT id, date FROM chunks WHERE date IS NOT NULL ORDER BY date ASC`,
     );
-    const rows = res.rows as unknown as { id: number; date: string }[];
+    const rows = res.rows as unknown as (Pick<Chunk, "id"> & {
+      date: NonNullable<Chunk["date"]>;
+    })[];
     const edges: GraphEdge[] = [];
     for (let i = 1; i < rows.length; i++) {
       const a = rows[i - 1];

@@ -4,6 +4,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { links } from "@zakki/data/db/schema.ts";
+import type { ChunkWithDate } from "@zakki/data/chunk/queries.ts";
 import { listChunksByIds } from "@zakki/data/chunk/queries.ts";
 import { loadVectors } from "./store.ts";
 import { cosine } from "./vector.ts";
@@ -68,11 +69,14 @@ export function nearestChunks(
   return scored.toSorted((a, b) => b.score - a.score).slice(0, topK);
 }
 
-/** 関連表示の項目（近傍チャンクを日付・本文でハイドレートしたもの） */
-export interface RelatedChunk {
-  chunkId: number;
-  date: string;
-  content: string;
+/**
+ * 関連表示の項目（近傍チャンクを日付・本文でハイドレートしたもの）。
+ * 列は {@link ChunkWithDate}（= schema.ts の Chunk 派生）から派生させる（#50）。
+ */
+export interface RelatedChunk extends Pick<ChunkWithDate, "date" | "content"> {
+  /** 近傍チャンクの id（{@link ChunkWithDate.id} の改名） */
+  chunkId: ChunkWithDate["id"];
+  /** クエリチャンクとのコサイン類似度 */
   score: number;
 }
 
