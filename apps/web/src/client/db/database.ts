@@ -13,16 +13,20 @@ import { createRxDatabase } from "rxdb";
 import type { RxCollection, RxDatabase, RxDocument, RxJsonSchema, RxStorage } from "rxdb";
 import type { Chunk, ChunkUserTag, Correction, Tag } from "@zakki/web/shared/api-types.ts";
 
-/** RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ */
+/**
+ * RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ。
+ * updatedAt は replication の checkpoint / 衝突判定に必須のため、サーバ表に
+ * 無い tags / chunkUserTags もクライアント doc では持つ（wire にそのまま載る）。
+ */
 export type ChunkDoc = { id: string; parentId: string | null } & Omit<
   Chunk,
   "id" | "parentId" | "createdAt"
 >;
-export type ChunkUserTagDoc = { id: string; chunkId: string } & Omit<
+export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string } & Omit<
   Pick<ChunkUserTag, "id" | "chunkId" | "name">,
   "id" | "chunkId"
 >;
-export type TagDoc = { id: string } & Omit<Pick<Tag, "id" | "name">, "id">;
+export type TagDoc = { id: string; updatedAt: string } & Omit<Pick<Tag, "id" | "name">, "id">;
 export type CorrectionDoc = Correction;
 
 export type ZakkiCollections = {
@@ -57,8 +61,9 @@ const chunkUserTagsSchema = {
     id: { type: "string", maxLength: 32 },
     chunkId: { type: "string" },
     name: { type: "string" },
+    updatedAt: { type: "string" },
   },
-  required: ["id", "chunkId", "name"],
+  required: ["id", "chunkId", "name", "updatedAt"],
 } as const satisfies RxJsonSchema<ChunkUserTagDoc>;
 
 const tagsSchema = {
@@ -68,8 +73,9 @@ const tagsSchema = {
   properties: {
     id: { type: "string", maxLength: 32 },
     name: { type: "string" },
+    updatedAt: { type: "string" },
   },
-  required: ["id", "name"],
+  required: ["id", "name", "updatedAt"],
 } as const satisfies RxJsonSchema<TagDoc>;
 
 const correctionsSchema = {
