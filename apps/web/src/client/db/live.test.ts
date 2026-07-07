@@ -1,21 +1,13 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { firstValueFrom } from "rxjs";
-import { addRxPlugin } from "rxdb";
-import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
-import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
-import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
-import { createZakkiDb } from "@zakki/web/client/db/database.ts";
+import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import { childrenView, correctionsView } from "@zakki/web/client/db/live.ts";
 
 /**
  * Phase 4（#40）: RxDB を UI 購読用 Observable に変換する reactive view。
  * memory storage + dev-mode + ajv（IndexedDB 非依存 = opentui 汚染なし）。
  */
-beforeAll(() => {
-  addRxPlugin(RxDBDevModePlugin);
-});
-
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "100",
   position: 0,
@@ -28,7 +20,7 @@ const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
 
 let dbs: ZakkiDatabase[] = [];
 async function open(): Promise<ZakkiDatabase> {
-  const db = await createZakkiDb(wrappedValidateAjvStorage({ storage: getRxStorageMemory() }));
+  const db = await openTestDb();
   dbs.push(db);
   return db;
 }

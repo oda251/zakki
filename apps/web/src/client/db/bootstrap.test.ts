@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { generateDek } from "@zakki/core/crypto/dek.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
@@ -6,13 +6,10 @@ import { addPassphraseEnvelope } from "@zakki/data/crypto/envelopes.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { Hono } from "hono";
-import { addRxPlugin } from "rxdb";
-import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
-import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
-import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
 import type { ClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
+import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { chunkPush } from "@zakki/web/client/db/modifiers.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
@@ -24,10 +21,6 @@ import { createAnalysisEvents } from "@zakki/web/server/events.ts";
  * replication ready までを、注入した memory storage / fetch / prompt で検証する。
  * 本番既定（Dexie / window.prompt / グローバル fetch）は main.tsx の合成点でのみ使う。
  */
-beforeAll(() => {
-  addRxPlugin(RxDBDevModePlugin);
-});
-
 const PASSPHRASE = "起動テスト用パスフレーズ";
 let serverDb: Db;
 let app: Hono;
@@ -56,7 +49,7 @@ afterEach(async () => {
 async function boot(promptFn: (attempt: number) => Promise<string | null>): Promise<ClientDb> {
   nameSeq += 1;
   const handle = await bootstrapClientDb({
-    storage: wrappedValidateAjvStorage({ storage: getRxStorageMemory() }),
+    storage: testStorage(),
     dbName: `zakkiboot${nameSeq}`,
     fetchFn,
     promptFn,
@@ -92,7 +85,30 @@ describe("bootstrapClientDb", () => {
 
     const handle = await boot(() => Promise.resolve(PASSPHRASE));
     expect(handle.replication).not.toBeNull();
+    // bootstrap は初回同期を待たずに返る（オフラインで UI がブロックされないため, #44）。
+    // 同期完了は replication states を await して確認する
+    await Promise.all(
+      Object.values(handle.replication ?? {}).map((state) => state.awaitInitialReplication()),
+    );
     expect((await handle.db.chunks.findOne("1").exec())?.content).toBe("別デバイスからの記録");
+  });
+
+  test("E3: 封筒フェッチ失敗（オフライン相当）→ replication null で DB は local で使える", async () => {
+    fetchFn = () => Promise.reject(new Error("network down"));
+    const handle = await boot(() => Promise.resolve(PASSPHRASE));
+    expect(handle.replication).toBeNull();
+    await handle.db.chunks.insert({
+      id: "offline",
+      parentId: null,
+      position: 0,
+      content: "オフラインでも書ける",
+      date: null,
+      polarity: null,
+      updatedAt: "2026-07-07T00:00:01.000Z",
+    });
+    expect((await handle.db.chunks.findOne("offline").exec())?.content).toBe(
+      "オフラインでも書ける",
+    );
   });
 
   test("E2: 封筒なし（暗号未プロビジョン）→ replication は null（平文を wire に出さない）", async () => {

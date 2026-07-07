@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
-import { api } from "@zakki/web/client/api/client.ts";
 import { chunkDigestWeb, chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
 import { ComposerPane } from "@zakki/web/client/composer/ComposerPane.tsx";
+import { docId } from "@zakki/web/client/db/ids.ts";
+import { removeChunkTree, renameChunkDoc, setUserTagDocs } from "@zakki/web/client/db/writes.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /**
  * 右パネル: 上=Composer.Web（入力欄）、中=意味的関連（アンビエント）、
  * 下=グラフで選択中のノード詳細（自動/ユーザタグ・ナビ・rename・削除）+ リンク近傍。
+ * 書込みはローカル RxDB へ（#44）。グラフ表示は liveQuery 購読で自動更新される。
  */
 export function RightPanel() {
   const data = useGraphStore((s) => s.data);
@@ -16,7 +18,7 @@ export function RightPanel() {
   const selectNode = useGraphStore((s) => s.selectNode);
   const setTagFilter = useGraphStore((s) => s.setTagFilter);
   const setUserTagFilter = useGraphStore((s) => s.setUserTagFilter);
-  const reloadGraph = useGraphStore((s) => s.load);
+  const db = useBufferStore((s) => s.db);
   const related = useBufferStore((s) => s.related);
   const current = useBufferStore((s) => s.current);
   const openChunk = useBufferStore((s) => s.openChunk);
@@ -41,30 +43,30 @@ export function RightPanel() {
   }, [data, selected, nodesById]);
 
   const saveUserTags = async (id: number) => {
+    if (db === null) return;
     const names = (tagsDraft ?? "")
       .split(/[,、\s]+/u)
       .map((t) => t.trim())
       .filter((t) => t !== "");
     setTagsDraft(null);
-    await api.setUserTags(id, names);
-    await reloadGraph();
+    await setUserTagDocs(db, docId(id), names);
   };
 
   const renameContainer = async (id: number, previous: string) => {
+    if (db === null) return;
     const content = (renaming ?? "").trim();
     setRenaming(null);
     if (content === "" || content === previous) return;
-    await api.renameChunk(id, content);
-    await reloadGraph();
+    await renameChunkDoc(db, docId(id), content);
     // rename したノードが現バッファなら本文表示を更新するため開き直す
     if (current?.id === id) await openChunk(id);
   };
 
   const deleteNode = async (id: number) => {
+    if (db === null) return;
     if (!window.confirm("このチャンクを削除しますか？子孫も消えます。")) return;
-    await api.deleteChunk(id);
+    await removeChunkTree(db, docId(id));
     selectNode(null);
-    await reloadGraph();
     // 現バッファ（またはその祖先）が消えた場合に備え、開き直せなければ当日へ
     if (current?.id === id) await openToday();
   };

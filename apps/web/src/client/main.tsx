@@ -1,5 +1,8 @@
 import { createRoot } from "react-dom/client";
+import { errorMessage } from "@zakki/core/util/error.ts";
 import { App } from "@zakki/web/client/App.tsx";
+import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
+import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 import "@zakki/web/client/styles.css";
 
 const root = document.getElementById("root");
@@ -8,11 +11,18 @@ if (root === null) {
 }
 createRoot(root).render(<App />);
 
-// RxDB（Dexie storage）と replication の起動（issue #43）。UI の liveQuery 配線は #44 で
-// 行うため fire-and-forget。アンロック不可・起動失敗でも既存 REST 経路の UI は動く。
+// RxDB（Dexie storage）と replication の起動（#43）→ UI 購読の配線（#44）。
+// UI はローカルレプリカを liveQuery で読むため、初回同期を待たずに接続してよい。
 // RxDB + libsodium が重いため、GraphView と同じく初期チャンクから dynamic import で分離する。
 void import("@zakki/web/client/db/bootstrap.ts")
-  .then((m) => m.bootstrapClientDb())
+  .then(async (m) => {
+    const { db } = await m.bootstrapClientDb();
+    useGraphStore.getState().connect(db);
+    useBufferStore.getState().connect(db);
+    await useBufferStore.getState().openToday();
+  })
   .catch((err: unknown) => {
-    console.error(`zakki-db: ${err instanceof Error ? err.message : String(err)}`);
+    const message = errorMessage(err);
+    console.error(`zakki-db: ${message}`);
+    useGraphStore.getState().fail(`起動に失敗しました: ${message}`);
   });

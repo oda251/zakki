@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { okAsync } from "neverthrow";
-import { localDate, persistChildren } from "@zakki/data/chunk/autosave.ts";
+import { localDate } from "@zakki/core/util/local-date.ts";
+import { persistChildren } from "@zakki/data/chunk/autosave.ts";
 import {
   deleteChunk,
   getChunk,

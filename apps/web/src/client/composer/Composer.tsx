@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
-import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { chunkText, makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { errorMessage } from "@zakki/core/util/error.ts";
 import { SAVE_DEBOUNCE_MS } from "@zakki/core/config/timing.ts";
 import { createConversionSession } from "@zakki/core/conversion/compose.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
@@ -12,18 +13,23 @@ import { chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
 import { chainLinks, newChunkIds } from "@zakki/web/client/composer/auto-link.ts";
 import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
+import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import { docId, numId } from "@zakki/web/client/db/ids.ts";
+import { saveChildrenDocs, upsertCorrection } from "@zakki/web/client/db/writes.ts";
+import type { BufferChunk } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
-import type { Chunk } from "@zakki/web/shared/api-types.ts";
 
 type SaveState = "saved" | "dirty" | "error";
 
 interface ComposerProps {
+  /** 保存先のローカル RxDB（#44）。replication が非同期にサーバへ反映する */
+  db: ZakkiDatabase;
   /** 現在のバッファ（親チャンク）。id が子チャンクの保存先（docs/CHUNKS.md §入力・保存） */
-  parent: Chunk;
+  parent: BufferChunk;
   initialRaw: string;
   /** ロード時点の既存チャンク id（初回保存で全チャンクが「新規」扱いになるのを防ぐ） */
   initialChunkIds: readonly number[];
-  /** ConversionPipeline のシード（サーバの conversion/state から） */
+  /** ConversionPipeline のシード（corrections はローカル RxDB・cache はサーバから） */
   corrections: ReadonlyMap<string, string>;
   conversionCache: ReadonlyMap<string, string>;
 }
@@ -39,6 +45,7 @@ interface ComposerProps {
  * 接続のモバイル等で挙動を分けたくなったら UA 判定を足す。
  */
 export function Composer({
+  db,
   parent,
   initialRaw,
   initialChunkIds,
@@ -63,21 +70,15 @@ export function Composer({
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
   // 新規チャンクを「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す。
-  // エッジはローカルへ即時反映し、永続化の失敗はメッセージ表示に留める
-  // （次回の GET /graph で正となる状態に収束する）
-  const linkNewChunks = useCallback(async (savedChunks: readonly { id: number }[]) => {
+  // links はサーバ解析と同じく replication 対象外のため当面セッションローカル
+  // （永続化は links コレクション導入後。#44 の対象外）
+  const linkNewChunks = useCallback((savedChunks: readonly { id: number }[]) => {
     const fresh = newChunkIds(knownChunkIds.current, savedChunks);
     knownChunkIds.current = savedChunks.map((c) => c.id);
     if (fresh.length === 0) return;
     const anchor = useGraphStore.getState().selectedNodeId;
-    const links = chainLinks(anchor, fresh);
-    useGraphStore.getState().addManualEdges(links);
+    useGraphStore.getState().addManualEdges(chainLinks(anchor, fresh));
     useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
-    await Promise.all(
-      links.map((link) =>
-        api.addLink(link.from, link.to).catch(() => setMessage("リンク作成に失敗")),
-      ),
-    );
   }, []);
 
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();
@@ -94,10 +95,10 @@ export function Composer({
           void api.saveConversion(kana, conv).catch(() => setMessage("変換キャッシュの保存に失敗"));
         },
         onChosen: (kana, chosen) => {
-          void api.saveCorrection(kana, chosen).catch(() => setMessage("学習の保存に失敗"));
+          void upsertCorrection(db, kana, chosen).catch(() => setMessage("学習の保存に失敗"));
         },
       }),
-    [corrections, conversionCache, bump],
+    [corrections, conversionCache, bump, db],
   );
 
   // 追記入力（ゲート通過後の ASCII 打鍵）
@@ -130,8 +131,9 @@ export function Composer({
     [store, setRaw],
   );
 
-  // 保存: 300ms デバウンスで凍結 → 変換 → PUT（TUI の保存 effect の移植）。
-  // 保存応答は即時にグラフへ反映し、解析結果の反映は SSE（App.tsx の購読）に任せる
+  // 保存: 300ms デバウンスで凍結 → 変換 → ローカル RxDB へ投影（#44）。
+  // グラフは liveQuery 購読で自動反映されるため楽観的更新は不要。
+  // サーバへは replication が非同期に push する
   useEffect(() => {
     const timer = setTimeout(() => {
       const frozen = freezeLiveTail(store.getState().raw, conversion.convertSettled);
@@ -140,32 +142,21 @@ export function Composer({
       }
       const current = store.getState().raw;
       const converted = conversion.convertRaw(current).text;
-      api
-        .saveChildren(parent.id, converted)
-        .then(async (saved) => {
+      saveChildrenDocs(db, docId(parent.id), chunkText(converted))
+        .then((saved) => {
           setSaveState("saved");
-          // 楽観的更新: 解析（タグ・意味リンク）を待たず、まずノードを画面に出す。
-          // parent.date が null（コンテナ）なら祖先日付を graph data の親ノードから引く。
-          // 引けない（親ノード未取得）場合は楽観的更新をスキップし、SSE 差分に委ねる。
-          const date =
-            parent.date ??
-            useGraphStore.getState().data?.nodes.find((n) => n.id === parent.id)?.date ??
-            null;
-          if (date !== null) {
-            useGraphStore.getState().applySaved({ id: parent.id, date }, saved.children);
-          }
-          await linkNewChunks(saved.children);
+          linkNewChunks(saved.map((c) => ({ id: numId(c.id) })));
         })
         .catch((e: unknown) => {
           setSaveState("error");
-          setMessage(e instanceof Error ? e.message : String(e));
+          setMessage(errorMessage(e));
         });
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
     // 依存は parent.id のみ（保存先キー）。同一 id のまま buffer store が current を新
     // オブジェクトで差し替える経路（rename 後の openChunk 等）があり、オブジェクト依存だと
     // 保留中の保存デバウンスが無意味に破棄・張り直しされるため素性で依存させる
-  }, [raw, conversionVersion, parent.id, parent.date, store, setRaw, conversion, linkNewChunks]);
+  }, [raw, conversionVersion, db, parent.id, store, setRaw, conversion, linkNewChunks]);
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
   const openEdit = useCallback(

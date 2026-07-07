@@ -1,5 +1,6 @@
 import { asc, eq, isNotNull } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
+import { matchDraftsToExisting } from "@zakki/core/chunk/match.ts";
 import { AAD } from "@zakki/core/crypto/aad.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
@@ -130,47 +131,30 @@ export function saveChildren(
         .orderBy(asc(chunks.position));
       const existing = rows.map((c) => decChunk(crypto, c));
 
-      // 1. content 完全一致（同文が複数あれば position 順に消費）
-      const queueByContent = new Map<string, number[]>();
-      for (const c of existing) {
-        const queue = queueByContent.get(c.content) ?? [];
-        queue.push(c.id);
-        queueByContent.set(c.content, queue);
-      }
-      const assigned: (number | undefined)[] = drafts.map((d) =>
-        queueByContent.get(d.content)?.shift(),
-      );
-
-      // 2. 未対応の草稿 ← 未使用の既存行（position 順）＝編集された行
-      const used = new Set(assigned.filter((id) => id !== undefined));
-      const leftovers = existing.filter((c) => !used.has(c.id)).map((c) => c.id);
-      for (const [i, id] of assigned.entries()) {
-        if (id === undefined) assigned[i] = leftovers.shift();
-      }
-      const finalUsed = new Set(assigned.filter((id): id is number => id !== undefined));
+      // 突き合わせ（1. content 完全一致 → 2. 余り再利用）は web クライアント
+      // （RxDB 書込み, #44）と共有する純カーネルに委譲する
+      const { assigned, removed } = matchDraftsToExisting(existing, drafts);
 
       // 3. どの草稿にも対応しない既存行を削除（子孫ごと cascade）
-      for (const c of existing) {
-        if (!finalUsed.has(c.id)) {
-          await tx.delete(chunks).where(eq(chunks.id, c.id));
-        }
+      for (const c of removed) {
+        await tx.delete(chunks).where(eq(chunks.id, c.id));
       }
 
       // (parent, position) 一意制約との過渡的衝突を避けるため、残す行を
       // いったん負の position へ退避してから確定値を書く
-      for (const [i, id] of assigned.entries()) {
-        if (id !== undefined) {
+      for (const [i, c] of assigned.entries()) {
+        if (c !== undefined) {
           await tx
             .update(chunks)
             .set({ position: -(i + 1) })
-            .where(eq(chunks.id, id));
+            .where(eq(chunks.id, c.id));
         }
       }
 
       const saved: Chunk[] = [];
       for (const [position, draft] of drafts.entries()) {
         const encContentValue = encContent(crypto, draft.content);
-        const id = assigned[position];
+        const id = assigned[position]?.id;
         const [row] =
           id === undefined
             ? await tx

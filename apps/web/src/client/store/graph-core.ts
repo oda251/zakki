@@ -1,4 +1,4 @@
-import type { GraphData, GraphDelta, GraphEdge, GraphNode } from "@zakki/web/shared/api-types.ts";
+import type { GraphData, GraphEdge, GraphNode } from "@zakki/web/shared/api-types.ts";
 
 /**
  * グラフ表示の純粋ロジック（functional core）。zustand ストア（graph.ts）は
@@ -150,60 +150,6 @@ export function recomputeCounts(nodes: readonly GraphNode[]): GraphNode[] {
   });
 }
 
-/**
- * 保存応答（親バッファの全子チャンク）をグラフへ即時反映する（楽観的更新）。
- * サーバ解析（タグ・極性・意味リンク）は待たず、既存ノードの解析結果は温存する。
- * 応答に無い旧・子ノードは削除とみなし、その子孫ごと落とす（投影の破壊性と同型）。
- * 派生値（childCount / descendantCount）は再導出する。
- */
-export function applySavedChildren(
-  data: GraphData,
-  parent: { id: number; date: string },
-  children: readonly { id: number; content: string }[],
-): GraphData {
-  const existing = new Map(data.nodes.map((n) => [n.id, n]));
-  const savedNodes = children.map((c, position): GraphNode => {
-    const prev = existing.get(c.id);
-    return prev !== undefined
-      ? { ...prev, content: c.content, position }
-      : {
-          id: c.id,
-          parentId: parent.id,
-          position,
-          content: c.content,
-          date: parent.date,
-          polarity: null,
-          tags: [],
-          userTags: [],
-          childCount: 0,
-          descendantCount: 0,
-        };
-  });
-
-  // 削除された旧・子とその子孫を落とす
-  const savedIds = new Set(savedNodes.map((n) => n.id));
-  const removedRoots = data.nodes.filter((n) => n.parentId === parent.id && !savedIds.has(n.id));
-  const removed = new Set(removedRoots.map((n) => n.id));
-  let grew = removed.size > 0;
-  while (grew) {
-    grew = false;
-    for (const n of data.nodes) {
-      if (n.parentId !== null && removed.has(n.parentId) && !removed.has(n.id)) {
-        removed.add(n.id);
-        grew = true;
-      }
-    }
-  }
-
-  const kept = data.nodes.filter(
-    (n) => n.parentId !== parent.id && !removed.has(n.id) && !savedIds.has(n.id),
-  );
-  const nodes = recomputeCounts([...kept, ...savedNodes].toSorted((a, b) => a.id - b.id));
-  const alive = new Set(nodes.map((n) => n.id));
-  const edges = data.edges.filter((e) => alive.has(e.from) && alive.has(e.to));
-  return { ...data, nodes, edges };
-}
-
 /** 数珠繋ぎリンクの即時反映。data 層 addManualLink と同じ不変条件（from<to・重複/自己は no-op） */
 export function addManualEdges(
   data: GraphData,
@@ -220,32 +166,6 @@ export function addManualEdges(
     added.push({ from, to, score: 1, origin: "manual" });
   }
   return added.length === 0 ? data : { ...data, edges: [...data.edges, ...added] };
-}
-
-/**
- * 差分応答を全量データへマージする純関数（差分適用後 = 全量取得後、が不変条件）。
- * - nodes: 変更分は置換・aliveNodes に無い id は削除・残りは温存（id 昇順に正規化）。
- *   温存ノードの派生値（childCount / descendantCount）は aliveNodes の値で更新する
- *   （子の追加は親の updatedAt を動かさないため、派生値だけが動くノードがある）
- * - edges は差分側で全置換
- * - version は差分側を採用するが、現在値より過去（文字列比較で小さい）なら現在値を維持する
- *   （並行 loadDelta の応答順序逆転で since が過去に戻り、以後の差分取得が過剰送信になるのを防ぐ）
- */
-export function mergeDelta(data: GraphData, delta: GraphDelta): GraphData {
-  const changed = new Map(delta.nodes.map((n) => [n.id, n]));
-  const alive = new Map(delta.aliveNodes.map((a) => [a.id, a]));
-  const kept = data.nodes
-    .filter((n) => alive.has(n.id) && !changed.has(n.id))
-    .map((n) => {
-      const a = alive.get(n.id);
-      if (a === undefined) return n;
-      return n.childCount === a.childCount && n.descendantCount === a.descendantCount
-        ? n
-        : { ...n, childCount: a.childCount, descendantCount: a.descendantCount };
-    });
-  const nodes = [...kept, ...delta.nodes].toSorted((a, b) => a.id - b.id);
-  const version = delta.version < data.version ? data.version : delta.version;
-  return { version, nodes, edges: delta.edges };
 }
 
 /** series スロット数（styles.css の --series-*） */

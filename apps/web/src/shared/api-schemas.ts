@@ -86,11 +86,7 @@ export const CryptoEnvelopesResponseSchema = v.object({
 export type CryptoEnvelope = v.InferOutput<typeof CryptoEnvelopeSchema>;
 
 // --- 派生型（client の送信形はここから得る） ---
+// chunk 書込み系の派生型は #44（RxDB 移行）で client から消えたため削除済み
 
-export type DateChunkRequest = v.InferInput<typeof DateChunkSchema>;
-export type RenameChunkRequest = v.InferInput<typeof RenameSchema>;
-export type SetUserTagsRequest = v.InferInput<typeof TagsSchema>;
-export type SaveChildrenRequest = v.InferInput<typeof SaveChildrenSchema>;
 export type ConvertRequest = v.InferInput<typeof ConvertSchema>;
 export type SaveConversionRequest = v.InferInput<typeof SaveConversionSchema>;
-export type SaveCorrectionRequest = v.InferInput<typeof SaveCorrectionSchema>;

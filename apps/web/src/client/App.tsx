@@ -1,10 +1,8 @@
-import { lazy, Suspense, useEffect } from "react";
-import { subscribeAnalysis } from "@zakki/web/client/api/events.ts";
+import { lazy, Suspense } from "react";
 import { Breadcrumb } from "@zakki/web/client/graph/Breadcrumb.tsx";
 import { GraphViewErrorBoundary } from "@zakki/web/client/GraphViewErrorBoundary.tsx";
 import { LeftSidebar } from "@zakki/web/client/layout/LeftSidebar.tsx";
 import { RightPanel } from "@zakki/web/client/layout/RightPanel.tsx";
-import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 // react-force-graph-2d（d3 一式）が重いため、グラフ描画は初期チャンクから分離する
@@ -12,26 +10,12 @@ const GraphView = lazy(() =>
   import("@zakki/web/client/graph/GraphView.tsx").then((m) => ({ default: m.GraphView })),
 );
 
+/**
+ * データ取得の配線は持たない（#44）: グラフ・バッファは main.tsx の bootstrap が
+ * RxDB に接続した時点から liveQuery 購読で自動更新される。
+ */
 export function App() {
-  const load = useGraphStore((s) => s.load);
   const error = useGraphStore((s) => s.error);
-  const openToday = useBufferStore((s) => s.openToday);
-
-  useEffect(() => {
-    void load();
-    void openToday();
-  }, [load, openToday]);
-
-  // サーバ解析（タグ・極性・意味リンク）の完了を SSE で受け、その時だけ差分取得する。
-  // 新規ノード自体は保存応答の楽観的更新（Composer → applySaved）で即時反映済み
-  useEffect(
-    () =>
-      subscribeAnalysis(() => {
-        void useGraphStore.getState().loadDelta();
-        void useBufferStore.getState().refreshRelated();
-      }),
-    [],
-  );
 
   return (
     <div className="app-shell">

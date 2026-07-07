@@ -14,7 +14,7 @@ import { stdinPrompts } from "@zakki/tui/tui/prompt.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
 import { loadConfigOrExit } from "@zakki/tui/config.ts";
-import { localDate } from "@zakki/data/chunk/autosave.ts";
+import { localDate } from "@zakki/core/util/local-date.ts";
 import { getOrCreateDateChunk, listChildren } from "@zakki/data/chunk/repository.ts";
 import { buildRaw } from "@zakki/core/entry/records.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
