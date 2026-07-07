@@ -1,10 +1,6 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { addRxPlugin } from "rxdb";
-import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
-import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
-import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
-import { createZakkiDb } from "@zakki/web/client/db/database.ts";
+import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import { numId } from "@zakki/web/client/db/ids.ts";
 import { getOrCreateDateChunkDoc, saveChildrenDocs } from "@zakki/web/client/db/writes.ts";
 import { EMPTY_FILTER } from "@zakki/web/client/store/graph-core.ts";
@@ -15,15 +11,11 @@ import { useGraphStore } from "@zakki/web/client/store/graph.ts";
  * RxDB 購読（chunksView + userTagsView）から GraphData を導出する。
  * 受け入れ基準「投稿直後にグラフへ即時反映」をここで担保する。
  */
-beforeAll(() => {
-  addRxPlugin(RxDBDevModePlugin);
-});
-
 let dbs: ZakkiDatabase[] = [];
 let disconnects: (() => void)[] = [];
 
 async function open(): Promise<ZakkiDatabase> {
-  const db = await createZakkiDb(wrappedValidateAjvStorage({ storage: getRxStorageMemory() }));
+  const db = await openTestDb();
   dbs.push(db);
   return db;
 }
@@ -35,6 +27,7 @@ function connect(db: ZakkiDatabase): void {
 beforeEach(() => {
   useGraphStore.setState({
     data: null,
+    manualEdges: [],
     error: null,
     drillId: null,
     filter: EMPTY_FILTER,

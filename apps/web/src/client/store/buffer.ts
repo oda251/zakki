@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { buildRaw } from "@zakki/core/entry/records.ts";
+import { errorMessage } from "@zakki/core/util/error.ts";
 import { localDate } from "@zakki/core/util/local-date.ts";
 import { api } from "@zakki/web/client/api/client.ts";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
@@ -40,10 +41,21 @@ interface BufferState {
   openToday: () => Promise<void>;
   /** 指定チャンクをバッファとして開く（グラフのドリルイン） */
   openChunk: (id: number) => Promise<void>;
-  refreshRelated: () => Promise<void>;
 }
 
 export const useBufferStore = create<BufferState>((set, get) => {
+  // 関連（サーバ埋め込み解析の産物）はバッファを開いた時点のみ更新する。
+  // 解析はレガシー /api 書込み経路でしか走らないため SSE 再取得は #44 で撤去
+  // （クライアント解析の導入は #28/#26）。失敗しても入力を妨げない
+  const refreshRelated = async (id: number): Promise<void> => {
+    try {
+      const res = await api.related(id);
+      set({ related: res.items });
+    } catch {
+      // アンビエント表示。黙って空のままにする
+    }
+  };
+
   const openDoc = async (db: ZakkiDatabase, chunk: ChunkDoc): Promise<void> => {
     const children = await childrenQuery(db, chunk.id);
     set({
@@ -54,11 +66,11 @@ export const useBufferStore = create<BufferState>((set, get) => {
     });
     // グラフはこのバッファの階層をドリル表示する
     useGraphStore.getState().drillTo(numId(chunk.id));
-    await get().refreshRelated();
+    await refreshRelated(numId(chunk.id));
   };
 
   const fail = (e: unknown): void => {
-    set({ error: e instanceof Error ? e.message : String(e) });
+    set({ error: errorMessage(e) });
   };
 
   return {
@@ -95,17 +107,6 @@ export const useBufferStore = create<BufferState>((set, get) => {
         await openDoc(db, toChunkDoc(doc));
       } catch (e) {
         fail(e);
-      }
-    },
-
-    refreshRelated: async () => {
-      const { current } = get();
-      if (current === null) return;
-      try {
-        const res = await api.related(current.id);
-        set({ related: res.items });
-      } catch {
-        // 関連はアンビエント表示（サーバ埋め込み解析の産物）。失敗しても入力を妨げない
       }
     },
   };

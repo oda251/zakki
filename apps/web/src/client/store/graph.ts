@@ -1,8 +1,9 @@
-import { combineLatest } from "rxjs";
+import { auditTime, combineLatest } from "rxjs";
 import { create } from "zustand";
+import { errorMessage } from "@zakki/core/util/error.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { chunksView, userTagsView } from "@zakki/web/client/db/live.ts";
-import type { GraphData } from "@zakki/web/shared/api-types.ts";
+import type { GraphData, GraphEdge } from "@zakki/web/shared/api-types.ts";
 import {
   addManualEdges,
   EMPTY_FILTER,
@@ -25,6 +26,8 @@ export function sessionColor(slot: number | undefined): string {
  */
 interface GraphState {
   data: GraphData | null;
+  /** 数珠繋ぎのセッションローカルエッジ（導出値 data とは別に保持する非導出状態） */
+  manualEdges: GraphEdge[];
   error: string | null;
   /** ドリル中チャンク id。null = トップレベル（日付チャンク層） */
   drillId: number | null;
@@ -47,26 +50,31 @@ interface GraphState {
 
 export const useGraphStore = create<GraphState>((set) => ({
   data: null,
+  manualEdges: [],
   error: null,
   drillId: null,
   filter: EMPTY_FILTER,
   selectedNodeId: null,
 
   connect: (db) => {
-    const sub = combineLatest([chunksView(db), userTagsView(db)]).subscribe({
-      next: ([chunks, userTags]) => {
-        set((s) => {
-          const nodes = nodesFromDocs(chunks, userTags);
-          // 手動エッジは doc 再 emit を跨いで維持し、消えたノードのものだけ落とす
-          const alive = new Set(nodes.map((n) => n.id));
-          const edges = (s.data?.edges ?? []).filter((e) => alive.has(e.from) && alive.has(e.to));
-          return { data: { version: "", nodes, edges }, error: null };
-        });
-      },
-      error: (e: unknown) => {
-        set({ error: e instanceof Error ? e.message : String(e) });
-      },
-    });
+    // 1 回の保存は複数 doc 書込み（remove + upsert）になりうるため、同 tick の
+    // emit バーストを auditTime(0) で 1 回のグラフ導出にまとめる
+    const sub = combineLatest([chunksView(db), userTagsView(db)])
+      .pipe(auditTime(0))
+      .subscribe({
+        next: ([chunks, userTags]) => {
+          set((s) => {
+            const nodes = nodesFromDocs(chunks, userTags);
+            // 手動エッジのうち消えたノードのものだけ落とす
+            const alive = new Set(nodes.map((n) => n.id));
+            const manualEdges = s.manualEdges.filter((e) => alive.has(e.from) && alive.has(e.to));
+            return { manualEdges, data: { version: "", nodes, edges: manualEdges }, error: null };
+          });
+        },
+        error: (e: unknown) => {
+          set({ error: errorMessage(e) });
+        },
+      });
     return () => sub.unsubscribe();
   },
 
@@ -75,7 +83,11 @@ export const useGraphStore = create<GraphState>((set) => ({
   },
 
   addManualEdges: (drafts) => {
-    set((s) => (s.data === null ? s : { data: addManualEdges(s.data, drafts) }));
+    set((s) => {
+      if (s.data === null) return s;
+      const data = addManualEdges(s.data, drafts);
+      return { data, manualEdges: data.edges };
+    });
   },
 
   drillTo: (id, selectId = null) => {

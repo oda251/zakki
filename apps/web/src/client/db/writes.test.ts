@@ -1,10 +1,6 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { addRxPlugin } from "rxdb";
-import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
-import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
-import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
-import { createZakkiDb } from "@zakki/web/client/db/database.ts";
+import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import {
   getOrCreateDateChunkDoc,
   removeChunkTree,
@@ -19,13 +15,9 @@ import {
  * （repository.saveChildren の content 突き合わせ・cascade 削除）と同じ意味論を
  * クライアント側で担う。memory storage + dev-mode + ajv（live.test.ts と同じ流儀）。
  */
-beforeAll(() => {
-  addRxPlugin(RxDBDevModePlugin);
-});
-
 let dbs: ZakkiDatabase[] = [];
 async function open(): Promise<ZakkiDatabase> {
-  const db = await createZakkiDb(wrappedValidateAjvStorage({ storage: getRxStorageMemory() }));
+  const db = await openTestDb();
   dbs.push(db);
   return db;
 }

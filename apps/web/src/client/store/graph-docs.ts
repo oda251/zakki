@@ -13,14 +13,33 @@ import { numId } from "@zakki/web/client/db/ids.ts";
 import { recomputeCounts } from "@zakki/web/client/store/graph-core.ts";
 import type { GraphNode } from "@zakki/web/shared/api-types.ts";
 
-/** 祖先（自身を含む）の日付チャンクの date。辿れない（同期途中の孤児等）は "" */
-function rootDate(byId: Map<string, ChunkDoc>, doc: ChunkDoc): string {
-  let cursor: ChunkDoc | undefined = doc;
-  while (cursor !== undefined) {
-    if (cursor.date !== null) return cursor.date;
-    cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId);
+/**
+ * 各チャンクの「祖先（自身を含む）の日付チャンクの date」。辿れない
+ * （同期途中の孤児等）は ""。経路圧縮で全体 O(N)（liveQuery の emit ごとに
+ * 走るため、深いツリーでの per-node 再走査を避ける）。
+ */
+function rootDates(chunks: readonly ChunkDoc[], byId: Map<string, ChunkDoc>): Map<string, string> {
+  const dates = new Map<string, string>();
+  for (const chunk of chunks) {
+    const path: string[] = [];
+    let date = "";
+    let cursor: ChunkDoc | undefined = chunk;
+    while (cursor !== undefined) {
+      const hit = dates.get(cursor.id);
+      if (hit !== undefined) {
+        date = hit;
+        break;
+      }
+      path.push(cursor.id);
+      if (cursor.date !== null) {
+        date = cursor.date;
+        break;
+      }
+      cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId);
+    }
+    for (const id of path) dates.set(id, date);
   }
-  return "";
+  return dates;
 }
 
 /** RxDB の chunk / userTag docs から GraphNode 列（id 昇順）を導出する */
@@ -29,6 +48,7 @@ export function nodesFromDocs(
   userTags: readonly ChunkUserTagDoc[],
 ): GraphNode[] {
   const byId = new Map(chunks.map((c) => [c.id, c]));
+  const dates = rootDates(chunks, byId);
   const tagsByChunk = new Map<string, string[]>();
   for (const t of userTags) {
     const list = tagsByChunk.get(t.chunkId) ?? [];
@@ -42,7 +62,7 @@ export function nodesFromDocs(
       parentId: c.parentId === null ? null : numId(c.parentId),
       position: c.position,
       content: c.content,
-      date: rootDate(byId, c),
+      date: dates.get(c.id) ?? "",
       polarity: c.polarity,
       tags: [],
       userTags: (tagsByChunk.get(c.id) ?? []).toSorted(),

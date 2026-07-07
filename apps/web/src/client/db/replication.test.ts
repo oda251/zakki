@@ -1,18 +1,15 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import { replDocs } from "@zakki/data/db/schema.ts";
 import type { Hono } from "hono";
-import { addRxPlugin } from "rxdb";
-import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
-import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
-import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
 import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
+import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { startReplication } from "@zakki/web/client/db/replication.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
@@ -24,11 +21,7 @@ import { createAnalysisEvents } from "@zakki/web/server/events.ts";
  * fetch アダプタで接続して検証する（受け入れ基準 1〜3）。
  * ストレージは memory（IndexedDB 不要）。本番は Dexie を注入する（bootstrap.ts）。
  */
-beforeAll(() => {
-  addRxPlugin(RxDBDevModePlugin);
-});
-
-const storage = () => wrappedValidateAjvStorage({ storage: getRxStorageMemory() });
+const storage = testStorage;
 
 let serverDb: Db;
 let app: Hono;

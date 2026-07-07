@@ -1,12 +1,8 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { buildRaw } from "@zakki/core/entry/records.ts";
 import { localDate } from "@zakki/core/util/local-date.ts";
-import { addRxPlugin } from "rxdb";
-import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
-import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
-import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
-import { createZakkiDb } from "@zakki/web/client/db/database.ts";
+import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import { docId, numId } from "@zakki/web/client/db/ids.ts";
 import { getOrCreateDateChunkDoc, saveChildrenDocs } from "@zakki/web/client/db/writes.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
@@ -16,13 +12,9 @@ import { useGraphStore } from "@zakki/web/client/store/graph.ts";
  * issue #44: buffer store の RxDB 移行。GET /api/chunks/date・GET /api/chunks/:id を
  * 廃し、ローカル RxDB（リロード時は IndexedDB レプリカ）からバッファを復元する。
  */
-beforeAll(() => {
-  addRxPlugin(RxDBDevModePlugin);
-});
-
 let dbs: ZakkiDatabase[] = [];
 async function open(): Promise<ZakkiDatabase> {
-  const db = await createZakkiDb(wrappedValidateAjvStorage({ storage: getRxStorageMemory() }));
+  const db = await openTestDb();
   dbs.push(db);
   return db;
 }

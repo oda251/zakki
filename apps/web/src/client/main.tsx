@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { errorMessage } from "@zakki/core/util/error.ts";
 import { App } from "@zakki/web/client/App.tsx";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
@@ -21,7 +22,7 @@ void import("@zakki/web/client/db/bootstrap.ts")
     await useBufferStore.getState().openToday();
   })
   .catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     console.error(`zakki-db: ${message}`);
     useGraphStore.getState().fail(`起動に失敗しました: ${message}`);
   });

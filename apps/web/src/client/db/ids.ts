@@ -16,9 +16,9 @@ export const numId = (id: string): number => Number(id);
 let seq = Math.floor(Math.random() * 1000);
 
 /** 新規チャンク等のクライアント採番。同一ミリ秒内の連番で単一クライアント内は一意 */
-export function newDocId(now: number = Date.now()): string {
+export function newDocId(): string {
   seq = (seq + 1) % 1000;
-  return String(now * 1000 + seq);
+  return String(Date.now() * 1000 + seq);
 }
 
 const DATE_CHUNK_ID_BASE = 900_000_000_000_000;

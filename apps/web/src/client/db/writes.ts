@@ -4,15 +4,16 @@
  * サーバ REST（PUT /chunks/:id/children 等）に代わり、書込みはローカル RxDB
  * コレクションへ行う。replication（#43）が非同期にサーバへ反映するため、
  * ここでは wire・暗号を意識しない。意味論はサーバ実装
- * （`@zakki/data/chunk/repository.ts`）を踏襲する:
- * - saveChildrenDocs: content 突き合わせで既存 id を保ち、余りは position 順に
- *   再利用、どの草稿にも対応しない行は子孫（と userTags）ごと削除する
+ * （`@zakki/data/chunk/repository.ts`）と共有する:
+ * - saveChildrenDocs: 突き合わせ（既存 id の維持・削除対象の決定）は
+ *   `@zakki/core/chunk/match.ts` の共通カーネル。削除は子孫（と userTags）ごと
  * - 日付チャンクは content=date の平文・書き換え禁止
  *
  * サーバ実装との意図的な差分: 無変更行の updatedAt を書き換えない
  * （デバウンス保存のたびに全子チャンクが replication push されるのを防ぐ）。
  */
 import type { ChunkDraft } from "@zakki/core/chunk/chunker.ts";
+import { matchDraftsToExisting } from "@zakki/core/chunk/match.ts";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { byPosition, toChunkDoc } from "@zakki/web/client/db/docs.ts";
 import { dateChunkId, newDocId } from "@zakki/web/client/db/ids.ts";
@@ -83,38 +84,20 @@ export async function saveChildrenDocs(
   const existingDocs = await db.chunks.find({ selector: { parentId } }).exec();
   const existing = existingDocs.map(toChunkDoc).toSorted(byPosition);
 
-  // 1. content 完全一致（同文が複数あれば position 順に消費）
-  const queueByContent = new Map<string, ChunkDoc[]>();
-  for (const c of existing) {
-    const queue = queueByContent.get(c.content) ?? [];
-    queue.push(c);
-    queueByContent.set(c.content, queue);
-  }
-  const assigned: (ChunkDoc | undefined)[] = drafts.map((d) =>
-    queueByContent.get(d.content)?.shift(),
-  );
-
-  // 2. 未対応の草稿 ← 未使用の既存行（position 順）＝編集された行
-  const used = new Set(assigned.flatMap((c) => (c === undefined ? [] : [c.id])));
-  const leftovers = existing.filter((c) => !used.has(c.id));
-  for (const [i, c] of assigned.entries()) {
-    if (c === undefined) assigned[i] = leftovers.shift();
-  }
-
-  // 3. どの草稿にも対応しない既存行を削除（子孫・userTags ごと）
-  const finalUsed = new Set(assigned.flatMap((c) => (c === undefined ? [] : [c.id])));
+  // 突き合わせはサーバ（repository.saveChildren）と共有する純カーネルに委譲する
+  const { assigned, removed } = matchDraftsToExisting(existing, drafts);
   await removeSubtrees(
     db,
-    existing.filter((c) => !finalUsed.has(c.id)).map((c) => c.id),
+    removed.map((c) => c.id),
   );
 
-  // 4. 書き込み。無変更行はスキップして updatedAt（= replication push）を発生させない
-  const saved: ChunkDoc[] = [];
-  for (const [position, draft] of drafts.entries()) {
+  // 書き込み。無変更行はスキップして updatedAt（= replication push）を発生させず、
+  // 変更行は 1 回の bulkUpsert（= 1 トランザクション・liveQuery 1 emit）にまとめる
+  const writes: ChunkDoc[] = [];
+  const saved = drafts.map((draft, position): ChunkDoc => {
     const prev = assigned[position];
     if (prev !== undefined && prev.content === draft.content && prev.position === position) {
-      saved.push(prev);
-      continue;
+      return prev;
     }
     const next: ChunkDoc =
       prev === undefined
@@ -128,7 +111,15 @@ export async function saveChildrenDocs(
             updatedAt: now,
           }
         : { ...prev, position, content: draft.content, updatedAt: now };
-    saved.push(toChunkDoc(await db.chunks.upsert(next)));
+    writes.push(next);
+    return next;
+  });
+  if (writes.length > 0) {
+    const result = await db.chunks.bulkUpsert(writes);
+    const failure = result.error[0];
+    if (failure !== undefined) {
+      throw new Error(`chunk の保存に失敗しました: ${failure.status}`);
+    }
   }
   return saved;
 }
@@ -159,18 +150,21 @@ export async function setUserTagDocs(
 ): Promise<void> {
   const unique = new Set(names);
   const existing = await db.chunkUserTags.find({ selector: { chunkId } }).exec();
-  await db.chunkUserTags.bulkRemove(existing.filter((d) => !unique.has(d.name)).map((d) => d.id));
   const have = new Set(existing.map((d) => d.name));
-  await db.chunkUserTags.bulkInsert(
-    [...unique]
-      .filter((n) => !have.has(n))
-      .map((name) => ({
-        id: newDocId(),
-        chunkId,
-        name,
-        updatedAt: now,
-      })),
-  );
+  // 削除と挿入は互いに独立（別 doc）なので重ねる
+  await Promise.all([
+    db.chunkUserTags.bulkRemove(existing.filter((d) => !unique.has(d.name)).map((d) => d.id)),
+    db.chunkUserTags.bulkInsert(
+      [...unique]
+        .filter((n) => !have.has(n))
+        .map((name) => ({
+          id: newDocId(),
+          chunkId,
+          name,
+          updatedAt: now,
+        })),
+    ),
+  ]);
 }
 
 /** 変換学習（かな → 確定）の保存。correction は local のみ（replication 対象外） */

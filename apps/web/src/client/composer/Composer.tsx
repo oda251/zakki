@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { chunkText, makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { errorMessage } from "@zakki/core/util/error.ts";
 import { SAVE_DEBOUNCE_MS } from "@zakki/core/config/timing.ts";
 import { createConversionSession } from "@zakki/core/conversion/compose.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
@@ -148,7 +149,7 @@ export function Composer({
         })
         .catch((e: unknown) => {
           setSaveState("error");
-          setMessage(e instanceof Error ? e.message : String(e));
+          setMessage(errorMessage(e));
         });
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);

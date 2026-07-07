@@ -1,22 +1,13 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { addRxPlugin } from "rxdb";
-import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
-import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
-import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
 import { childrenQuery, correctionsMap } from "@zakki/web/client/db/docs.ts";
+import { testStorage } from "@zakki/web/client/db/test-db.ts";
 
 /**
  * RxDB Phase 1（#40）。memory storage + dev-mode + ajv バリデータで検証する
  * （IndexedDB 不要 = opentui のグローバル汚染を受けない）。primaryKey は string。
  */
-beforeAll(() => {
-  addRxPlugin(RxDBDevModePlugin);
-});
-
-const testStorage = () => wrappedValidateAjvStorage({ storage: getRxStorageMemory() });
-
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "0",
   position: 0,
