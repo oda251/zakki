@@ -7,7 +7,6 @@ import {
   getOrCreateDateChunkDoc,
   saveChildrenDocs,
 } from "@zakki/web/client/db/writes.ts";
-import { EMPTY_FILTER } from "@zakki/web/client/store/graph-core.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /**
@@ -29,13 +28,7 @@ function connect(db: ZakkiDatabase): void {
 }
 
 beforeEach(() => {
-  useGraphStore.setState({
-    data: null,
-    error: null,
-    drillId: null,
-    filter: EMPTY_FILTER,
-    selectedNodeId: null,
-  });
+  useGraphStore.setState({ data: null, error: null });
 });
 
 afterEach(async () => {
@@ -102,7 +95,7 @@ describe("useGraphStore.connect", () => {
     await addLinkDocs(db, [{ from: a, to: b }], T1);
 
     // セッション状態を捨てて（リロード相当）から接続し直す
-    useGraphStore.setState({ data: null, error: null, drillId: null, selectedNodeId: null });
+    useGraphStore.setState({ data: null, error: null });
     connect(db);
     await tick();
     expect(useGraphStore.getState().data?.edges.length).toBe(1);

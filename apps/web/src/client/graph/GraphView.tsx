@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { clampText } from "@zakki/web/client/graph/clamp.ts";
+import { useElementSize } from "@zakki/web/client/hooks/use-element-size.ts";
+import { gotoChunk, selectNode } from "@zakki/web/client/router/navigate.ts";
+import { useDrillId, useRoute } from "@zakki/web/client/router/use-route.ts";
 import type { GraphNode } from "@zakki/web/shared/api-types.ts";
-import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import {
   type ClickStamp,
   isDoubleClick,
-  parentOf,
   resolveNodeActivation,
   SERIES_SLOTS,
   seriesSlotsAtLevel,
@@ -74,55 +75,14 @@ function traceShape(
 
 export function GraphView() {
   const data = useGraphStore((s) => s.data);
-  const drillId = useGraphStore((s) => s.drillId);
-  const filter = useGraphStore((s) => s.filter);
-  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
-  const selectNode = useGraphStore((s) => s.selectNode);
+  // ドリル位置・選択・フィルタは URL が SSOT（#52）。
+  // Escape（親階層へ戻る）のキーマップも URL 遷移として router/controller.ts に集約済み。
+  const drillId = useDrillId();
+  const { select: selectedNodeId, filter } = useRoute();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState({ width: 0, height: 0 });
+  const size = useElementSize(containerRef);
   const palette = useMemo(resolvePalette, []);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (el === null) return undefined;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined) {
-        setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  // Escape = 親階層へ戻る（docs/CHUNKS.md §ナビゲーション）。現ドリルノードの parentId が
-  // 非 null なら所属バッファへ、null（日付チャンク）なら drillTo(null)（バッファ維持）。
-  // 入力欄（input / textarea / contenteditable / role=textbox=Composer）フォーカス中は無視。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      const el = document.activeElement;
-      if (
-        el instanceof HTMLElement &&
-        (el.tagName === "INPUT" ||
-          el.tagName === "TEXTAREA" ||
-          el.isContentEditable ||
-          el.getAttribute("role") === "textbox")
-      ) {
-        return;
-      }
-      const { data: current, drillId: id } = useGraphStore.getState();
-      if (id === null) return;
-      const parentId = current === null ? null : parentOf(current, id);
-      if (parentId !== null) {
-        void useBufferStore.getState().openChunk(parentId);
-      } else {
-        useGraphStore.getState().drillTo(null);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   const visible = useMemo(
     (): ReturnType<typeof visibleGraph> =>
@@ -166,7 +126,7 @@ export function GraphView() {
   };
 
   // ダブルクリック判定・遷移先決定は graph-core の純関数（isDoubleClick /
-  // resolveNodeActivation）に委譲し、ここは openChunk / selectNode の配線のみ。
+  // resolveNodeActivation）に委譲し、ここは URL 遷移（gotoChunk / selectNode）の配線のみ。
   // シングル = 選択のみ（external も同じ、セッション移動しない）。
   const lastClick = useRef<ClickStamp | null>(null);
   const onNodeClick = (fn: ForceNode, event: MouseEvent) => {
@@ -179,12 +139,9 @@ export function GraphView() {
     }
     const activation = resolveNodeActivation(fn.node);
     if (activation.kind === "drill") {
-      void useBufferStore.getState().openChunk(activation.id);
+      gotoChunk(activation.id);
     } else {
-      void useBufferStore
-        .getState()
-        .openChunk(activation.parentId)
-        .then(() => useGraphStore.getState().selectNode(activation.selectId));
+      gotoChunk(activation.parentId, activation.selectId);
     }
   };
 
