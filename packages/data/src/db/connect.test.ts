@@ -35,10 +35,10 @@ describe("openDb (local-only)", () => {
     expect(root.content).toBe("2026-06-12");
   });
 
-  test("sync() は no-op の Ok を返す（同期先が無い）", async () => {
+  test("sync() は no-op の Ok（pulled=false）を返す（同期先が無い）", async () => {
     const { sync } = await openDb(local, dbPath);
     const r = await sync();
-    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toEqual({ pulled: false });
   });
 });
 

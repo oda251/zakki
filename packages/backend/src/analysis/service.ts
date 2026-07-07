@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import type { ResultAsync } from "neverthrow";
+import type { Result, ResultAsync } from "neverthrow";
 import { AAD } from "@zakki/core/crypto/aad.ts";
-import type { Db } from "@zakki/data/db/client.ts";
+import type { Db, DbHandle } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
@@ -56,6 +56,32 @@ interface AnalysisSnapshot {
 }
 
 const snapshots = new WeakMap<Db, AnalysisSnapshot>();
+
+/**
+ * プロセス内スナップショットを破棄し、次回の解析パスを全量（{@link analyzeAll}）へ
+ * フォールバックさせる（issue #55）。増分解析は「本プロセスが唯一のライタ」を前提に
+ * 差分基準を持つため、外部書き込み（Turso sync の pull、RxDB replication のサーバ
+ * 書き込み #42-#45）を取り込んだ直後に呼んで正を回復する。両経路で共有する単一の口。
+ * nounCache は content キーの決定的メモ（値は content のみの関数）なので破棄しない。
+ */
+export function invalidateAnalysisSnapshot(db: Db): void {
+  snapshots.delete(db);
+}
+
+/**
+ * DbHandle.sync を包み、リモートの変更を実際に取り込んだ（pulled）場合にだけ
+ * スナップショットを破棄する sync 関数を返す（issue #55）。no-op sync では増分の
+ * まま（全量の無駄打ちをしない）。合成点（web bootstrap / TUI）は生の sync では
+ * なくこれを使い、単一ライタ前提の破れを取り込み時点で塞ぐ。
+ */
+export function syncWithAnalysisReset(handle: DbHandle): () => Promise<Result<void, DbError>> {
+  return async () => {
+    const result = await handle.sync();
+    return result.map((outcome) => {
+      if (outcome.pulled) invalidateAnalysisSnapshot(handle.db);
+    });
+  };
+}
 
 /** SQL の IN 句パラメータ上限を避けるための分割 */
 function batched<T>(items: readonly T[], size: number): T[][] {
@@ -242,7 +268,8 @@ export function analyzeAll(db: Db): ResultAsync<AnalysisSummary, DbError> {
  * スナップショットが無い（起動後初回）は analyzeAll に委譲する。
  *
  * 前提: 本プロセス・本 Db インスタンスが唯一のライタであること。外部書き込み
- * （将来の Turso 同期など）を取り込んだ後は analyzeAll で正を回復すること。
+ * （Turso sync の pull 等）を取り込んだ後は {@link invalidateAnalysisSnapshot} で
+ * スナップショットを破棄し、次パスを全量へフォールバックさせて正を回復する（issue #55）。
  *
  * @returns taggedChunks = 再解析した変更チャンク数、links = 張り替えたリンク数
  */
