@@ -293,3 +293,18 @@ describe("グラフ", () => {
     expect(related.items).toEqual([]);
   });
 });
+
+describe("セキュリティヘッダ（#28 / #43）", () => {
+  test("全レスポンスに厳格 CSP（default-src 'self'）が付き、CORS ヘッダは付与しない", async () => {
+    const res = await app.request("/api/health");
+    expect(res.status).toBe(200);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'self'");
+    // libsodium の WASM 初期化に必要な最小限のみ script-src へ追加する
+    expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    // 同一オリジンのみ: CORS を明示的に開放しない
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
