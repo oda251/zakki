@@ -6,32 +6,30 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
+import type { Chunk, ChunkTag, Link, Tag } from "@zakki/data/db/schema.ts";
 import { ROOT_DATE_CTE } from "@zakki/data/chunk/sql.ts";
 
 /**
  * 検索・エクスポート・関連表示で共有する「日付付き本文チャンク」ビュー。
  * date はツリーを遡った祖先の日付チャンクの date（本文チャンク自身は date を
  * 持たない）。日付チャンク（構造ノード）はここには現れない。
+ *
+ * 列はモデル（schema.ts の {@link Chunk}）から派生させる。schema の列変更は
+ * ここで型エラーとして検出される（#50。SQL 別名との対応は chunk/sql.ts を参照）。
  */
-export interface ChunkWithDate {
-  id: number;
+export interface ChunkWithDate extends Pick<Chunk, "id" | "position" | "content" | "polarity"> {
   /** 本文チャンクは必ず親（日付チャンクまたはコンテナ）を持つ */
-  parentId: number;
-  position: number;
-  content: string;
-  date: string;
-  /** 永続化済みネガポジ極性 [-1,+1]。未解析は null */
-  polarity: number | null;
+  parentId: NonNullable<Chunk["parentId"]>;
+  /** 祖先の日付チャンクの date（ROOT_DATE_CTE の root_date） */
+  date: NonNullable<Chunk["date"]>;
 }
 
-interface RawChunkRow {
-  id: number;
-  parentId: number;
-  position: number;
-  content: string;
-  date: string;
-  polarity: number | null;
-}
+/**
+ * listChunksWithDate / listChunksByIds の SELECT 別名列に 1:1 対応する生 Row
+ * （chunk/sql.ts の ROOT_DATE_CTE 参照）。形は ChunkWithDate と同一で、
+ * content が暗号文のままでありうる点だけが異なる（復号は toChunkWithDate）。
+ */
+type RawChunkRow = ChunkWithDate;
 
 function toChunkWithDate(db: Db, rows: RawChunkRow[]): ChunkWithDate[] {
   const crypto = getCrypto(db);
@@ -112,6 +110,9 @@ export function countTags(
   return counts;
 }
 
+/** listTagsByChunk の SELECT 別名列（chunk_tags ⋈ tags）に対応する Row */
+type ChunkTagNameRow = Pick<ChunkTag, "chunkId" | "score"> & Pick<Tag, "name">;
+
 /** chunk id → タグ名（スコア降順） */
 export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbError> {
   const crypto = getCrypto(db);
@@ -120,7 +121,7 @@ export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbEr
       SELECT ct.chunk_id AS chunkId, t.name AS name, ct.score AS score
       FROM chunk_tags ct JOIN tags t ON ct.tag_id = t.id
     `);
-    const rows = res.rows as unknown as { chunkId: number; name: string; score: number }[];
+    const rows = res.rows as unknown as ChunkTagNameRow[];
     const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, string[]>();
     for (const row of sorted) {
@@ -133,9 +134,9 @@ export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbEr
   });
 }
 
-/** 日ごとのネガポジ極性の集計（docs/FEATURES.md §整理・想起系 7） */
+/** 日ごとのネガポジ極性の集計（docs/FEATURES.md §整理・想起系 7）。date 以外は SQL 集計の派生値 */
 export interface DailySentiment {
-  date: string;
+  date: NonNullable<Chunk["date"]>;
   /** その日の本文チャンク総数 */
   chunks: number;
   /** 極性が算出済み（解析済み）のチャンク数 */
@@ -177,7 +178,7 @@ export function listLinksByChunk(db: Db): ResultAsync<Map<number, number[]>, DbE
     const res = await db.run(
       sql`SELECT from_chunk_id AS fromChunkId, to_chunk_id AS toChunkId, score FROM links`,
     );
-    const rows = res.rows as unknown as { fromChunkId: number; toChunkId: number; score: number }[];
+    const rows = res.rows as unknown as Pick<Link, "fromChunkId" | "toChunkId" | "score">[];
     const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, number[]>();
     const push = (from: number, to: number) => {
