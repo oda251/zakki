@@ -36,8 +36,13 @@ interface BufferState {
 }
 
 export const useBufferStore = create<BufferState>((set, get) => {
-  const openDoc = async (db: ZakkiDatabase, chunk: ChunkDoc): Promise<void> => {
+  // 世代トークン: 連打ナビ（A→B）で A の応答が後着しても、最後に要求されたバッファ
+  // だけが状態を書く（PR #79 レビュー対応。エラー表示も同様にガードする）
+  let generation = 0;
+
+  const openDoc = async (db: ZakkiDatabase, chunk: ChunkDoc, ticket: number): Promise<void> => {
     const children = await childrenQuery(db, chunk.id);
+    if (ticket !== generation) return;
     set({
       currentId: numId(chunk.id),
       initialRaw: buildRaw(children.map((c) => c.content)),
@@ -46,7 +51,8 @@ export const useBufferStore = create<BufferState>((set, get) => {
     });
   };
 
-  const fail = (e: unknown): void => {
+  const fail = (e: unknown, ticket: number): void => {
+    if (ticket !== generation) return;
     set({ error: errorMessage(e) });
   };
 
@@ -64,25 +70,27 @@ export const useBufferStore = create<BufferState>((set, get) => {
     openToday: async () => {
       const { db } = get();
       if (db === null) return;
+      const ticket = ++generation;
       try {
-        await openDoc(db, await getOrCreateDateChunkDoc(db, localDate()));
+        await openDoc(db, await getOrCreateDateChunkDoc(db, localDate()), ticket);
       } catch (e) {
-        fail(e);
+        fail(e, ticket);
       }
     },
 
     openChunk: async (id) => {
       const { db } = get();
       if (db === null) return;
+      const ticket = ++generation;
       try {
         const doc = await db.chunks.findOne(docId(id)).exec();
         if (doc === null) {
-          set({ error: `チャンクが存在しません: id=${id}` });
+          if (ticket === generation) set({ error: `チャンクが存在しません: id=${id}` });
           return;
         }
-        await openDoc(db, toChunkDoc(doc));
+        await openDoc(db, toChunkDoc(doc), ticket);
       } catch (e) {
-        fail(e);
+        fail(e, ticket);
       }
     },
   };

@@ -10,7 +10,7 @@ import { applyKey } from "@zakki/core/input/controller.ts";
 import { createEditorStore } from "@zakki/core/input/store.ts";
 import { api } from "@zakki/web/client/api/client.ts";
 import { chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
-import { chainLinks, newChunkIds } from "@zakki/web/client/composer/auto-link.ts";
+import { newChunkIds, planAutoLink } from "@zakki/web/client/composer/auto-link.ts";
 import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
@@ -19,6 +19,7 @@ import { addLinkDocs, saveChildrenDocs, upsertCorrection } from "@zakki/web/clie
 import { currentHref } from "@zakki/web/client/router/history.ts";
 import { selectNode } from "@zakki/web/client/router/navigate.ts";
 import { parseRoute } from "@zakki/web/client/router/route.ts";
+import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 
 type SaveState = "saved" | "dirty" | "error";
 
@@ -72,21 +73,29 @@ export function Composer({
   // 自動リンク（数珠繋ぎ）の「新規」判定基準。保存応答のたびに更新する
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
-  // 新規チャンクを「選択中の投稿」（URL の ?select=）から数珠繋ぎに自動リンクし、
+  // 新規チャンクを「選択中の投稿」（保存予約時点の ?select=）から数珠繋ぎに自動リンクし、
   // 選択を最新へ移す。リンクは links コレクションへ永続化し（#77）、グラフへは
-  // liveQuery 購読で反映される（replication が非同期にサーバへ push する）
+  // liveQuery 購読で反映される（replication が非同期にサーバへ push する）。
+  // バッファ切替後に後着した保存では planAutoLink が null を返し、切替先への
+  // 誤リンク・?select= の誤上書きをしない（保存本体は走らせてデータを保全する）
   const linkNewChunks = useCallback(
-    (savedChunks: readonly { id: number }[]) => {
+    (savedChunks: readonly { id: number }[], anchor: number | null) => {
       const fresh = newChunkIds(knownChunkIds.current, savedChunks);
       knownChunkIds.current = savedChunks.map((c) => c.id);
-      if (fresh.length === 0) return;
-      const anchor = parseRoute(currentHref()).select;
-      void addLinkDocs(db, chainLinks(anchor, fresh)).catch((e: unknown) => {
+      const plan = planAutoLink({
+        parentId,
+        anchor,
+        chunk: parseRoute(currentHref()).chunk,
+        currentId: useBufferStore.getState().currentId,
+        freshIds: fresh,
+      });
+      if (plan === null) return;
+      void addLinkDocs(db, plan.links).catch((e: unknown) => {
         setMessage(`リンクの保存に失敗: ${errorMessage(e)}`);
       });
-      selectNode(fresh.at(-1) ?? null);
+      selectNode(plan.select);
     },
-    [db],
+    [db, parentId],
   );
 
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();
@@ -99,6 +108,9 @@ export function Composer({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversionRef = useRef<ReturnType<typeof createConversionSession> | null>(null);
   const scheduleSave = useCallback(() => {
+    // アンカー（数珠繋ぎの起点）は予約時点で捕捉する: 発火（300ms 後）までにバッファが
+    // 切り替わっても、切替先 URL の ?select= を誤って読まない（PR #79 レビュー対応）
+    const anchor = parseRoute(currentHref()).select;
     if (saveTimer.current !== null) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
@@ -112,7 +124,10 @@ export function Composer({
       saveChildrenDocs(db, docId(parentId), chunkText(converted))
         .then((saved) => {
           setSaveState("saved");
-          linkNewChunks(saved.map((c) => ({ id: numId(c.id) })));
+          linkNewChunks(
+            saved.map((c) => ({ id: numId(c.id) })),
+            anchor,
+          );
         })
         .catch((e: unknown) => {
           setSaveState("error");
