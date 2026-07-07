@@ -54,7 +54,7 @@ docker compose up --build
 留意:
 
 - **TUI と Web サーバの同時起動は非推奨**（同一 SQLite への複数ライターとなり、解析パスが競合しうる）。どちらか一方を使う。
-- E2E 暗号（`ZAKKI_ENCRYPTION=1`）の Web サーバはキーファイルによる無言アンロックのみ対応。初回セットアップ・パスフレーズ操作は TUI（`bun start` / `bun run passphrase`）で行う。
+- Web サーバは DEK を持たず復号しない（暗号文の中継・封筒配布・変換エンジンのみ）。E2E 暗号のアンロックはブラウザ側（パスフレーズ入力）で行い、`ZAKKI_ENCRYPTION` は TUI 専用。初回セットアップ・パスフレーズ操作は TUI（`bun start` / `bun run passphrase`）で行う。
 
 どちらも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.cpp server 等）が起動していれば強化される（要約文・類義判定）。未指定時は LM Studio → Ollama の順に自動検出し、`ZAKKI_LLM_BASE_URL` / `ZAKKI_LLM_MODEL` で明示指定もできる。LLM がなければ決定的な集計・編集距離 + embedding のみで動く。
 

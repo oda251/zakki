@@ -62,6 +62,24 @@ module.exports = {
       to: { path: "^apps/web/src/client", dependencyTypesNot: ["type-only"] },
     },
     {
+      name: "web-server-no-decrypt-capability",
+      comment:
+        "web サーバは DEK・復号能力へ（推移的にも）到達しない（issue #45 / #28 項目1）。" +
+        "復号（crypto-context / getCrypto）・アンロック（unlock / keyfile / init）・" +
+        "平文前提の解析（backend/analysis・embedding）はクライアント wasm / TUI の責務。" +
+        "サーバに残すのは暗号文の中継（replication）・封筒配布・変換エンジンのみ",
+      severity: "error",
+      from: { path: "^apps/web/src/server", pathNot: "\\.test\\.(ts|tsx)$" },
+      to: {
+        path:
+          "^packages/data/src/db/crypto-context\\.ts$|" +
+          "^packages/data/src/crypto/(unlock|keyfile|init|guard)\\.ts$|" +
+          "^packages/backend/src/(analysis|embedding)/|" +
+          "^packages/core/src/crypto/fields\\.ts$",
+        reachable: true,
+      },
+    },
+    {
       name: "web-client-no-data-runtime",
       comment:
         "client から @zakki/data の実 import 禁止（node 依存の混入防止。型は shared 経由で可）。" +
