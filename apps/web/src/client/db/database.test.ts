@@ -4,7 +4,8 @@ import { RxDBDevModePlugin } from "rxdb/plugins/dev-mode";
 import { getRxStorageMemory } from "rxdb/plugins/storage-memory";
 import { wrappedValidateAjvStorage } from "rxdb/plugins/validate-ajv";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
-import { childrenQuery, correctionsMap, createZakkiDb } from "@zakki/web/client/db/database.ts";
+import { createZakkiDb } from "@zakki/web/client/db/database.ts";
+import { childrenQuery, correctionsMap } from "@zakki/web/client/db/docs.ts";
 
 /**
  * RxDB Phase 1（#40）。memory storage + dev-mode + ajv バリデータで検証する
