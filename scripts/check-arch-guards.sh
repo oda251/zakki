@@ -84,4 +84,26 @@ else
   echo "OK: web server Bun API guard (issue #29)"
 fi
 
+# ---------------------------------------------------------------------------
+# Guard 4: backend での drizzle-orm 直接使用禁止（issue #53）
+#
+# 解析結果の永続化・読み取りは packages/data の適用関数・クエリ
+# （analysis/apply.ts・analysis/queries.ts 等）経由にする。schema.ts の直接
+# import は dependency-cruiser（backend-no-schema-internals）で縛り、生 SQL
+# （sql タグ・演算子）は drizzle-orm import の禁止で縛る（depcruise では
+# 「schema を経由しない生 SQL」を検出できないため grep で補完する）。
+# ---------------------------------------------------------------------------
+DRIZZLE_ALLOW=(
+  ':!*.test.ts'  # テストは DB 実体の検証で drizzle を使ってよい
+  ':!*.test.tsx'
+)
+if hits=$(git grep -nE 'from "drizzle-orm' -- 'packages/backend/src/**/*.ts' "${DRIZZLE_ALLOW[@]}"); then
+  echo "NG: packages/backend で drizzle-orm を直接使用しています（issue #53 / #59）"
+  echo "    永続化・読み取りは packages/data の適用関数・クエリ（analysis/apply.ts 等）へ移してください。"
+  echo "$hits"
+  status=1
+else
+  echo "OK: backend drizzle-orm guard (issue #53)"
+fi
+
 exit $status
