@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEK_BYTES } from "@zakki/core/crypto/dek.ts";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
-import { APP_DIR } from "@zakki/data/util/paths.ts";
+import { APP_DIR } from "@zakki/data/util/app-dir.ts";
 
 /**
  * ローカルキーファイルによる KEK（鍵暗号鍵）管理（Phase 5 の唯一のアンロック手段）。

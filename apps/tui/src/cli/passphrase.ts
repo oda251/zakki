@@ -16,7 +16,7 @@ import {
 } from "@zakki/data/crypto/envelopes.ts";
 import { hasEnvelope } from "@zakki/data/crypto/envelopes.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
-import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/connect.ts";
 import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
 import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { readNewPassphraseTwice, readPassphrase } from "@zakki/tui/tui/prompt.ts";

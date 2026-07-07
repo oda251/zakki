@@ -5,7 +5,7 @@ import { serveStatic } from "hono/bun";
 import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import { parseZakkiConfig } from "@zakki/core/config/env.ts";
-import { defaultDbPath } from "@zakki/data/db/client.ts";
+import { defaultDbPath } from "@zakki/data/db/connect.ts";
 import { openDb } from "@zakki/data/db/connect.ts";
 import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
 import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";

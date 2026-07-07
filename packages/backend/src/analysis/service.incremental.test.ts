@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { chunks, chunkTags, links, tags } from "@zakki/data/db/schema.ts";
 import { listChunksWithDate } from "@zakki/data/chunk/queries.ts";
 import { seedDayChunks } from "@zakki/data/chunk/testing.ts";

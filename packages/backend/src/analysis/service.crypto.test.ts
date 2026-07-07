@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { initCrypto } from "@zakki/data/crypto/init.ts";
 import { attachCrypto, getCrypto } from "@zakki/data/db/crypto-context.ts";
 import { chunkTags, links, tags as tagsTable } from "@zakki/data/db/schema.ts";

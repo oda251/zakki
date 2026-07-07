@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createDb } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
 import { createAnalysisScheduler } from "./analysis.ts";
 import { createAnalysisEvents } from "./events.ts";
 

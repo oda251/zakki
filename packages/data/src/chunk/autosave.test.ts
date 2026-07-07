@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { getOrCreateDateChunk, listChildren } from "./repository.ts";
 import { localDate, persistChildren } from "./autosave.ts";
 

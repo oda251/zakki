@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { bufferToVector, cosine, vectorToBuffer } from "./vector.ts";

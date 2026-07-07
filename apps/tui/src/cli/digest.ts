@@ -9,7 +9,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { generateDigest } from "@zakki/tui/digest/digest.ts";
-import { createDb, defaultDbPath } from "@zakki/data/db/client.ts";
+import { createDb, defaultDbPath } from "@zakki/data/db/connect.ts";
 import { localDate } from "@zakki/data/chunk/autosave.ts";
 import { countTags, listChunksWithDate, listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import { xdgDataHome } from "@zakki/data/util/paths.ts";

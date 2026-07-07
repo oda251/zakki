@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
 import { analyzeAll } from "@zakki/backend/analysis/service.ts";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
 import { listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import type { TextGenerator } from "@zakki/backend/llm/client.ts";

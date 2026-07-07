@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
-import { createDb, type Db } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
+import type { Db } from "@zakki/data/db/client.ts";
 import { chunks } from "@zakki/data/db/schema.ts";
 import type { Hono } from "hono";
 import { mergeDelta } from "@zakki/web/client/store/graph-core.ts";

@@ -3,7 +3,7 @@ import { ok } from "neverthrow";
 import { testRender } from "@opentui/react/test-utils";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
-import { createDb } from "@zakki/data/db/client.ts";
+import { createDb } from "@zakki/data/db/connect.ts";
 import { listChunksWithDate } from "@zakki/data/chunk/queries.ts";
 import { getOrCreateDateChunk } from "@zakki/data/chunk/repository.ts";
 import { App } from "./App.tsx";
