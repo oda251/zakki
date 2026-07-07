@@ -7,7 +7,12 @@
  * dynamic import 境界の内側だけ）。
  */
 import type { RxDocument } from "rxdb";
-import type { ChunkDoc, ChunkUserTagDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import type {
+  ChunkDoc,
+  ChunkUserTagDoc,
+  LinkDoc,
+  ZakkiDatabase,
+} from "@zakki/web/client/db/database.ts";
 
 /** RxDocument<ChunkDoc> → ChunkDoc への field コピー（プレーンオブジェクト化） */
 export function toChunkDoc(d: RxDocument<ChunkDoc>): ChunkDoc {
@@ -27,6 +32,19 @@ export function toChunkDoc(d: RxDocument<ChunkDoc>): ChunkDoc {
 export function toUserTagDoc(d: RxDocument<ChunkUserTagDoc>): ChunkUserTagDoc {
   const json = d.toJSON();
   return { id: json.id, chunkId: json.chunkId, name: json.name, updatedAt: json.updatedAt };
+}
+
+/** RxDocument<LinkDoc> → LinkDoc への field コピー */
+export function toLinkDoc(d: RxDocument<LinkDoc>): LinkDoc {
+  const json = d.toJSON();
+  return {
+    id: json.id,
+    fromChunkId: json.fromChunkId,
+    toChunkId: json.toChunkId,
+    score: json.score,
+    origin: json.origin,
+    updatedAt: json.updatedAt,
+  };
 }
 
 /** position 昇順の比較関数 */

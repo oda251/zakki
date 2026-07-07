@@ -2,10 +2,12 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
-import type { ChunkDocData } from "@zakki/web/client/db/modifiers.ts";
+import type { ChunkDocData, LinkDocData } from "@zakki/web/client/db/modifiers.ts";
 import {
   chunkPull,
   chunkPush,
+  linkPull,
+  linkPush,
   tagPull,
   tagPush,
   userTagPull,
@@ -82,5 +84,20 @@ describe("replication modifiers (Phase 2)", () => {
     expect(wire.updatedAt).toBe("2026-07-07T00:00:00.000Z");
     expect(wire.nameFingerprint).toBe(crypto.fingerprint("旅行"));
     expect(userTagPull(crypto, wire)).toEqual(doc);
+  });
+
+  test("link は構造情報のみのため wire でも平文で往復する（#77 の判断）", () => {
+    const doc: LinkDocData = {
+      id: "3-7",
+      fromChunkId: "3",
+      toChunkId: "7",
+      score: 1,
+      origin: "manual",
+      updatedAt: "2026-07-07T00:00:00.000Z",
+      _deleted: false,
+    };
+    const wire = linkPush(doc);
+    expect(wire).toEqual(doc);
+    expect(linkPull(wire)).toEqual(doc);
   });
 });

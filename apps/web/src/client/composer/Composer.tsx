@@ -15,7 +15,7 @@ import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { docId, numId } from "@zakki/web/client/db/ids.ts";
-import { saveChildrenDocs, upsertCorrection } from "@zakki/web/client/db/writes.ts";
+import { addLinkDocs, saveChildrenDocs, upsertCorrection } from "@zakki/web/client/db/writes.ts";
 import type { BufferChunk } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
@@ -70,16 +70,21 @@ export function Composer({
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
   // 新規チャンクを「選択中の投稿」から数珠繋ぎに自動リンクし、選択を最新へ移す。
-  // links はサーバ解析と同じく replication 対象外のため当面セッションローカル
-  // （永続化は links コレクション導入後。#44 の対象外）
-  const linkNewChunks = useCallback((savedChunks: readonly { id: number }[]) => {
-    const fresh = newChunkIds(knownChunkIds.current, savedChunks);
-    knownChunkIds.current = savedChunks.map((c) => c.id);
-    if (fresh.length === 0) return;
-    const anchor = useGraphStore.getState().selectedNodeId;
-    useGraphStore.getState().addManualEdges(chainLinks(anchor, fresh));
-    useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
-  }, []);
+  // リンクは links コレクションへ永続化し（#77）、グラフへは liveQuery 購読で
+  // 反映される（replication が非同期にサーバへ push する）
+  const linkNewChunks = useCallback(
+    (savedChunks: readonly { id: number }[]) => {
+      const fresh = newChunkIds(knownChunkIds.current, savedChunks);
+      knownChunkIds.current = savedChunks.map((c) => c.id);
+      if (fresh.length === 0) return;
+      const anchor = useGraphStore.getState().selectedNodeId;
+      void addLinkDocs(db, chainLinks(anchor, fresh)).catch((e: unknown) => {
+        setMessage(`リンクの保存に失敗: ${errorMessage(e)}`);
+      });
+      useGraphStore.getState().selectNode(fresh.at(-1) ?? null);
+    },
+    [db],
+  );
 
   const { setRaw, setEditing, bumpConversion: bump } = store.getState();
 

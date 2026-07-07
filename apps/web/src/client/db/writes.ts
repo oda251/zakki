@@ -14,9 +14,9 @@
  */
 import type { ChunkDraft } from "@zakki/core/chunk/chunker.ts";
 import { matchDraftsToExisting } from "@zakki/core/chunk/match.ts";
-import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import type { ChunkDoc, LinkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { byPosition, toChunkDoc } from "@zakki/web/client/db/docs.ts";
-import { dateChunkId, newDocId } from "@zakki/web/client/db/ids.ts";
+import { dateChunkId, docId, linkDocId, newDocId } from "@zakki/web/client/db/ids.ts";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -60,9 +60,15 @@ async function removeSubtrees(db: ZakkiDatabase, rootIds: readonly string[]): Pr
   if (rootIds.length === 0) return;
   const ids = await collectSubtree(db, rootIds);
   await db.chunks.bulkRemove(ids);
-  // サーバの FK cascade に相当: 消えたチャンクの userTags も落とす
+  // サーバの FK cascade に相当: 消えたチャンクの userTags・links も落とす
   const tags = await db.chunkUserTags.find({ selector: { chunkId: { $in: ids } } }).exec();
-  await db.chunkUserTags.bulkRemove(tags.map((t) => t.id));
+  const links = await db.links
+    .find({ selector: { $or: [{ fromChunkId: { $in: ids } }, { toChunkId: { $in: ids } }] } })
+    .exec();
+  await Promise.all([
+    db.chunkUserTags.bulkRemove(tags.map((t) => t.id)),
+    db.links.bulkRemove(links.map((l) => l.id)),
+  ]);
 }
 
 /** チャンクを子孫・userTags ごと削除する（DELETE /chunks/:id 相当） */
@@ -165,6 +171,42 @@ export async function setUserTagDocs(
         })),
     ),
   ]);
+}
+
+/**
+ * 数珠繋ぎリンクの永続化（#77。graph store の manualEdges セッションローカル実装を置換）。
+ * かつての data 層 addManualLink と同じ不変条件: from < to 正規化・自己リンクと
+ * 既存ペアは no-op（updatedAt を書き換えず、無駄な replication push を出さない）。
+ * id はペアから決定的（{@link linkDocId}）で、多端末でも同一 doc に収束する。
+ */
+export async function addLinkDocs(
+  db: ZakkiDatabase,
+  drafts: readonly { from: number; to: number }[],
+  now: string = nowIso(),
+): Promise<void> {
+  const candidates = new Map<string, LinkDoc>();
+  for (const d of drafts) {
+    if (d.from === d.to) continue;
+    const [from, to] = d.from < d.to ? [d.from, d.to] : [d.to, d.from];
+    const id = linkDocId(from, to);
+    candidates.set(id, {
+      id,
+      fromChunkId: docId(from),
+      toChunkId: docId(to),
+      score: 1,
+      origin: "manual",
+      updatedAt: now,
+    });
+  }
+  if (candidates.size === 0) return;
+  const existing = await db.links.findByIds([...candidates.keys()]).exec();
+  const inserts = [...candidates.values()].filter((doc) => !existing.has(doc.id));
+  if (inserts.length === 0) return;
+  const result = await db.links.bulkInsert(inserts);
+  const failure = result.error[0];
+  if (failure !== undefined) {
+    throw new Error(`リンクの保存に失敗しました: ${failure.status}`);
+  }
 }
 
 /** 変換学習（かな → 確定）の保存。correction は local のみ（replication 対象外） */

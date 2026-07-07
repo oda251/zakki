@@ -27,3 +27,13 @@ const DATE_CHUNK_ID_BASE = 900_000_000_000_000;
 export function dateChunkId(date: string): string {
   return String(DATE_CHUNK_ID_BASE + Number(date.replaceAll("-", "")));
 }
+
+/**
+ * リンク doc の決定的 id（チャンク id ペア → `min-max`）。サーバ links 表の
+ * ペア一意（from < to 正規化）に対応し、多端末が同じペアを張っても
+ * replication 後に同一 doc へ収束する（日付チャンク id と同じ考え方）。
+ */
+export function linkDocId(a: number, b: number): string {
+  const [from, to] = a < b ? [a, b] : [b, a];
+  return `${from}-${to}`;
+}

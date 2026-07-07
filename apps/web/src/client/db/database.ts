@@ -11,7 +11,7 @@
  */
 import { createRxDatabase } from "rxdb";
 import type { RxCollection, RxConflictHandler, RxDatabase, RxJsonSchema, RxStorage } from "rxdb";
-import type { Chunk, ChunkUserTag, Correction, Tag } from "@zakki/web/shared/api-types.ts";
+import type { Chunk, ChunkUserTag, Correction, Link, Tag } from "@zakki/web/shared/api-types.ts";
 
 /**
  * RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ。
@@ -28,11 +28,23 @@ export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string }
 >;
 export type TagDoc = { id: string; updatedAt: string } & Pick<Tag, "name">;
 export type CorrectionDoc = Correction;
+/**
+ * chunk 間リンク（数珠繋ぎ・意味リンク, #77）。サーバ links 表と同じく
+ * from < to 正規化のペア一意で、id はペアから決定的に導出する（ids.ts の
+ * {@link import("@zakki/web/client/db/ids.ts").linkDocId}）。
+ */
+export type LinkDoc = {
+  id: string;
+  fromChunkId: string;
+  toChunkId: string;
+  updatedAt: string;
+} & Pick<Link, "score" | "origin">;
 
 export type ZakkiCollections = {
   chunks: RxCollection<ChunkDoc>;
   chunkUserTags: RxCollection<ChunkUserTagDoc>;
   tags: RxCollection<TagDoc>;
+  links: RxCollection<LinkDoc>;
   corrections: RxCollection<CorrectionDoc>;
 };
 export type ZakkiDatabase = RxDatabase<ZakkiCollections>;
@@ -78,6 +90,22 @@ const tagsSchema = {
   required: ["id", "name", "updatedAt"],
 } as const satisfies RxJsonSchema<TagDoc>;
 
+const linksSchema = {
+  version: 0,
+  primaryKey: "id",
+  type: "object",
+  properties: {
+    // chunk id（maxLength 32）2 つを "-" で結ぶため 65
+    id: { type: "string", maxLength: 65 },
+    fromChunkId: { type: "string" },
+    toChunkId: { type: "string" },
+    score: { type: "number" },
+    origin: { type: "string", enum: ["auto", "manual"] },
+    updatedAt: { type: "string" },
+  },
+  required: ["id", "fromChunkId", "toChunkId", "score", "origin", "updatedAt"],
+} as const satisfies RxJsonSchema<LinkDoc>;
+
 const correctionsSchema = {
   version: 0,
   primaryKey: "kana",
@@ -114,6 +142,7 @@ export async function createZakkiDb(
       conflictHandler: serverWinsConflictHandler<ChunkUserTagDoc>(),
     },
     tags: { schema: tagsSchema, conflictHandler: serverWinsConflictHandler<TagDoc>() },
+    links: { schema: linksSchema, conflictHandler: serverWinsConflictHandler<LinkDoc>() },
     corrections: {
       schema: correctionsSchema,
       conflictHandler: serverWinsConflictHandler<CorrectionDoc>(),
