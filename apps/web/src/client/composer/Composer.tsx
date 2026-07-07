@@ -69,7 +69,6 @@ export function Composer({
   const editing = useStore(store, (s) => s.editing);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [message, setMessage] = useState("");
-  const [focused, setFocused] = useState(false);
   // 自動リンク（数珠繋ぎ）の「新規」判定基準。保存応答のたびに更新する
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
 
@@ -240,14 +239,14 @@ export function Composer({
     editing !== null && editing.target.kind === "main" ? editing.target.start : null;
 
   return (
+    // フォーカス強調は CSS :focus-within（自身と修正 input の両方を拾う。
+    // 旧実装の onFocus/onBlur + state と同じ範囲。issue #58 項目 8）
     <div
-      className={focused ? "composer composer--focused" : "composer"}
+      className="composer"
       tabIndex={0}
       role="textbox"
       aria-label="ジャーナル入力"
       onKeyDown={onKeyDown}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
       onCompositionEnd={(e) => appendLiteral(e.data)}
       onPaste={(e) => {
         e.preventDefault();
