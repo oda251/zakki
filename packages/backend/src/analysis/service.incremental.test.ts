@@ -4,7 +4,6 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { chunks, chunkTags, links, tags } from "@zakki/data/db/schema.ts";
 import { listChunksWithDate } from "@zakki/data/chunk/queries.ts";
 import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
-import { addManualLink } from "@zakki/data/link/repository.ts";
 import { analyzeAll, analyzeChanged } from "./service.ts";
 
 async function seed(db: Db, date: string, contents: string[]): Promise<void> {
@@ -156,7 +155,8 @@ describe("analyzeChanged（増分解析）", () => {
     const [a, b] = body.map((c) => c.id);
     if (a === undefined || b === undefined) throw new Error("seed 不足");
 
-    (await addManualLink(db, a, b))._unsafeUnwrap();
+    // 旧 addManualLink（#45 で web 経路ごと撤去）と同じ from < to 正規化行を直接挿入する
+    await db.insert(links).values({ fromChunkId: a, toChunkId: b, score: 1, origin: "manual" });
     await seed(db, "2026-06-10", ["最初の話を書き直した。", "全然関係ない別の話。"]);
     (await analyzeChanged(db))._unsafeUnwrap();
 

@@ -1,12 +1,8 @@
 import type { ResultAsync } from "neverthrow";
-import { okAsync } from "neverthrow";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import { links } from "@zakki/data/db/schema.ts";
-import type { ChunkWithDate } from "@zakki/data/chunk/queries.ts";
-import { listChunksByIds } from "@zakki/data/chunk/queries.ts";
-import { loadVectors } from "./store.ts";
 import { cosine } from "./vector.ts";
 
 /**
@@ -67,44 +63,4 @@ export function nearestChunks(
     }
   }
   return scored.toSorted((a, b) => b.score - a.score).slice(0, topK);
-}
-
-/**
- * 関連表示の項目（近傍チャンクを日付・本文でハイドレートしたもの）。
- * 列は {@link ChunkWithDate}（= schema.ts の Chunk 派生）から派生させる（#50）。
- */
-export interface RelatedChunk extends Pick<ChunkWithDate, "date" | "content"> {
-  /** 近傍チャンクの id（{@link ChunkWithDate.id} の改名） */
-  chunkId: ChunkWithDate["id"];
-  /** クエリチャンクとのコサイン類似度 */
-  score: number;
-}
-
-/**
- * 指定チャンクの意味的近傍を返す（TUI の関連アンビエント / web の related が共有）。
- * 対象のベクトルが無ければ空。ハイドレートは近傍 id のみ復号する（全量復号を避ける）。
- */
-export function relatedChunks(
-  db: Db,
-  chunkId: number,
-  limit: number,
-): ResultAsync<RelatedChunk[], DbError> {
-  return loadVectors(db).andThen((vectors) => {
-    const query = vectors.get(chunkId);
-    if (query === undefined) return okAsync<RelatedChunk[], DbError>([]);
-    const neighbors = nearestChunks(vectors, query, limit + 1)
-      .filter((n) => n.chunkId !== chunkId)
-      .slice(0, limit);
-    const scoreById = new Map(neighbors.map((n) => [n.chunkId, n.score]));
-    return listChunksByIds(db, [...scoreById.keys()]).map((chunks) =>
-      chunks
-        .map((c) => ({
-          chunkId: c.id,
-          date: c.date,
-          content: c.content,
-          score: scoreById.get(c.id) ?? 0,
-        }))
-        .toSorted((a, b) => b.score - a.score),
-    );
-  });
 }

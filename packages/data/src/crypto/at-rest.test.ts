@@ -4,10 +4,9 @@ import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
 import type { Embedder } from "@zakki/core/embedding/types.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { Db } from "@zakki/data/db/client.ts";
-import { chunks, chunkUserTags, embeddings } from "@zakki/data/db/schema.ts";
+import { chunks, embeddings } from "@zakki/data/db/schema.ts";
 import { listChildren } from "@zakki/data/chunk/repository.ts";
 import { seedDayChunks } from "@zakki/data/chunk/testing.ts";
-import { listUserTagsByChunk, setChunkUserTags } from "@zakki/data/chunk/user-tags.ts";
 import { loadVectors, syncChunkEmbeddings } from "@zakki/data/embedding/store.ts";
 import { initCrypto } from "./init.ts";
 
@@ -66,28 +65,6 @@ describe("暗号 ON の at-rest", () => {
     expect(dateRow?.date).toBe(DATE);
     // date が平文である方針の帰結として content も平文のまま（復号もスキップされる）
     expect(dateRow?.content).toBe(DATE);
-  });
-
-  test("chunk_user_tags.name は平文で保存されず、読み出しでは復号される", async () => {
-    await initCrypto(db, kek());
-    const { chunks: children } = await seedDayChunks(db, DATE, [CONTENT0]);
-    const chunkId = children[0]?.id;
-    if (chunkId === undefined) throw new Error("seed 不足");
-    (await setChunkUserTags(db, chunkId, ["設計", "調査"]))._unsafeUnwrap();
-
-    const rows = await db
-      .select({ name: chunkUserTags.name, nameFingerprint: chunkUserTags.nameFingerprint })
-      .from(chunkUserTags);
-    expect(rows.length).toBe(2);
-    for (const r of rows) {
-      expect(r.name).not.toContain("設計");
-      expect(r.name).not.toContain("調査");
-      expect(r.nameFingerprint).not.toContain("設計");
-    }
-
-    // 読み出し経路は平文へ復号
-    const loaded = (await listUserTagsByChunk(db))._unsafeUnwrap();
-    expect(loaded.get(chunkId)).toEqual(["設計", "調査"]);
   });
 
   test("embeddings.vector は生 float バイトで保存されず、loadVectors で復号される", async () => {
