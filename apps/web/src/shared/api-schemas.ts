@@ -1,0 +1,47 @@
+/**
+ * API リクエストボディの valibot スキーマ（SSOT、issue #49）。
+ * server はこのスキーマで検証し（server/parse.ts の parseBody）、
+ * client は派生型（v.InferInput）で送信リテラルの形を縛る。
+ * レスポンス側の型は api-types.ts（@zakki/data の re-export）を参照。
+ */
+import * as v from "valibot";
+
+// --- chunks（server/routes/chunks.ts） ---
+
+/** POST /api/chunks/date。date 省略時はサーバのローカル日付（当日） */
+export const DateChunkSchema = v.object({
+  date: v.optional(v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/))),
+});
+
+/** PATCH /api/chunks/:id — 本文（コンテナ名）変更 */
+export const RenameSchema = v.object({ content: v.pipe(v.string(), v.minLength(1)) });
+
+/** PUT /api/chunks/:id/tags */
+export const TagsSchema = v.object({ names: v.array(v.string()) });
+
+/** PUT /api/chunks/:id/children — バッファ保存。converted は凍結リテラルマーカー付き可 */
+export const SaveChildrenSchema = v.object({ converted: v.string() });
+
+// --- conversion（server/routes/convert.ts） ---
+
+/** POST /api/convert */
+export const ConvertSchema = v.object({
+  kana: v.pipe(v.string(), v.minLength(1)),
+  leftContext: v.optional(v.string()),
+});
+
+/** POST /api/conversion/cache */
+export const SaveConversionSchema = v.object({ kana: v.string(), converted: v.string() });
+
+/** POST /api/conversion/corrections */
+export const SaveCorrectionSchema = v.object({ kana: v.string(), chosen: v.string() });
+
+// --- 派生型（client の送信形はここから得る） ---
+
+export type DateChunkRequest = v.InferInput<typeof DateChunkSchema>;
+export type RenameChunkRequest = v.InferInput<typeof RenameSchema>;
+export type SetUserTagsRequest = v.InferInput<typeof TagsSchema>;
+export type SaveChildrenRequest = v.InferInput<typeof SaveChildrenSchema>;
+export type ConvertRequest = v.InferInput<typeof ConvertSchema>;
+export type SaveConversionRequest = v.InferInput<typeof SaveConversionSchema>;
+export type SaveCorrectionRequest = v.InferInput<typeof SaveCorrectionSchema>;

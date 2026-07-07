@@ -1,18 +1,15 @@
 import { Hono } from "hono";
 import { ResultAsync } from "neverthrow";
-import * as v from "valibot";
 import { loadConversionCache, saveConversion } from "@zakki/data/conversion/cache.ts";
 import { loadCorrections, saveCorrection } from "@zakki/data/conversion/corrections.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
 import { parseBody } from "@zakki/web/server/parse.ts";
 import { respond } from "@zakki/web/server/respond.ts";
-
-const ConvertSchema = v.object({
-  kana: v.pipe(v.string(), v.minLength(1)),
-  leftContext: v.optional(v.string()),
-});
-const SaveConversionSchema = v.object({ kana: v.string(), converted: v.string() });
-const SaveCorrectionSchema = v.object({ kana: v.string(), chosen: v.string() });
+import {
+  ConvertSchema,
+  SaveConversionSchema,
+  SaveCorrectionSchema,
+} from "@zakki/web/shared/api-schemas.ts";
 
 export function conversionRoutes(deps: AppDeps): Hono {
   const { db, engine } = deps;
