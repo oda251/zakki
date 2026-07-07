@@ -29,6 +29,7 @@ function tokenizer(): { tokenize: (text: string) => LinderaToken[] } {
     const builder = new TokenizerBuilder();
     builder.setDictionary("embedded://ipadic");
     builder.setMode("normal");
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- lindera-wasm の tokenize() は any を返す。実際の戻り形（camelCase 列）へ読み替える外部境界
     cached = builder.build() as { tokenize: (text: string) => LinderaToken[] };
   }
   return cached;

@@ -11,7 +11,6 @@ import {
   resolveNodeActivation,
   SERIES_SLOTS,
   seriesSlotsAtLevel,
-  type VisibleNode,
   visibleGraph,
 } from "@zakki/web/client/store/graph-core.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
@@ -37,6 +36,13 @@ interface ForceNode {
   label: string;
   x?: number;
   y?: number;
+}
+
+/** force-graph に渡すリンク。ForceGraph2D の型引数にして各コールバックの引数型を導く */
+interface ForceLink {
+  source: number;
+  target: number;
+  score: number;
 }
 
 const NODE_RADIUS = 4;
@@ -95,9 +101,9 @@ export function GraphView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      const el = document.activeElement as HTMLElement | null;
+      const el = document.activeElement;
       if (
-        el !== null &&
+        el instanceof HTMLElement &&
         (el.tagName === "INPUT" ||
           el.tagName === "TEXTAREA" ||
           el.isContentEditable ||
@@ -119,10 +125,8 @@ export function GraphView() {
   }, []);
 
   const visible = useMemo(
-    () =>
-      data === null
-        ? { nodes: [] as VisibleNode[], edges: [] }
-        : visibleGraph(data, drillId, filter),
+    (): ReturnType<typeof visibleGraph> =>
+      data === null ? { nodes: [], edges: [] } : visibleGraph(data, drillId, filter),
     [data, drillId, filter],
   );
   const slots = useMemo(() => seriesSlotsAtLevel(visible.nodes), [visible]);
@@ -165,8 +169,7 @@ export function GraphView() {
   // resolveNodeActivation）に委譲し、ここは openChunk / selectNode の配線のみ。
   // シングル = 選択のみ（external も同じ、セッション移動しない）。
   const lastClick = useRef<ClickStamp | null>(null);
-  const onNodeClick = (raw: object, event: MouseEvent) => {
-    const fn = raw as ForceNode;
+  const onNodeClick = (fn: ForceNode, event: MouseEvent) => {
     const now = Date.now();
     const double = isDoubleClick(lastClick.current, fn.id, now, event.detail);
     lastClick.current = { id: fn.id, at: now };
@@ -188,20 +191,16 @@ export function GraphView() {
   return (
     <div ref={containerRef} className="main-pane">
       {size.width > 0 && (
-        <ForceGraph2D
+        <ForceGraph2D<ForceNode, ForceLink>
           width={size.width}
           height={size.height}
           graphData={graphData}
           backgroundColor="transparent"
           linkColor={() => palette.hairline}
-          linkWidth={(l) => Math.max(1, ((l as { score: number }).score - 0.8) * 10)}
+          linkWidth={(l) => Math.max(1, (l.score - 0.8) * 10)}
           nodeRelSize={NODE_RADIUS}
-          nodeLabel={(n) => {
-            const { node } = n as ForceNode;
-            return `${node.date}<br/>${makeTitle(node.content)}`;
-          }}
-          nodeCanvasObject={(n, ctx, globalScale) => {
-            const fn = n as ForceNode;
+          nodeLabel={({ node }) => `${node.date}<br/>${makeTitle(node.content)}`}
+          nodeCanvasObject={(fn, ctx, globalScale) => {
             const { node, external, label, x, y } = fn;
             if (x === undefined || y === undefined) return;
             const r = nodeRadius(node.descendantCount);
@@ -228,7 +227,7 @@ export function GraphView() {
             ctx.restore();
           }}
           nodePointerAreaPaint={(n, color, ctx) => {
-            const { node, x, y } = n as ForceNode;
+            const { node, x, y } = n;
             if (x === undefined || y === undefined) return;
             traceShape(ctx, node, x, y, nodeRadius(node.descendantCount));
             ctx.fillStyle = color;
