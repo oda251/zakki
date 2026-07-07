@@ -63,9 +63,10 @@ module.exports = {
     {
       name: "web-client-no-data-runtime",
       comment:
-        "client から @zakki/data の実 import 禁止（node 依存の混入防止。型は shared 経由で可）",
+        "client から @zakki/data の実 import 禁止（node 依存の混入防止。型は shared 経由で可）。" +
+        "テストは実サーバ（libSQL）との統合検証で越境してよい（バンドルに載らない）",
       severity: "error",
-      from: { path: "^apps/web/src/(client|shared)" },
+      from: { path: "^apps/web/src/(client|shared)", pathNot: "\\.test\\.(ts|tsx)$" },
       to: { path: "^packages/data/src", dependencyTypesNot: ["type-only"] },
     },
   ],
