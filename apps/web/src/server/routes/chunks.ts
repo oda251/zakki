@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { okAsync } from "neverthrow";
-import * as v from "valibot";
 import { localDate, persistChildren } from "@zakki/data/chunk/autosave.ts";
 import {
   deleteChunk,
@@ -15,15 +14,14 @@ import { relatedChunks } from "@zakki/data/embedding/semantic.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
 import { intParam, parseBody } from "@zakki/web/server/parse.ts";
 import { respond } from "@zakki/web/server/respond.ts";
+import {
+  DateChunkSchema,
+  RenameSchema,
+  SaveChildrenSchema,
+  TagsSchema,
+} from "@zakki/web/shared/api-schemas.ts";
 
 const RELATED_LIMIT = 5;
-
-const DateChunkSchema = v.object({
-  date: v.optional(v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/))),
-});
-const RenameSchema = v.object({ content: v.pipe(v.string(), v.minLength(1)) });
-const TagsSchema = v.object({ names: v.array(v.string()) });
-const SaveChildrenSchema = v.object({ converted: v.string() });
 
 /**
  * chunk ツリーの API（docs/CHUNKS.md）。旧 /sessions ルートの置き換え。

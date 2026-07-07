@@ -11,7 +11,6 @@ import type {
   ConvertResponse,
   GraphData,
   GraphDelta,
-  HealthResponse,
   SaveChildrenResponse,
 } from "@zakki/web/shared/api-types.ts";
 import { createAnalysisScheduler } from "./analysis.ts";
@@ -71,7 +70,10 @@ function byId(g: GraphData): GraphData {
 
 describe("GET /api/health", () => {
   test("エンジン名と embedder の有無を返す", async () => {
-    const health = await json<HealthResponse>(await app.request("/api/health"));
+    // health の形はこのテストだけが消費する（shared の HealthResponse は #49 で削除）
+    const health = await json<{ engine: string; embedder: boolean }>(
+      await app.request("/api/health"),
+    );
     expect(health).toEqual({ engine: "identity", embedder: false });
   });
 });
