@@ -1,10 +1,6 @@
 import { API_BASE } from "@zakki/web/shared/api-base.ts";
 import type { ConvertRequest, SaveConversionRequest } from "@zakki/web/shared/api-schemas.ts";
-import type {
-  ConversionStateResponse,
-  ConvertResponse,
-  RelatedResponse,
-} from "@zakki/web/shared/api-types.ts";
+import type { ConversionStateResponse, ConvertResponse } from "@zakki/web/shared/api-types.ts";
 
 /** API エラー（fetch 失敗・非 2xx）。UI はメッセージ表示のみ */
 export class ApiRequestError extends Error {
@@ -53,12 +49,11 @@ const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
 /**
  * chunk の読み書きは RxDB（liveQuery + replication）へ移行済みで、ここに残るのは
- * replication で代替できないサーバ機能のみ（#44）:
+ * replication で代替できないサーバ機能のみ（#44 → #45）:
  * - convert / conversion*: 変換エンジン（anco）とそのキャッシュ。#26 でクライアント移設予定
- * - related: 埋め込み（サーバ解析の産物）による意味的近傍
+ * （related はサーバ解析（embedder）の撤去と同時に消えた。クライアント解析は #28/#26）
  */
 export const api = {
-  related: (id: number) => request<RelatedResponse>(`/chunks/${id}/related`),
   convert: (kana: ConvertRequest["kana"], leftContext?: ConvertRequest["leftContext"]) =>
     request<ConvertResponse>("/convert", {
       method: "POST",

@@ -12,9 +12,7 @@ import { createZakkiDb } from "@zakki/web/client/db/database.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { startReplication } from "@zakki/web/client/db/replication.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
-import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
 import { createApp } from "@zakki/web/server/app.ts";
-import { createAnalysisEvents } from "@zakki/web/server/events.ts";
 
 /**
  * issue #43: replicateRxCollection の配線を、実サーバ app（Hono + :memory: libSQL）へ
@@ -34,13 +32,7 @@ beforeEach(async () => {
   const s = await ready();
   fc = makeFieldCrypto(s.crypto_aead_xchacha20poly1305_ietf_keygen());
   serverDb = await createDb(":memory:");
-  app = createApp({
-    db: serverDb,
-    engine: identityEngine,
-    embedder: null,
-    analysis: createAnalysisScheduler(serverDb, null, () => {}, 0),
-    events: createAnalysisEvents(),
-  });
+  app = createApp({ db: serverDb, engine: identityEngine });
   fetchFn = async (input, init) => app.request(input, init);
 });
 

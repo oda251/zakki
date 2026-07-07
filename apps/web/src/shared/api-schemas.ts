@@ -6,21 +6,7 @@
  */
 import * as v from "valibot";
 
-// --- chunks（server/routes/chunks.ts） ---
-
-/** POST /api/chunks/date。date 省略時はサーバのローカル日付（当日） */
-export const DateChunkSchema = v.object({
-  date: v.optional(v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/))),
-});
-
-/** PATCH /api/chunks/:id — 本文（コンテナ名）変更 */
-export const RenameSchema = v.object({ content: v.pipe(v.string(), v.minLength(1)) });
-
-/** PUT /api/chunks/:id/tags */
-export const TagsSchema = v.object({ names: v.array(v.string()) });
-
-/** PUT /api/chunks/:id/children — バッファ保存。converted は凍結リテラルマーカー付き可 */
-export const SaveChildrenSchema = v.object({ converted: v.string() });
+// chunks 書込み・読取系のスキーマは RxDB replication への移行で撤去済み（#44 → #45）
 
 // --- conversion（server/routes/convert.ts） ---
 

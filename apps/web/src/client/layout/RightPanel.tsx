@@ -8,9 +8,11 @@ import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /**
- * 右パネル: 上=Composer.Web（入力欄）、中=意味的関連（アンビエント）、
+ * 右パネル: 上=Composer.Web（入力欄）、
  * 下=グラフで選択中のノード詳細（自動/ユーザタグ・ナビ・rename・削除）+ リンク近傍。
  * 書込みはローカル RxDB へ（#44）。グラフ表示は liveQuery 購読で自動更新される。
+ * 意味的関連（アンビエント）はサーバ解析（embedder）の撤去（#45）と同時に消えた。
+ * クライアント解析での復活は #28/#26。
  */
 export function RightPanel() {
   const data = useGraphStore((s) => s.data);
@@ -19,7 +21,6 @@ export function RightPanel() {
   const setTagFilter = useGraphStore((s) => s.setTagFilter);
   const setUserTagFilter = useGraphStore((s) => s.setUserTagFilter);
   const db = useBufferStore((s) => s.db);
-  const related = useBufferStore((s) => s.related);
   const current = useBufferStore((s) => s.current);
   const openChunk = useBufferStore((s) => s.openChunk);
   const openToday = useBufferStore((s) => s.openToday);
@@ -76,24 +77,6 @@ export function RightPanel() {
       <section className="right-panel__section">
         <h2 className="right-panel__heading">入力</h2>
         <ComposerPane />
-      </section>
-      <section className="right-panel__section">
-        <h2 className="right-panel__heading">関連</h2>
-        {related.length === 0 ? (
-          <div className="empty-note">入力すると関連する過去の投稿が表示されます</div>
-        ) : (
-          related.map((item) => (
-            <button
-              key={item.chunkId}
-              type="button"
-              className={chunkDigestWeb.base}
-              onClick={() => selectNode(item.chunkId)}
-            >
-              <span className={chunkDigestWeb.date}>{item.date}</span>
-              {makeTitle(item.content)}
-            </button>
-          ))
-        )}
       </section>
       <section className="right-panel__section">
         <h2 className="right-panel__heading">選択中の投稿</h2>

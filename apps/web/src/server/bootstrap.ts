@@ -1,31 +1,30 @@
 import type { Hono } from "hono";
-import { syncWithAnalysisReset } from "@zakki/backend/analysis/service.ts";
 import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
-import { resolveDefaultEmbedder } from "@zakki/backend/embedding/embedder.ts";
 import type { ZakkiConfig } from "@zakki/core/config/env.ts";
-import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
-import { loadOrCreateKeyfile } from "@zakki/data/crypto/keyfile.ts";
-import { unlockOrSetup } from "@zakki/data/crypto/unlock.ts";
 import { defaultDbPath, openDb } from "@zakki/data/db/connect.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
-import { createAnalysisScheduler } from "./analysis.ts";
 import { createApp } from "./app.ts";
-import { createAnalysisEvents } from "./events.ts";
-
-const headless = (what: string) => () =>
-  Promise.reject(
-    new Error(`web サーバは${what}に対応していません。先に TUI（bun start）で実行してください`),
-  );
 
 /**
  * API サーバの合成（issue #29）。検証済み config を受け取り、標準 Fetch ハンドラ
  * （Hono アプリ）を返す。Bun 固有 API（serve・静的配信）は使わず、それらは
  * bun 用起動アダプタ（index.ts）に隔離する（scripts/check-arch-guards.sh Guard 3）。
  *
- * TUI（apps/tui/src/index.tsx）と同じ合成: openDb → 暗号アンロック → guard →
- * sync → エンジン選択。違いは 2 点: TTY を要求しない・暗号はキーファイルの無言
- * アンロックのみ（初回セットアップ・パスフレーズ入力は対話 UI を持つ TUI 側で行う）。
+ * web サーバは DEK を一切持たない（#45 / #28 項目1）:
+ * - 暗号アンロック（keyfile unlock）・assertCryptoReady は撤去。復号・平文の
+ *   読み書きはクライアント（RxDB replication + FieldCrypto）と TUI の責務で、
+ *   サーバは暗号文の中継（replication / 封筒配布）と変換エンジンのみを提供する。
+ *   ZAKKI_ENCRYPTION はサーバでは参照しない（TUI 専用。暗号 ON かどうかは
+ *   クライアントが封筒の有無で判定する）。
+ * - assertCryptoReady（issue #46 のサイレント平文読みガード）が守っていた危険
+ *   経路（chunk/graph の復号読み・平文書込みルート）自体が撤去されたため、
+ *   ガードも不要になった。残る DB アクセスは repl_docs（暗号文 JSON）・
+ *   key_envelopes（公開可能な封筒）・conversion_cache / corrections（従来から
+ *   平文のテーブル）のみ。
+ * - 解析（tagger / linker / sentiment / embedder）は平文前提のためサーバから
+ *   撤去（クライアント移設は #28/#26 の別トラック。TUI ではローカル平文の
+ *   世界としてそのまま動き続ける）。
  */
 export async function bootstrapServer(
   config: ZakkiConfig,
@@ -35,42 +34,13 @@ export async function bootstrapServer(
 
   const identity = resolveLocalIdentity(config, configHome);
   const { db, sync } = await openDb(identity, defaultDbPath(dataHome));
-  // sync がリモートの変更を取り込んだら増分解析のスナップショットを破棄する（issue #55）。
-  // 以降の sync 呼び出しはすべてこのラッパを通す（単一ライタ前提の強制）。
-  const syncAndReset = syncWithAnalysisReset({ db, sync });
 
-  if (config.encryption) {
-    const keyfileKek = await loadOrCreateKeyfile(configHome);
-    try {
-      await unlockOrSetup(db, keyfileKek, {
-        newPassphrase: headless("初回セットアップ"),
-        passphrase: headless("パスフレーズ入力"),
-        showRecoveryCode: headless("リカバリコード表示"),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`アンロックに失敗しました（${msg}）`, { cause: err });
-    }
-  }
-
-  // 暗号 ON で作成した DB を ZAKKI_ENCRYPTION 未設定で開くと、暗号文をそのまま
-  // 平文として読み書きしてしまう（issue #46）。データアクセス前に拒否する。
-  // アンロック済み・暗号 OFF（封筒なし）の DB では no-op。
-  await assertCryptoReady(db);
-
-  await syncAndReset();
+  // 起動時の同期はベストエフォート（オフライン・未設定は正常系）。
+  // サーバは解析を持たないため、増分解析スナップショットの破棄（issue #55 の
+  // syncWithAnalysisReset）も不要になった。
+  await sync();
 
   const engine = resolveDefaultEngine(config, dataHome);
-  const embedder = resolveDefaultEmbedder(config.noEmbedding);
-
-  const events = createAnalysisEvents();
-  const analysis = createAnalysisScheduler(
-    db,
-    embedder,
-    (m) => console.error(`zakki-web: ${m}`),
-    undefined,
-    () => events.emit(),
-  );
-  const app = createApp({ db, engine, embedder, analysis, events });
+  const app = createApp({ db, engine });
   return { app, engineName: engine.name };
 }
