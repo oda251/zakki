@@ -5,6 +5,7 @@ import { errAsync, ResultAsync } from "neverthrow";
 import type { EngineError, KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
+import { APP_DIR } from "@zakki/data/util/paths.ts";
 import { isBannerLine, parseCandidates, stripAnsi } from "./protocol.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -14,12 +15,12 @@ const CANDIDATE_COUNT = 5;
 
 /** anco バイナリの既定の場所。dataHome は解決済みの XDG データディレクトリ */
 export function defaultAncoPath(dataHome: string): string {
-  return join(dataHome, "zakki", "anco", "anco");
+  return join(dataHome, APP_DIR, "anco", "anco");
 }
 
 /** zenz GGUF の既定の場所 */
 export function defaultZenzPath(dataHome: string): string {
-  return join(dataHome, "zakki", "models", "zenz-v3.1-small-Q5_K_M.gguf");
+  return join(dataHome, APP_DIR, "models", "zenz-v3.1-small-Q5_K_M.gguf");
 }
 
 /** 検証済み config からの上書き値（ZAKKI_ANCO_PATH / ZAKKI_ZENZ_PATH 由来） */
