@@ -64,6 +64,27 @@ export const ReplicationPushSchema = v.object({
   ),
 });
 
+// --- crypto envelopes（server/routes/crypto.ts, issue #43） ---
+
+/**
+ * GET /api/crypto/envelopes の封筒 1 件。クライアントが受信側で検証する
+ * レスポンススキーマ（平文 DEK は含まれない。wrappedDek/kdfSalt は base64 ORIGINAL）。
+ * keyfile 封筒はサーバ端末ローカル専用のため wire には現れない。
+ */
+export const CryptoEnvelopeSchema = v.object({
+  kind: v.picklist(["passphrase", "recovery"]),
+  wrappedDek: v.string(),
+  kdfSalt: v.string(),
+  kdfOps: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  kdfMem: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+
+export const CryptoEnvelopesResponseSchema = v.object({
+  envelopes: v.array(CryptoEnvelopeSchema),
+});
+
+export type CryptoEnvelope = v.InferOutput<typeof CryptoEnvelopeSchema>;
+
 // --- 派生型（client の送信形はここから得る） ---
 
 export type DateChunkRequest = v.InferInput<typeof DateChunkSchema>;

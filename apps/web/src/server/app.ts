@@ -3,6 +3,7 @@ import { API_BASE } from "@zakki/web/shared/api-base.ts";
 import type { AppDeps } from "./deps.ts";
 import { chunkRoutes } from "./routes/chunks.ts";
 import { conversionRoutes } from "./routes/convert.ts";
+import { cryptoRoutes } from "./routes/crypto.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { graphRoutes } from "./routes/graph.ts";
 import { replicationRoutes } from "./routes/replication.ts";
@@ -21,6 +22,7 @@ export function createApp(deps: AppDeps): Hono {
   api.route("/", graphRoutes(deps));
   api.route("/", eventRoutes(deps));
   api.route("/replication", replicationRoutes(deps));
+  api.route("/crypto", cryptoRoutes(deps));
 
   app.route(API_BASE, api);
   return app;
