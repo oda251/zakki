@@ -75,17 +75,39 @@ async function ensureTagIds(
   return new Map([...names].map((name) => [name, idByFingerprint.get(fpOf(name))]));
 }
 
+/** plan が言及するチャンク id のうち、現存する id の集合をトランザクション内で引く */
+async function aliveChunkIds(tx: Tx, plan: WritePlan): Promise<Set<number>> {
+  const mentioned = new Set<number>([
+    ...plan.tagRewrites.map((r) => r.chunkId),
+    ...plan.insertLinks.flatMap((l) => [l.fromChunkId, l.toChunkId]),
+    ...plan.polarityWrites.map((w) => w.chunkId),
+  ]);
+  const alive = new Set<number>();
+  for (const ids of batched([...mentioned], 200)) {
+    const rows = await tx.select({ id: chunks.id }).from(chunks).where(inArray(chunks.id, ids));
+    for (const row of rows) alive.add(row.id);
+  }
+  return alive;
+}
+
 /**
  * planWrites の出力をトランザクション 1 つで機械的に適用する
  * （全量・増分で共通の書き込み面。トランザクション境界はここが握る）。
  * DbError への写像は呼び出し側（解析サービス）の tryDbAsync 境界で行う。
+ *
+ * plan の元になった読み取り（解析サービスの大 SELECT）はこの tx の外で行われるため、
+ * 読み〜適用の間に saveChildren 等の並走でチャンクが削除され得る（issue #58 項目 6）。
+ * 消えた id への挿入は FK 違反でパス全体を失敗させるので、tx 内で現存 id に絞って
+ * 書き込む（消えたチャンクの解析結果は無意味で、スナップショットは次パスで収束する）。
  */
 export async function applyAnalysisPlan(db: Db, plan: WritePlan, now: string): Promise<void> {
   const crypto = getCrypto(db);
   await db.transaction(async (tx) => {
+    const alive = await aliveChunkIds(tx, plan);
     // タグ: 変わったチャンクだけ delete → insert（削除チャンク分は FK cascade 済み）。
     const idByName = await ensureTagIds(tx, crypto, plan.tagNames, now);
     for (const { chunkId, tags: tagList } of plan.tagRewrites) {
+      if (!alive.has(chunkId)) continue;
       await tx.delete(chunkTags).where(eq(chunkTags.chunkId, chunkId));
       for (const tag of tagList) {
         const tagId = idByName.get(tag.name);
@@ -113,6 +135,7 @@ export async function applyAnalysisPlan(db: Db, plan: WritePlan, now: string): P
       }
     }
     for (const link of plan.insertLinks) {
+      if (!alive.has(link.fromChunkId) || !alive.has(link.toChunkId)) continue;
       await tx
         .insert(links)
         .values({ ...link, origin: "auto" })
@@ -120,7 +143,9 @@ export async function applyAnalysisPlan(db: Db, plan: WritePlan, now: string): P
     }
 
     // 極性: bump するチャンクは updatedAt も進める（差分取得が変更ノードを拾えるように）。
+    // 消えた id への update は no-op だが、alive で揃えて意図を明示する。
     for (const { chunkId, polarity, bump } of plan.polarityWrites) {
+      if (!alive.has(chunkId)) continue;
       const set = bump ? { polarity, updatedAt: now } : { polarity };
       await tx.update(chunks).set(set).where(eq(chunks.id, chunkId));
     }

@@ -1,10 +1,25 @@
 import type { Ref } from "react";
 import type { ReactNode } from "react";
 import type { ScrollBoxRenderable } from "@opentui/core";
+import type { ChunkPresentation } from "@zakki/core/chunk/presentation.ts";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 
-/** 打鍵途中ローマ字の色（App の従来表示に合わせる） */
-const PENDING_FG = "#777777";
+/**
+ * Chunk.tui（docs/COMPOSER.md）: 値は opentui の fg 色。web 側
+ * （`chunk.web.ts` の CSS 意味クラス）と同じ契約（ChunkPresentation）に通す
+ * （issue #58 項目 12。cell と px で実値は別物のため色そのものは共有しない）。
+ */
+const chunkTui: ChunkPresentation<string> = {
+  base: "#cccccc",
+  selected: "#ffffff",
+  pending: "#777777",
+};
+
+/** 関連リスト項目（Digest）の色。ChunkPresentation の外側の TUI 固有補助（web の chunkDigestWeb と対） */
+const chunkDigestTui = {
+  base: "#aaaaaa",
+  date: "#88aaff",
+} as const;
 
 // カーソルはグリフではなく端末ネイティブの縦棒で描く（src/tui/native-cursor.ts）。
 // セル境界に置かれるので前後の文字との隙間が出ない（useBarCursor が位置を制御）。
@@ -73,7 +88,7 @@ function New({
     <box id={id} onMouseDown={onClick}>
       <text style={{ wrapMode: "word" }}>
         {text}
-        <span fg={PENDING_FG}>{pending}</span>
+        <span fg={chunkTui.pending}>{pending}</span>
       </text>
     </box>
   );
@@ -105,7 +120,9 @@ function View({
 }) {
   return (
     <box id={id} onMouseDown={onClick}>
-      <text style={{ fg: selected ? "#ffffff" : "#cccccc", wrapMode: "word" }}>{text}</text>
+      <text style={{ fg: selected ? chunkTui.selected : chunkTui.base, wrapMode: "word" }}>
+        {text}
+      </text>
     </box>
   );
 }
@@ -127,8 +144,8 @@ function Digest({
 }) {
   return (
     <box onMouseDown={onClick}>
-      <text style={{ fg: selected ? "#ffffff" : "#aaaaaa", wrapMode: "char" }}>
-        <span fg="#88aaff">{date}</span> {makeTitle(content)}
+      <text style={{ fg: selected ? chunkTui.selected : chunkDigestTui.base, wrapMode: "char" }}>
+        <span fg={chunkDigestTui.date}>{date}</span> {makeTitle(content)}
       </text>
     </box>
   );

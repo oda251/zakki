@@ -213,7 +213,8 @@ body,
   min-height: 6rem;
 }
 
-.composer--focused {
+/* フォーカス強調（自身 or 内側の修正 input）。JS の focused state を持たない（issue #58 項目 8） */
+.composer:focus-within {
   border-color: var(--accent);
 }
 
@@ -254,7 +255,7 @@ body,
   animation: composer-caret-blink 1.1s steps(1) infinite;
 }
 
-.composer--focused .composer__caret {
+.composer:focus-within .composer__caret {
   background: var(--text-primary);
 }
 
