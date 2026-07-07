@@ -53,6 +53,9 @@ jobs:
       - name: Dependency rules (dependency-cruiser)
         run: bun run depcruise
 
+      - name: Architecture guards (grep)
+        run: bash scripts/check-arch-guards.sh
+
       - name: Dead code / unused deps (knip)
         run: bun run knip
 
