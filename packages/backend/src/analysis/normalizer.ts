@@ -1,16 +1,11 @@
-import { eq } from "drizzle-orm";
-import type { ResultAsync } from "neverthrow";
-import type { Db } from "@zakki/data/db/client.ts";
-import { getCrypto } from "@zakki/data/db/crypto-context.ts";
-import type { DbError } from "@zakki/data/db/error.ts";
-import { tryDbAsync } from "@zakki/data/db/error.ts";
-import { chunkTags, tags } from "@zakki/data/db/schema.ts";
+import type { MergeProposal } from "@zakki/data/analysis/apply.ts";
 import type { TextGenerator } from "@zakki/backend/llm/client.ts";
 
 /**
  * タグのオントロジー整理（docs/FEATURES.md 候補6）。
  * 表記揺れ（編集距離）と意味的近傍（embedding）の統合を「提案」として返し、
- * 適用は明示操作（CLI の --apply）に限る。代表タグは出現数が多い方。
+ * 適用は明示操作（CLI の --apply、data 層の applyTagMerges）に限る。
+ * 代表タグは出現数が多い方。
  */
 
 export interface TagWithCount {
@@ -18,13 +13,8 @@ export interface TagWithCount {
   count: number;
 }
 
-export interface MergeProposal {
-  /** 統合されて消えるタグ */
-  from: string;
-  /** 統合先（代表）タグ */
-  to: string;
-  reason: "edit-distance" | "embedding";
-}
+// 統合提案の型。適用（applyTagMerges）の契約として data 層が定義する
+export type { MergeProposal } from "@zakki/data/analysis/apply.ts";
 
 export function levenshtein(a: string, b: string): number {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => i);
@@ -113,43 +103,4 @@ export async function filterProposalsWithLlm(
     }
   }
   return result;
-}
-
-/** 提案を適用する: chunk_tags を代表タグへ付け替え、空になったタグを消す */
-export function applyTagMerges(
-  db: Db,
-  proposals: MergeProposal[],
-): ResultAsync<{ merged: number }, DbError> {
-  const crypto = getCrypto(db);
-  return tryDbAsync(async () => {
-    await db.transaction(async (tx) => {
-      const rows = await tx.select().from(tags);
-      // proposals は平文タグ名。暗号 ON では r.name が暗号文なので、平文名 → id は
-      // fingerprint（= ブラインドインデックス）で突き合わせる。OFF は fingerprint=平文名。
-      const idByName = new Map(
-        rows.map((r) => [crypto === undefined ? r.name : r.nameFingerprint, r.id]),
-      );
-      const keyOf = (name: string) => (crypto === undefined ? name : crypto.fingerprint(name));
-      for (const proposal of proposals) {
-        const fromId = idByName.get(keyOf(proposal.from));
-        const toId = idByName.get(keyOf(proposal.to));
-        if (fromId === undefined || toId === undefined) continue;
-        const existing = new Set(
-          (await tx.select().from(chunkTags).where(eq(chunkTags.tagId, toId))).map(
-            (r) => r.chunkId,
-          ),
-        );
-        for (const row of await tx.select().from(chunkTags).where(eq(chunkTags.tagId, fromId))) {
-          if (!existing.has(row.chunkId)) {
-            await tx
-              .insert(chunkTags)
-              .values({ chunkId: row.chunkId, tagId: toId, score: row.score });
-          }
-        }
-        await tx.delete(chunkTags).where(eq(chunkTags.tagId, fromId));
-        await tx.delete(tags).where(eq(tags.id, fromId));
-      }
-    });
-    return { merged: proposals.length };
-  });
 }

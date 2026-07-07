@@ -6,11 +6,11 @@
  * Ollama がいれば embedding 由来の提案を類義判定でフィルタする。
  */
 import {
-  applyTagMerges,
   filterProposalsWithLlm,
   proposeTagMerges,
   type TagWithCount,
 } from "@zakki/backend/analysis/normalizer.ts";
+import { applyTagMerges } from "@zakki/data/analysis/apply.ts";
 import { createDb, defaultDbPath } from "@zakki/data/db/connect.ts";
 import { cosine } from "@zakki/data/embedding/vector.ts";
 import { createRuriEmbedder } from "@zakki/backend/embedding/embedder.ts";
