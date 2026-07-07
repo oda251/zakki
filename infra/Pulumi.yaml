@@ -6,6 +6,11 @@ description: >-
   Turso Platform API で生成するため、ここでは管理しない（Phase 7 / RESEARCH.md §7）。
 
 # Turso プロバイダは Terraform ブリッジのローカルパッケージとして導入する。
-# 初回のみ次を実行して SDK を生成する（生成物は package.json / sdks/ に入る）:
-#   pulumi package add terraform-provider celest-dev/turso
-# 生成されるパッケージ名に合わせて index.ts の import を調整すること（未検証: 既定は turso）。
+# 下の packages 定義から `pulumi install` が SDK を sdks/turso に再生成する
+# （生成物は .gitignore 済み。生成パッケージ名は @pulumi/turso — 検証済み）。
+packages:
+  turso:
+    source: pulumi/pulumi/terraform-provider
+    version: 1.1.4
+    parameters:
+      - celest-dev/turso

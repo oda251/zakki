@@ -1,6 +1,6 @@
 import * as pulumi from "@pulumi/pulumi";
-// `pulumi package add terraform-provider celest-dev/turso` で生成されるローカル SDK。
-// 生成パッケージ名に合わせて調整すること（未検証: 既定は "@pulumi/turso"）。
+// Pulumi.yaml の packages 定義から `pulumi install` で生成されるローカル SDK
+// （sdks/turso）。パッケージ名 "@pulumi/turso" は生成物で確認済み。
 import * as turso from "@pulumi/turso";
 
 // --- 設定 ----------------------------------------------------------------
