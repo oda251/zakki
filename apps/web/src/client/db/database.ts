@@ -10,7 +10,14 @@
  * memory-storage を import しない — それらはテスト側の責務。
  */
 import { createRxDatabase } from "rxdb";
-import type { RxCollection, RxDatabase, RxDocument, RxJsonSchema, RxStorage } from "rxdb";
+import type {
+  RxCollection,
+  RxConflictHandler,
+  RxDatabase,
+  RxDocument,
+  RxJsonSchema,
+  RxStorage,
+} from "rxdb";
 import type { Chunk, ChunkUserTag, Correction, Tag } from "@zakki/web/shared/api-types.ts";
 
 /**
@@ -90,13 +97,34 @@ const correctionsSchema = {
   required: ["kana", "chosen", "updatedAt"],
 } as const satisfies RxJsonSchema<CorrectionDoc>;
 
-export async function createZakkiDb(storage: RxStorage<unknown, unknown>): Promise<ZakkiDatabase> {
-  const db = await createRxDatabase<ZakkiCollections>({ name: "zakki", storage });
+/**
+ * DB-per-user 前提の単純衝突方針（#43）: (updatedAt, _deleted) の一致で同一視し、
+ * 差異はサーバ（realMasterState）を常に採る。deepEqual を避けた軽量版。
+ */
+function serverWinsConflictHandler<T extends { updatedAt: string }>(): RxConflictHandler<T> {
+  return {
+    isEqual: (a, b) => a.updatedAt === b.updatedAt && a._deleted === b._deleted,
+    resolve: (input) => Promise.resolve(input.realMasterState),
+  };
+}
+
+/** name は既定 "zakki"。テスト・複数インスタンス検証では別名を渡して分離する */
+export async function createZakkiDb(
+  storage: RxStorage<unknown, unknown>,
+  name = "zakki",
+): Promise<ZakkiDatabase> {
+  const db = await createRxDatabase<ZakkiCollections>({ name, storage });
   await db.addCollections({
-    chunks: { schema: chunksSchema },
-    chunkUserTags: { schema: chunkUserTagsSchema },
-    tags: { schema: tagsSchema },
-    corrections: { schema: correctionsSchema },
+    chunks: { schema: chunksSchema, conflictHandler: serverWinsConflictHandler<ChunkDoc>() },
+    chunkUserTags: {
+      schema: chunkUserTagsSchema,
+      conflictHandler: serverWinsConflictHandler<ChunkUserTagDoc>(),
+    },
+    tags: { schema: tagsSchema, conflictHandler: serverWinsConflictHandler<TagDoc>() },
+    corrections: {
+      schema: correctionsSchema,
+      conflictHandler: serverWinsConflictHandler<CorrectionDoc>(),
+    },
   });
   return db;
 }
