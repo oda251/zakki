@@ -31,6 +31,7 @@ export interface ChunkUserTagWire {
   chunkId: string;
   name: string;
   nameFingerprint: string;
+  updatedAt: string;
   _deleted: boolean;
 }
 
@@ -38,6 +39,7 @@ export interface TagWire {
   id: string;
   name: string;
   nameFingerprint: string;
+  updatedAt: string;
   _deleted: boolean;
 }
 
@@ -59,44 +61,48 @@ export function chunkPull(fc: FieldCrypto, wire: ChunkWire): ChunkDocData {
 
 /** タグ doc → wire。name を暗号化し、決定的 fingerprint を付与する */
 export function tagPush(fc: FieldCrypto, doc: TagDocData): TagWire {
-  const { id, name, _deleted } = doc;
+  const { id, name, updatedAt, _deleted } = doc;
   return {
     id,
     name: fc.encString(name, AAD.tagName),
     nameFingerprint: fc.fingerprint(name),
+    updatedAt,
     _deleted,
   };
 }
 
 /** タグ wire → doc。nameFingerprint は doc に持たない */
 export function tagPull(fc: FieldCrypto, wire: TagWire): TagDocData {
-  const { id, name, _deleted } = wire;
+  const { id, name, updatedAt, _deleted } = wire;
   return {
     id,
     name: fc.decString(name, AAD.tagName),
+    updatedAt,
     _deleted,
   };
 }
 
 /** チャンクユーザタグ doc → wire。name を暗号化し、決定的 fingerprint を付与する */
 export function userTagPush(fc: FieldCrypto, doc: ChunkUserTagDocData): ChunkUserTagWire {
-  const { id, chunkId, name, _deleted } = doc;
+  const { id, chunkId, name, updatedAt, _deleted } = doc;
   return {
     id,
     chunkId,
     name: fc.encString(name, AAD.chunkUserTagName),
     nameFingerprint: fc.fingerprint(name),
+    updatedAt,
     _deleted,
   };
 }
 
 /** チャンクユーザタグ wire → doc */
 export function userTagPull(fc: FieldCrypto, wire: ChunkUserTagWire): ChunkUserTagDocData {
-  const { id, chunkId, name, _deleted } = wire;
+  const { id, chunkId, name, updatedAt, _deleted } = wire;
   return {
     id,
     chunkId,
     name: fc.decString(name, AAD.chunkUserTagName),
+    updatedAt,
     _deleted,
   };
 }

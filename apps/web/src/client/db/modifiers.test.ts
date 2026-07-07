@@ -58,20 +58,28 @@ describe("replication modifiers (Phase 2)", () => {
     expect(() => crypto.decString(wire.content, "tag.name")).toThrow();
   });
 
-  test("tag 往復＋決定的 fingerprint", () => {
-    const doc = { id: "7", name: "日記", _deleted: false };
+  test("tag 往復＋決定的 fingerprint。wire は updatedAt（checkpoint 用）を運ぶ", () => {
+    const doc = { id: "7", name: "日記", updatedAt: "2026-07-07T00:00:00.000Z", _deleted: false };
     const wire = tagPush(crypto, doc);
     expect(wire.name).not.toBe("日記");
+    expect(wire.updatedAt).toBe("2026-07-07T00:00:00.000Z");
     expect(wire.nameFingerprint).toBe(crypto.fingerprint("日記"));
     expect(tagPush(crypto, doc).nameFingerprint).toBe(wire.nameFingerprint);
     expect(tagPull(crypto, wire)).toEqual(doc);
   });
 
-  test("chunkUserTag 往復（name 暗号・fingerprint・chunkId 保持）", () => {
-    const doc = { id: "3", chunkId: "42", name: "旅行", _deleted: false };
+  test("chunkUserTag 往復（name 暗号・fingerprint・chunkId 保持）。wire は updatedAt を運ぶ", () => {
+    const doc = {
+      id: "3",
+      chunkId: "42",
+      name: "旅行",
+      updatedAt: "2026-07-07T00:00:00.000Z",
+      _deleted: false,
+    };
     const wire = userTagPush(crypto, doc);
     expect(wire.chunkId).toBe("42");
     expect(wire.name).not.toBe("旅行");
+    expect(wire.updatedAt).toBe("2026-07-07T00:00:00.000Z");
     expect(wire.nameFingerprint).toBe(crypto.fingerprint("旅行"));
     expect(userTagPull(crypto, wire)).toEqual(doc);
   });

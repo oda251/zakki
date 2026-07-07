@@ -63,14 +63,18 @@ module.exports = {
     {
       name: "web-client-no-data-runtime",
       comment:
-        "client から @zakki/data の実 import 禁止（node 依存の混入防止。型は shared 経由で可）",
+        "client から @zakki/data の実 import 禁止（node 依存の混入防止。型は shared 経由で可）。" +
+        "テストは実サーバ（libSQL）との統合検証で越境してよい（バンドルに載らない）",
       severity: "error",
-      from: { path: "^apps/web/src/(client|shared)" },
+      from: { path: "^apps/web/src/(client|shared)", pathNot: "\\.test\\.(ts|tsx)$" },
       to: { path: "^packages/data/src", dependencyTypesNot: ["type-only"] },
     },
   ],
   options: {
     doNotFollow: { path: "node_modules" },
+    // ビルド成果物は検査対象外（CI は build 前に cruise するが、ローカルで dist が
+    // 残っていると minify 済み JS を誤検査する。oxlint の ignorePatterns と同じ方針）
+    exclude: { path: "^apps/web/dist" },
     tsConfig: { fileName: "tsconfig.base.json" },
     tsPreCompilationDeps: true,
     // fs / os（node: 組み込みの resolved 名）は data-node-fs-only-in-adapters の

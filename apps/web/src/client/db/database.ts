@@ -10,19 +10,30 @@
  * memory-storage を import しない — それらはテスト側の責務。
  */
 import { createRxDatabase } from "rxdb";
-import type { RxCollection, RxDatabase, RxDocument, RxJsonSchema, RxStorage } from "rxdb";
+import type {
+  RxCollection,
+  RxConflictHandler,
+  RxDatabase,
+  RxDocument,
+  RxJsonSchema,
+  RxStorage,
+} from "rxdb";
 import type { Chunk, ChunkUserTag, Correction, Tag } from "@zakki/web/shared/api-types.ts";
 
-/** RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ */
+/**
+ * RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ。
+ * updatedAt は replication の checkpoint / 衝突判定に必須のため、サーバ表に
+ * 無い tags / chunkUserTags もクライアント doc では持つ（wire にそのまま載る）。
+ */
 export type ChunkDoc = { id: string; parentId: string | null } & Omit<
   Chunk,
   "id" | "parentId" | "createdAt"
 >;
-export type ChunkUserTagDoc = { id: string; chunkId: string } & Omit<
-  Pick<ChunkUserTag, "id" | "chunkId" | "name">,
-  "id" | "chunkId"
+export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string } & Pick<
+  ChunkUserTag,
+  "name"
 >;
-export type TagDoc = { id: string } & Omit<Pick<Tag, "id" | "name">, "id">;
+export type TagDoc = { id: string; updatedAt: string } & Pick<Tag, "name">;
 export type CorrectionDoc = Correction;
 
 export type ZakkiCollections = {
@@ -57,8 +68,9 @@ const chunkUserTagsSchema = {
     id: { type: "string", maxLength: 32 },
     chunkId: { type: "string" },
     name: { type: "string" },
+    updatedAt: { type: "string" },
   },
-  required: ["id", "chunkId", "name"],
+  required: ["id", "chunkId", "name", "updatedAt"],
 } as const satisfies RxJsonSchema<ChunkUserTagDoc>;
 
 const tagsSchema = {
@@ -68,8 +80,9 @@ const tagsSchema = {
   properties: {
     id: { type: "string", maxLength: 32 },
     name: { type: "string" },
+    updatedAt: { type: "string" },
   },
-  required: ["id", "name"],
+  required: ["id", "name", "updatedAt"],
 } as const satisfies RxJsonSchema<TagDoc>;
 
 const correctionsSchema = {
@@ -84,13 +97,34 @@ const correctionsSchema = {
   required: ["kana", "chosen", "updatedAt"],
 } as const satisfies RxJsonSchema<CorrectionDoc>;
 
-export async function createZakkiDb(storage: RxStorage<unknown, unknown>): Promise<ZakkiDatabase> {
-  const db = await createRxDatabase<ZakkiCollections>({ name: "zakki", storage });
+/**
+ * DB-per-user 前提の単純衝突方針（#43）: (updatedAt, _deleted) の一致で同一視し、
+ * 差異はサーバ（realMasterState）を常に採る。deepEqual を避けた軽量版。
+ */
+function serverWinsConflictHandler<T extends { updatedAt: string }>(): RxConflictHandler<T> {
+  return {
+    isEqual: (a, b) => a.updatedAt === b.updatedAt && a._deleted === b._deleted,
+    resolve: (input) => Promise.resolve(input.realMasterState),
+  };
+}
+
+/** name は既定 "zakki"。テスト・複数インスタンス検証では別名を渡して分離する */
+export async function createZakkiDb(
+  storage: RxStorage<unknown, unknown>,
+  name = "zakki",
+): Promise<ZakkiDatabase> {
+  const db = await createRxDatabase<ZakkiCollections>({ name, storage });
   await db.addCollections({
-    chunks: { schema: chunksSchema },
-    chunkUserTags: { schema: chunkUserTagsSchema },
-    tags: { schema: tagsSchema },
-    corrections: { schema: correctionsSchema },
+    chunks: { schema: chunksSchema, conflictHandler: serverWinsConflictHandler<ChunkDoc>() },
+    chunkUserTags: {
+      schema: chunkUserTagsSchema,
+      conflictHandler: serverWinsConflictHandler<ChunkUserTagDoc>(),
+    },
+    tags: { schema: tagsSchema, conflictHandler: serverWinsConflictHandler<TagDoc>() },
+    corrections: {
+      schema: correctionsSchema,
+      conflictHandler: serverWinsConflictHandler<CorrectionDoc>(),
+    },
   });
   return db;
 }

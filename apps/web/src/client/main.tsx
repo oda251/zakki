@@ -7,3 +7,12 @@ if (root === null) {
   throw new Error("#root が見つかりません");
 }
 createRoot(root).render(<App />);
+
+// RxDB（Dexie storage）と replication の起動（issue #43）。UI の liveQuery 配線は #44 で
+// 行うため fire-and-forget。アンロック不可・起動失敗でも既存 REST 経路の UI は動く。
+// RxDB + libsodium が重いため、GraphView と同じく初期チャンクから dynamic import で分離する。
+void import("@zakki/web/client/db/bootstrap.ts")
+  .then((m) => m.bootstrapClientDb())
+  .catch((err: unknown) => {
+    console.error(`zakki-db: ${err instanceof Error ? err.message : String(err)}`);
+  });
