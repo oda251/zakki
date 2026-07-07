@@ -20,6 +20,20 @@ module.exports = {
       to: { path: "^(packages/(data|backend)|apps)/" },
     },
     {
+      name: "data-node-fs-only-in-adapters",
+      comment:
+        "packages/data のリポジトリ・クエリ群から node:fs / node:os へ到達しない（issue #29）。" +
+        "fs 依存は DB アダプタ（db/connect.ts）・keyfile・identity・paths（合成点専用）に封じ込める",
+      severity: "error",
+      from: {
+        path: "^packages/data/src",
+        pathNot:
+          "^packages/data/src/(db/connect\\.ts|crypto/keyfile\\.ts|identity/local\\.ts|util/paths\\.ts)$|\\.test\\.ts$",
+      },
+      // node: 組み込みの resolved 名はプレフィクスなし（node:fs → fs）
+      to: { dependencyTypes: ["core"], path: "^(fs|os)(/|$)" },
+    },
+    {
       name: "data-no-upward",
       comment: "@zakki/data から backend / apps への逆流禁止",
       severity: "error",
@@ -59,6 +73,8 @@ module.exports = {
     doNotFollow: { path: "node_modules" },
     tsConfig: { fileName: "tsconfig.base.json" },
     tsPreCompilationDeps: true,
-    includeOnly: "^(apps|packages)/",
+    // fs / os（node: 組み込みの resolved 名）は data-node-fs-only-in-adapters の
+    // 検査対象としてグラフに含める
+    includeOnly: "^(apps|packages)/|^(fs|os)(/|$)",
   },
 };

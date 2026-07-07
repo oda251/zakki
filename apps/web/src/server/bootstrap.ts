@@ -19,8 +19,8 @@ const headless = (what: string) => () =>
 
 /**
  * API サーバの合成（issue #29）。検証済み config を受け取り、標準 Fetch ハンドラ
- * （Hono アプリ）を返す。Bun 固有 API（Bun.serve・hono/bun の静的配信）は使わず、
- * それらは起動アダプタ（index.ts）に隔離する。
+ * （Hono アプリ）を返す。Bun 固有 API（serve・静的配信）は使わず、それらは
+ * bun 用起動アダプタ（index.ts）に隔離する（scripts/check-arch-guards.sh Guard 3）。
  *
  * TUI（apps/tui/src/index.tsx）と同じ合成: openDb → 暗号アンロック → guard →
  * sync → エンジン選択。違いは 2 点: TTY を要求しない・暗号はキーファイルの無言
