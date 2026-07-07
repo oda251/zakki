@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import { parseZakkiConfig } from "@zakki/core/config/env.ts";
+// vite の設定ロード時は下記 resolve.alias が効かないため、相対パスで shared を参照する
+import { API_BASE } from "./src/shared/api-base.ts";
 
 // 開発は `bun run web`（API, :3777）と `bun run web:dev`（vite, :5173 proxy）の 2 プロセス。
 // 本番は `vite build` の dist を API サーバが配信する（apps/web/src/server/index.ts）。
@@ -25,7 +27,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": `http://localhost:${config.webPort}`,
+      [API_BASE]: `http://localhost:${config.webPort}`,
     },
   },
 });

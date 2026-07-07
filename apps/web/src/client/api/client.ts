@@ -1,3 +1,4 @@
+import { API_BASE } from "@zakki/web/shared/api-base.ts";
 import type {
   ConvertRequest,
   DateChunkRequest,
@@ -29,8 +30,9 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** path は API_BASE からの相対（例: "/graph"）。プレフィクスはここで一元的に付与する */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${API_BASE}${path}`, {
     headers: { "content-type": "application/json" },
     ...init,
   });
@@ -50,50 +52,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
 export const api = {
-  graph: () => request<GraphData>("/api/graph"),
-  graphDelta: (since: string) =>
-    request<GraphDelta>(`/api/graph?since=${encodeURIComponent(since)}`),
+  graph: () => request<GraphData>("/graph"),
+  graphDelta: (since: string) => request<GraphDelta>(`/graph?since=${encodeURIComponent(since)}`),
   dateChunk: (date?: DateChunkRequest["date"]) =>
-    request<Chunk>("/api/chunks/date", {
+    request<Chunk>("/chunks/date", {
       method: "POST",
       ...json({ date } satisfies DateChunkRequest),
     }),
-  chunkChildren: (id: number) => request<ChunkChildrenResponse>(`/api/chunks/${id}`),
+  chunkChildren: (id: number) => request<ChunkChildrenResponse>(`/chunks/${id}`),
   saveChildren: (id: number, converted: SaveChildrenRequest["converted"]) =>
-    request<SaveChildrenResponse>(`/api/chunks/${id}/children`, {
+    request<SaveChildrenResponse>(`/chunks/${id}/children`, {
       method: "PUT",
       ...json({ converted } satisfies SaveChildrenRequest),
     }),
   renameChunk: (id: number, content: RenameChunkRequest["content"]) =>
-    request<{ ok: true }>(`/api/chunks/${id}`, {
+    request<{ ok: true }>(`/chunks/${id}`, {
       method: "PATCH",
       ...json({ content } satisfies RenameChunkRequest),
     }),
-  deleteChunk: (id: number) => request<{ ok: true }>(`/api/chunks/${id}`, { method: "DELETE" }),
+  deleteChunk: (id: number) => request<{ ok: true }>(`/chunks/${id}`, { method: "DELETE" }),
   setUserTags: (id: number, names: SetUserTagsRequest["names"]) =>
-    request<{ ok: true }>(`/api/chunks/${id}/tags`, {
+    request<{ ok: true }>(`/chunks/${id}/tags`, {
       method: "PUT",
       ...json({ names } satisfies SetUserTagsRequest),
     }),
-  related: (id: number) => request<RelatedResponse>(`/api/chunks/${id}/related`),
+  related: (id: number) => request<RelatedResponse>(`/chunks/${id}/related`),
   addLink: (from: number, to: number) =>
-    request<{ ok: true }>("/api/links", { method: "POST", ...json({ from, to }) }),
+    request<{ ok: true }>("/links", { method: "POST", ...json({ from, to }) }),
   convert: (kana: ConvertRequest["kana"], leftContext?: ConvertRequest["leftContext"]) =>
-    request<ConvertResponse>("/api/convert", {
+    request<ConvertResponse>("/convert", {
       method: "POST",
       ...json({ kana, leftContext } satisfies ConvertRequest),
     }),
-  conversionState: () => request<ConversionStateResponse>("/api/conversion/state"),
+  conversionState: () => request<ConversionStateResponse>("/conversion/state"),
   saveConversion: (
     kana: SaveConversionRequest["kana"],
     converted: SaveConversionRequest["converted"],
   ) =>
-    request<{ ok: true }>("/api/conversion/cache", {
+    request<{ ok: true }>("/conversion/cache", {
       method: "POST",
       ...json({ kana, converted } satisfies SaveConversionRequest),
     }),
   saveCorrection: (kana: SaveCorrectionRequest["kana"], chosen: SaveCorrectionRequest["chosen"]) =>
-    request<{ ok: true }>("/api/conversion/corrections", {
+    request<{ ok: true }>("/conversion/corrections", {
       method: "POST",
       ...json({ kana, chosen } satisfies SaveCorrectionRequest),
     }),
