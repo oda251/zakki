@@ -117,7 +117,7 @@ export function chunkRoutes(deps: AppDeps): Hono {
           const target = children.at(-1)?.id ?? id;
           return relatedChunks(db, target, RELATED_LIMIT);
         })
-        .orElse(() => okAsync([] as RelatedChunk[]))
+        .orElse(() => okAsync<RelatedChunk[]>([]))
         .map((items) => ({ items })),
     );
   });

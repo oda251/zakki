@@ -6,6 +6,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
+import { rowsAs } from "@zakki/data/db/rows.ts";
 import type { Chunk, ChunkTag, Link, Tag } from "@zakki/data/db/schema.ts";
 import { ROOT_DATE_CTE } from "@zakki/data/chunk/sql.ts";
 
@@ -52,7 +53,7 @@ export function listChunksWithDate(db: Db, since?: string): ResultAsync<ChunkWit
       WHERE c.parent_id IS NOT NULL ${filter}
       ORDER BY r.root_date ASC, c.parent_id ASC, c.position ASC
     `);
-    return toChunkWithDate(db, res.rows as unknown as RawChunkRow[]);
+    return toChunkWithDate(db, rowsAs<RawChunkRow>(res));
   });
 }
 
@@ -74,7 +75,7 @@ export function listChunksByIds(db: Db, ids: number[]): ResultAsync<ChunkWithDat
       FROM chunks c JOIN roots r ON c.id = r.id
       WHERE c.parent_id IS NOT NULL AND c.id IN (${idList})
     `);
-    return toChunkWithDate(db, res.rows as unknown as RawChunkRow[]);
+    return toChunkWithDate(db, rowsAs<RawChunkRow>(res));
   });
 }
 
@@ -121,7 +122,7 @@ export function listTagsByChunk(db: Db): ResultAsync<Map<number, string[]>, DbEr
       SELECT ct.chunk_id AS chunkId, t.name AS name, ct.score AS score
       FROM chunk_tags ct JOIN tags t ON ct.tag_id = t.id
     `);
-    const rows = res.rows as unknown as ChunkTagNameRow[];
+    const rows = rowsAs<ChunkTagNameRow>(res);
     const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, string[]>();
     for (const row of sorted) {
@@ -168,7 +169,7 @@ export function dailySentiment(db: Db): ResultAsync<DailySentiment[], DbError> {
       WHERE c.parent_id IS NOT NULL
       GROUP BY r.root_date ORDER BY r.root_date ASC
     `);
-    return res.rows as unknown as DailySentiment[];
+    return rowsAs<DailySentiment>(res);
   });
 }
 
@@ -178,7 +179,7 @@ export function listLinksByChunk(db: Db): ResultAsync<Map<number, number[]>, DbE
     const res = await db.run(
       sql`SELECT from_chunk_id AS fromChunkId, to_chunk_id AS toChunkId, score FROM links`,
     );
-    const rows = res.rows as unknown as Pick<Link, "fromChunkId" | "toChunkId" | "score">[];
+    const rows = rowsAs<Pick<Link, "fromChunkId" | "toChunkId" | "score">>(res);
     const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, number[]>();
     const push = (from: number, to: number) => {

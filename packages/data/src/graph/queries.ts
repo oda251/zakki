@@ -5,6 +5,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
+import { rowsAs } from "@zakki/data/db/rows.ts";
 import type { Chunk, Link } from "@zakki/data/db/schema.ts";
 import { listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import { ROOT_DATE_CTE } from "@zakki/data/chunk/sql.ts";
@@ -78,7 +79,7 @@ export interface GraphDelta {
 function maxChunkUpdatedAt(db: Db): ResultAsync<string, DbError> {
   return tryDbAsync(async () => {
     const res = await db.run(sql`SELECT max(updated_at) AS max FROM chunks`);
-    const rows = res.rows as unknown as { max: Chunk["updatedAt"] | null }[];
+    const rows = rowsAs<{ max: Chunk["updatedAt"] | null }>(res);
     return rows[0]?.max ?? "";
   });
 }
@@ -106,7 +107,7 @@ function listNodeRows(db: Db, since?: string): ResultAsync<RawNodeRow[], DbError
       ${filter}
       ORDER BY c.id ASC
     `);
-    return res.rows as unknown as RawNodeRow[];
+    return rowsAs<RawNodeRow>(res);
   });
 }
 
@@ -124,7 +125,7 @@ function listCounts(db: Db): ResultAsync<AliveNode[], DbError> {
              (SELECT count(*) FROM chunks ch WHERE ch.parent_id = root) AS childCount
       FROM sub GROUP BY root ORDER BY root ASC
     `);
-    return res.rows as unknown as AliveNode[];
+    return rowsAs<AliveNode>(res);
   });
 }
 
@@ -159,7 +160,7 @@ function listStoredEdges(db: Db): ResultAsync<GraphEdge[], DbError> {
     const res = await db.run(
       sql`SELECT from_chunk_id AS "from", to_chunk_id AS "to", score, origin FROM links`,
     );
-    return res.rows as unknown as GraphEdge[];
+    return rowsAs<GraphEdge>(res);
   });
 }
 
@@ -173,9 +174,7 @@ function chronoEdges(db: Db): ResultAsync<GraphEdge[], DbError> {
     const res = await db.run(
       sql`SELECT id, date FROM chunks WHERE date IS NOT NULL ORDER BY date ASC`,
     );
-    const rows = res.rows as unknown as (Pick<Chunk, "id"> & {
-      date: NonNullable<Chunk["date"]>;
-    })[];
+    const rows = rowsAs<Pick<Chunk, "id"> & { date: NonNullable<Chunk["date"]> }>(res);
     const edges: GraphEdge[] = [];
     for (let i = 1; i < rows.length; i++) {
       const a = rows[i - 1];

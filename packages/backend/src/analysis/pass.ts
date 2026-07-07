@@ -33,7 +33,7 @@ export async function runAnalysisPass(
           () => {},
           (e) => onError(`関連付け: ${e.message}`),
         );
-        return vectors as ReadonlyMap<number, Float32Array>;
+        return vectors;
       },
       (e) => {
         onError(`埋め込み: ${e.message}`);

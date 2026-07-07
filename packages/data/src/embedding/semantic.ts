@@ -91,7 +91,7 @@ export function relatedChunks(
 ): ResultAsync<RelatedChunk[], DbError> {
   return loadVectors(db).andThen((vectors) => {
     const query = vectors.get(chunkId);
-    if (query === undefined) return okAsync([] as RelatedChunk[]);
+    if (query === undefined) return okAsync<RelatedChunk[], DbError>([]);
     const neighbors = nearestChunks(vectors, query, limit + 1)
       .filter((n) => n.chunkId !== chunkId)
       .slice(0, limit);

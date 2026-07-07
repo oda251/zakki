@@ -29,10 +29,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const body: unknown = await res.json().catch(() => null);
     const message =
       typeof body === "object" && body !== null && "error" in body
-        ? String((body as { error: unknown }).error)
+        ? String(body.error)
         : res.statusText;
     throw new ApiRequestError(res.status, message);
   }
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- HTTP JSON は untyped。サーバの api-types と 1:1 の呼び出し規約を型に読み替える境界
   return (await res.json()) as T;
 }
 
