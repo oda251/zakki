@@ -1,6 +1,14 @@
 import { sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
-import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  blob,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { AAD } from "@zakki/core/crypto/aad.ts";
 
 /**
@@ -215,6 +223,27 @@ export const embeddings = sqliteTable("embeddings", {
   vector: blob("vector", { mode: "buffer" }).notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+/**
+ * RxDB replication（issue #42, #40）のサーバ側汎用テーブル。
+ * domain schema（chunks/tags 等）に依存せず、collection ごとの wire doc を
+ * 不透明な暗号文コンテナとして持つだけの dumb store（#28: サーバは復号しない）。
+ *
+ * `data` が wire doc（id/updatedAt/_deleted + 任意フィールド）の JSON 全体。
+ * `updated_at`/`deleted` は `data` からの冗長な複製で、将来の SQL 側絞り込み
+ * （変更分の WHERE 句等）のために持つ（正本は `data`）。
+ */
+export const replDocs = sqliteTable(
+  "repl_docs",
+  {
+    collection: text("collection").notNull(),
+    id: text("id").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    deleted: integer("deleted", { mode: "boolean" }).notNull(),
+    data: text("data").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.collection, t.id] })],
+);
 
 export type Chunk = typeof chunks.$inferSelect;
 export type ChunkTag = typeof chunkTags.$inferSelect;
