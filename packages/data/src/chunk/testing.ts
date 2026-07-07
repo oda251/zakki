@@ -19,5 +19,8 @@ export async function seedDayChunks(
       contents.map((content) => ({ content })),
     )
   )._unsafeUnwrap();
+  if (chunks === null) {
+    throw new Error("seedDayChunks: 直前に作成した日付チャンクが存在しない");
+  }
   return { root, chunks };
 }

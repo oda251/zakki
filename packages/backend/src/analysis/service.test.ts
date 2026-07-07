@@ -148,7 +148,8 @@ describe("analyzeAll", () => {
     // コンテナチャンク（saveChildren で子を持たせたチャンク）にユーザタグを付ける
     // （書込み経路は web クライアントの RxDB へ移行済み。ここでは既存行として直接挿入）
     const root = (await getOrCreateDateChunk(db, "2026-06-12"))._unsafeUnwrap();
-    const [container] = (await saveChildren(db, root.id, [{ content: "調査" }]))._unsafeUnwrap();
+    const [container] =
+      (await saveChildren(db, root.id, [{ content: "調査" }]))._unsafeUnwrap() ?? [];
     if (container === undefined) throw new Error("seed 不足");
     (await saveChildren(db, container.id, [{ content: "変換辞書の話。" }]))._unsafeUnwrap();
     const now = new Date().toISOString();

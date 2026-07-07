@@ -25,6 +25,7 @@ async function seedDay(date: string, contents: string[]): Promise<number[]> {
       contents.map((content) => ({ content })),
     )
   )._unsafeUnwrap();
+  if (saved === null) throw new Error("親チャンクが存在しない");
   return saved.map((c) => c.id);
 }
 
@@ -37,15 +38,15 @@ describe("listChunksWithDate", () => {
     const [a] = await seedDay("2026-07-05", ["一。"]);
     if (a === undefined) throw new Error("seed 不足");
     // 入れ子: コンテナの子も同じ root date を継承する
-    const [container] = (
-      await saveChildren(db, (await getOrCreateDateChunk(db, "2026-07-06"))._unsafeUnwrap().id, [
-        { content: "調査" },
-      ])
-    )._unsafeUnwrap();
+    const [container] =
+      (
+        await saveChildren(db, (await getOrCreateDateChunk(db, "2026-07-06"))._unsafeUnwrap().id, [
+          { content: "調査" },
+        ])
+      )._unsafeUnwrap() ?? [];
     if (container === undefined) throw new Error("seed 不足");
-    const [nested] = (
-      await saveChildren(db, container.id, [{ content: "深い。" }])
-    )._unsafeUnwrap();
+    const [nested] =
+      (await saveChildren(db, container.id, [{ content: "深い。" }]))._unsafeUnwrap() ?? [];
     if (nested === undefined) throw new Error("seed 不足");
 
     const all = (await listChunksWithDate(db))._unsafeUnwrap();

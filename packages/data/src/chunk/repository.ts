@@ -114,16 +114,27 @@ export function listDateChunks(db: Db): ResultAsync<Chunk[], DbError> {
  *
  * 限界: 同一保存内で「行削除」と「別の行の編集」が同時に起きると位置対応（2）が
  * ずれ得る（保存デバウンス窓内の複合編集のみ。単独操作は常に正しく対応する）。
+ *
+ * 親チャンクが存在しなければ null を返す。存在確認は同一トランザクション内で行い、
+ * 事前チェックと書き込みの間に親が削除される TOCTOU を塞ぐ（issue #58 項目 5。
+ * 万一すり抜けても parent_id の FK 制約が挿入を拒否し、孤児行は生まれない）。
  */
 export function saveChildren(
   db: Db,
   parentId: number,
   drafts: readonly ChunkDraftInput[],
   now: string = new Date().toISOString(),
-): ResultAsync<Chunk[], DbError> {
+): ResultAsync<Chunk[] | null, DbError> {
   const crypto = getCrypto(db);
   return tryDbAsync(() =>
     db.transaction(async (tx) => {
+      const [parent] = await tx
+        .select({ id: chunks.id })
+        .from(chunks)
+        .where(eq(chunks.id, parentId))
+        .limit(1);
+      if (parent === undefined) return null;
+
       const rows = await tx
         .select()
         .from(chunks)
