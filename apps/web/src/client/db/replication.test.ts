@@ -10,7 +10,7 @@ import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
-import { startReplication } from "@zakki/web/client/db/replication.ts";
+import { REPLICATION_POLICY, startReplication } from "@zakki/web/client/db/replication.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 
@@ -144,6 +144,41 @@ describe("client replication (issue #43)", () => {
     await sync(b);
 
     expect((await b.chunks.findOne("1").exec())?.content).toBe("サーバ側");
+  });
+
+  test("links がサーバ経由で他インスタンスへ同期される（#77）", async () => {
+    const a = await open();
+    const b = await open();
+    await a.links.insert({
+      id: "3-7",
+      fromChunkId: "3",
+      toChunkId: "7",
+      score: 1,
+      origin: "manual",
+      updatedAt: "2026-07-07T00:00:04.000Z",
+    });
+
+    await sync(a);
+    await sync(b);
+
+    const doc = await b.links.findOne("3-7").exec();
+    expect(doc?.toJSON()).toMatchObject({ fromChunkId: "3", toChunkId: "7", origin: "manual" });
+  });
+
+  test("コレクション追加漏れガード: REPLICATION_POLICY が全コレクションを網羅し、replicated 分の state が返る（#77 / #43 レビュー指摘）", async () => {
+    const a = await open();
+    // ZakkiCollections との対応は satisfies が型レベルで強制する。ここは実体側:
+    // 実 DB のコレクション集合と方針表のキー集合が一致することを確認する
+    expect(Object.keys(REPLICATION_POLICY).toSorted()).toEqual(
+      Object.keys(a.collections).toSorted(),
+    );
+
+    const replicated = Object.entries(REPLICATION_POLICY)
+      .filter(([, policy]) => policy === "replicated")
+      .map(([name]) => name);
+    const states = startReplication(a, fc, { fetchFn, live: false });
+    expect(Object.keys(states).toSorted()).toEqual(replicated.toSorted());
+    await Promise.all(Object.values(states).map((s) => s.cancel()));
   });
 
   test("D6: 日付チャンクの content は wire でも平文（Phase 2 のスキップが効く）", async () => {

@@ -150,24 +150,6 @@ export function recomputeCounts(nodes: readonly GraphNode[]): GraphNode[] {
   });
 }
 
-/** 数珠繋ぎリンクの即時反映。data 層 addManualLink と同じ不変条件（from<to・重複/自己は no-op） */
-export function addManualEdges(
-  data: GraphData,
-  drafts: readonly { from: number; to: number }[],
-): GraphData {
-  const seen = new Set(data.edges.map((e) => `${e.from}-${e.to}`));
-  const added: GraphEdge[] = [];
-  for (const d of drafts) {
-    if (d.from === d.to) continue;
-    const [from, to] = d.from < d.to ? [d.from, d.to] : [d.to, d.from];
-    const key = `${from}-${to}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    added.push({ from, to, score: 1, origin: "manual" });
-  }
-  return added.length === 0 ? data : { ...data, edges: [...data.edges, ...added] };
-}
-
 /** series スロット数（styles.css の --series-*） */
 export const SERIES_SLOTS = 8;
 

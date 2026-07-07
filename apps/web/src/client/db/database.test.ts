@@ -32,10 +32,10 @@ afterEach(async () => {
 const tick = () => new Promise((r) => setTimeout(r, 30));
 
 describe("rxdb database (Phase 1)", () => {
-  test("createZakkiDb は 4 コレクションを持つ", async () => {
+  test("createZakkiDb は 5 コレクションを持つ", async () => {
     const db = await open();
     expect(Object.keys(db.collections).toSorted()).toEqual(
-      ["chunkUserTags", "chunks", "corrections", "tags"].toSorted(),
+      ["chunkUserTags", "chunks", "corrections", "links", "tags"].toSorted(),
     );
   });
 

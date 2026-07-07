@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { GraphData, GraphEdge, GraphNode } from "@zakki/web/shared/api-types.ts";
 import {
-  addManualEdges,
   breadcrumbPath,
   EMPTY_FILTER,
   isDoubleClick,
@@ -99,18 +98,6 @@ describe("recomputeCounts", () => {
     expect(byId.get(1)).toMatchObject({ childCount: 2, descendantCount: 3 });
     expect(byId.get(3)).toMatchObject({ childCount: 1, descendantCount: 1 });
     expect(byId.get(4)).toMatchObject({ childCount: 0, descendantCount: 0 });
-  });
-});
-
-describe("addManualEdges", () => {
-  test("from<to 正規化・重複と自己リンクは no-op", () => {
-    const before = data(TREE, [edge(2, 3, "manual")]);
-    const after = addManualEdges(before, [
-      { from: 3, to: 2 }, // 重複（正規化後 2-3）
-      { from: 4, to: 4 }, // 自己
-      { from: 6, to: 4 }, // 新規（4-6 へ正規化）
-    ]);
-    expect(after.edges).toEqual([edge(2, 3, "manual"), { ...edge(4, 6, "manual") }]);
   });
 });
 

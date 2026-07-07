@@ -5,13 +5,14 @@
  * 投影のクライアント版: root date 継承・childCount / descendantCount の再導出。
  * 派生値の定義は graph-core の recomputeCounts と共有する。
  *
- * 自動タグ（chunk_tags）・意味リンク（links）はサーバ解析の産物で replication
- * 対象外のため、tags は空・エッジはここでは導出しない（クライアント解析は #28/#26）。
+ * エッジは links コレクション（#77 で永続化）から {@link edgesFromDocs} で導出する。
+ * 自動タグ（chunk_tags）はサーバ解析の産物で replication 対象外のため tags は空
+ * （クライアント解析は #28/#26、意味リンクの生成も同じく M6）。
  */
-import type { ChunkDoc, ChunkUserTagDoc } from "@zakki/web/client/db/database.ts";
+import type { ChunkDoc, ChunkUserTagDoc, LinkDoc } from "@zakki/web/client/db/database.ts";
 import { numId } from "@zakki/web/client/db/ids.ts";
 import { recomputeCounts } from "@zakki/web/client/store/graph-core.ts";
-import type { GraphNode } from "@zakki/web/shared/api-types.ts";
+import type { GraphEdge, GraphNode } from "@zakki/web/shared/api-types.ts";
 
 /**
  * 各チャンクの「祖先（自身を含む）の日付チャンクの date」。辿れない
@@ -71,4 +72,17 @@ export function nodesFromDocs(
     }),
   );
   return recomputeCounts(nodes.toSorted((a, b) => a.id - b.id));
+}
+
+/**
+ * RxDB の link docs から GraphEdge 列を導出する（#77）。両端が存在するノードの
+ * エッジのみ残す（同期途中の孤児・削除済みチャンクへのリンクは表示しない）。
+ */
+export function edgesFromDocs(links: readonly LinkDoc[], alive: ReadonlySet<number>): GraphEdge[] {
+  return links.flatMap((l) => {
+    const from = numId(l.fromChunkId);
+    const to = numId(l.toChunkId);
+    if (!alive.has(from) || !alive.has(to)) return [];
+    return [{ from, to, score: l.score, origin: l.origin }];
+  });
 }

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import {
+  addLinkDocs,
   getOrCreateDateChunkDoc,
   removeChunkTree,
   renameChunkDoc,
@@ -166,6 +167,51 @@ describe("setUserTagDocs", () => {
     await setUserTagDocs(db, "10", [], T2);
     const rest = (await db.chunkUserTags.find().exec()).map((d) => d.toJSON());
     expect(rest.map((t) => t.chunkId)).toEqual(["20"]);
+  });
+});
+
+describe("addLinkDocs", () => {
+  test("from<to 正規化・決定的 id で永続化し、自己リンクは作らない（#77）", async () => {
+    const db = await open();
+    await addLinkDocs(
+      db,
+      [
+        { from: 7, to: 3 },
+        { from: 4, to: 4 },
+      ],
+      T1,
+    );
+    const links = (await db.links.find().exec()).map((d) => d.toJSON());
+    expect(links).toEqual([
+      {
+        id: "3-7",
+        fromChunkId: "3",
+        toChunkId: "7",
+        score: 1,
+        origin: "manual",
+        updatedAt: T1,
+      },
+    ]);
+  });
+
+  test("既存ペアは no-op（updatedAt を動かさず replication ノイズを出さない）", async () => {
+    const db = await open();
+    await addLinkDocs(db, [{ from: 3, to: 7 }], T1);
+    await addLinkDocs(db, [{ from: 7, to: 3 }], T2);
+    const links = await db.links.find().exec();
+    expect(links.length).toBe(1);
+    expect(links[0]?.updatedAt).toBe(T1);
+  });
+
+  test("チャンク削除で両端いずれかが消えたリンクも cascade 削除される", async () => {
+    const db = await open();
+    const parent = await getOrCreateDateChunkDoc(db, "2026-07-07", T1);
+    const saved = await saveChildrenDocs(db, parent.id, [{ content: "a" }, { content: "b" }], T1);
+    const [a, b] = [Number(saved[0]?.id), Number(saved[1]?.id)];
+    await addLinkDocs(db, [{ from: a, to: b }], T1);
+
+    await removeChunkTree(db, String(b));
+    expect(await db.links.find().exec()).toEqual([]);
   });
 });
 

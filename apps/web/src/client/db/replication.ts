@@ -4,9 +4,11 @@
  * コレクションごとに `replicateRxCollection` でサーバ endpoint
  * （`POST ${API_BASE}/replication/:collection/pull|push`, #42）へ接続する。
  * 暗号境界は Phase 2 の modifier（push = *Push で暗号化 + fingerprint /
- * pull = *Pull で復号）で、wire 上・サーバ上は常に暗号文のみ（#28）。
+ * pull = *Pull で復号）で、平文文字列フィールドは wire 上・サーバ上で常に
+ * 暗号文のみ（#28。構造のみの links は平文 wire — modifiers.ts の判断コメント）。
  *
- * corrections は暗号 modifier 未定義のためここでは同期しない（local のみ。将来 issue）。
+ * どのコレクションを同期するかは {@link REPLICATION_POLICY} が SSOT
+ * （コレクション追加時に宣言漏れを型エラーで検出する, #77 / #43 レビュー指摘）。
  */
 import { interval, map } from "rxjs";
 import type { Observable } from "rxjs";
@@ -16,15 +18,12 @@ import type { RxReplicationState } from "rxdb/plugins/replication";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { request } from "@zakki/web/client/api/client.ts";
 import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
-import type {
-  ChunkDoc,
-  ChunkUserTagDoc,
-  TagDoc,
-  ZakkiDatabase,
-} from "@zakki/web/client/db/database.ts";
+import type { ZakkiCollections, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import {
   chunkPull,
   chunkPush,
+  linkPull,
+  linkPush,
   tagPull,
   tagPush,
   userTagPull,
@@ -51,11 +50,33 @@ export interface StartReplicationOptions {
   retryTime?: number;
 }
 
-export interface ZakkiReplicationStates {
-  chunks: RxReplicationState<ChunkDoc, Checkpoint>;
-  tags: RxReplicationState<TagDoc, Checkpoint>;
-  chunkUserTags: RxReplicationState<ChunkUserTagDoc, Checkpoint>;
-}
+/**
+ * 全コレクションの replication 方針の SSOT（#77。#43 レビュー指摘
+ * 「corrections がサイレント除外」の解消）。ZakkiCollections にコレクションを
+ * 追加すると satisfies が型エラーになり、ここでの replicated / local の明示宣言と
+ * {@link startReplication} の配線（{@link ZakkiReplicationStates} が本表から派生）が
+ * 強制される。local にする場合は理由をコメントで残す。
+ */
+export const REPLICATION_POLICY = {
+  chunks: "replicated",
+  tags: "replicated",
+  chunkUserTags: "replicated",
+  links: "replicated",
+  // 変換学習はデバイスローカル運用（暗号 modifier 未定義。同期化は将来 issue）
+  corrections: "local",
+} as const satisfies Record<keyof ZakkiCollections, "replicated" | "local">;
+
+/** REPLICATION_POLICY で "replicated" と宣言されたコレクション名 */
+type ReplicatedName = {
+  [K in keyof ZakkiCollections]: (typeof REPLICATION_POLICY)[K] extends "replicated" ? K : never;
+}[keyof ZakkiCollections];
+
+type DocOf<K extends keyof ZakkiCollections> =
+  ZakkiCollections[K] extends RxCollection<infer D> ? D : never;
+
+export type ZakkiReplicationStates = {
+  [K in ReplicatedName]: RxReplicationState<DocOf<K>, Checkpoint>;
+};
 
 type Post = (path: string, body: unknown) => Promise<unknown>;
 
@@ -170,6 +191,16 @@ export function startReplication(
       collection: db.chunkUserTags,
       toWire: (doc) => userTagPush(fc, doc),
       fromWire: (wire) => userTagPull(fc, wire),
+      post,
+      live,
+      retryTime,
+      stream$,
+    }),
+    links: replicateWired({
+      name: "links",
+      collection: db.links,
+      toWire: (doc) => linkPush(doc),
+      fromWire: (wire) => linkPull(wire),
       post,
       live,
       retryTime,

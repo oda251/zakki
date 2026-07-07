@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import { numId } from "@zakki/web/client/db/ids.ts";
-import { getOrCreateDateChunkDoc, saveChildrenDocs } from "@zakki/web/client/db/writes.ts";
+import {
+  addLinkDocs,
+  getOrCreateDateChunkDoc,
+  saveChildrenDocs,
+} from "@zakki/web/client/db/writes.ts";
 import { EMPTY_FILTER } from "@zakki/web/client/store/graph-core.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
@@ -27,7 +31,6 @@ function connect(db: ZakkiDatabase): void {
 beforeEach(() => {
   useGraphStore.setState({
     data: null,
-    manualEdges: [],
     error: null,
     drillId: null,
     filter: EMPTY_FILTER,
@@ -62,15 +65,18 @@ describe("useGraphStore.connect", () => {
     expect(nodes.find((n) => n.id === numId(parent.id))?.childCount).toBe(1);
   });
 
-  test("手動エッジは doc 再 emit を跨いで生存し、消えたノードのエッジは落ちる", async () => {
+  test("links doc がエッジとして導出され、doc 再 emit を跨いで生存し、ノード削除で落ちる", async () => {
     const db = await open();
     connect(db);
     const parent = await getOrCreateDateChunkDoc(db, "2026-07-07", T1);
     const saved = await saveChildrenDocs(db, parent.id, [{ content: "a" }, { content: "b" }], T1);
     await tick();
     const [a, b] = [numId(saved[0]?.id ?? ""), numId(saved[1]?.id ?? "")];
-    useGraphStore.getState().addManualEdges([{ from: a, to: b }]);
-    expect(useGraphStore.getState().data?.edges.length).toBe(1);
+    await addLinkDocs(db, [{ from: a, to: b }], T1);
+    await tick();
+    expect(useGraphStore.getState().data?.edges).toEqual([
+      { from: Math.min(a, b), to: Math.max(a, b), score: 1, origin: "manual" },
+    ]);
 
     // 別チャンク追加による再 emit ではエッジは生存する
     await saveChildrenDocs(
@@ -82,9 +88,23 @@ describe("useGraphStore.connect", () => {
     await tick();
     expect(useGraphStore.getState().data?.edges.length).toBe(1);
 
-    // b を削除するとエッジも落ちる
+    // b を削除するとエッジも落ちる（links doc も cascade 済み）
     await saveChildrenDocs(db, parent.id, [{ content: "a" }, { content: "c" }], T1);
     await tick();
     expect(useGraphStore.getState().data?.edges).toEqual([]);
+  });
+
+  test("リンクは永続 doc 由来のため、購読の張り直し（リロード相当）後も導出される（#77）", async () => {
+    const db = await open();
+    const parent = await getOrCreateDateChunkDoc(db, "2026-07-07", T1);
+    const saved = await saveChildrenDocs(db, parent.id, [{ content: "a" }, { content: "b" }], T1);
+    const [a, b] = [numId(saved[0]?.id ?? ""), numId(saved[1]?.id ?? "")];
+    await addLinkDocs(db, [{ from: a, to: b }], T1);
+
+    // セッション状態を捨てて（リロード相当）から接続し直す
+    useGraphStore.setState({ data: null, error: null, drillId: null, selectedNodeId: null });
+    connect(db);
+    await tick();
+    expect(useGraphStore.getState().data?.edges.length).toBe(1);
   });
 });
