@@ -6,7 +6,7 @@ import { analyzeChanged } from "./service.ts";
 
 /**
  * 解析パイプライン 1 回分: 解析（タグ・キーワード関連・極性）→ 埋め込み同期 →
- * セマンティック関連付け。TUI の runBackgroundPass と web サーバの解析スケジューラが共有する。
+ * セマンティック関連付け。AnalysisScheduler（scheduler.ts）が呼ぶ実体（issue #57 で一本化）。
  *
  * 解析は増分パス（analyzeChanged, issue #24）。起動後初回だけ全量で、以降は
  * 変更チャンクとその影響範囲だけを再計算する（結果は全量再計算と一致する）。
