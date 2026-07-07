@@ -29,11 +29,11 @@ export type ChunkDoc = { id: string; parentId: string | null } & Omit<
   Chunk,
   "id" | "parentId" | "createdAt"
 >;
-export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string } & Omit<
-  Pick<ChunkUserTag, "id" | "chunkId" | "name">,
-  "id" | "chunkId"
+export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string } & Pick<
+  ChunkUserTag,
+  "name"
 >;
-export type TagDoc = { id: string; updatedAt: string } & Omit<Pick<Tag, "id" | "name">, "id">;
+export type TagDoc = { id: string; updatedAt: string } & Pick<Tag, "name">;
 export type CorrectionDoc = Correction;
 
 export type ZakkiCollections = {

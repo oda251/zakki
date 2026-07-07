@@ -30,9 +30,22 @@ export class ApiRequestError extends Error {
   }
 }
 
-/** path は API_BASE からの相対（例: "/graph"）。プレフィクスはここで一元的に付与する */
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+/**
+ * fetch 互換の最小型（テスト・Hono `app.request` を注入できるよう構造的に絞る。
+ * bun の `typeof fetch` は preconnect 等の静的プロパティまで要求するため使わない）
+ */
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * path は API_BASE からの相対（例: "/graph"）。プレフィクスはここで一元的に付与する。
+ * fetchFn は replication / unlock（issue #43）がテスト用 Hono app を注入するための穴
+ */
+export async function request<T>(
+  path: string,
+  init?: RequestInit,
+  fetchFn: FetchLike = fetch,
+): Promise<T> {
+  const res = await fetchFn(`${API_BASE}${path}`, {
     headers: { "content-type": "application/json" },
     ...init,
   });

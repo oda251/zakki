@@ -14,7 +14,7 @@ import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
 import { startReplication } from "@zakki/web/client/db/replication.ts";
-import type { FetchLike } from "@zakki/web/client/db/unlock.ts";
+import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 import { createAnalysisEvents } from "@zakki/web/server/events.ts";

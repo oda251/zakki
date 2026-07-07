@@ -72,6 +72,9 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: "node_modules" },
+    // ビルド成果物は検査対象外（CI は build 前に cruise するが、ローカルで dist が
+    // 残っていると minify 済み JS を誤検査する。oxlint の ignorePatterns と同じ方針）
+    exclude: { path: "^apps/web/dist" },
     tsConfig: { fileName: "tsconfig.base.json" },
     tsPreCompilationDeps: true,
     // fs / os（node: 組み込みの resolved 名）は data-node-fs-only-in-adapters の

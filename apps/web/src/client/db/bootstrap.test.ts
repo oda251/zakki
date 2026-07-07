@@ -14,7 +14,7 @@ import type { ClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { chunkPush } from "@zakki/web/client/db/modifiers.ts";
-import type { FetchLike } from "@zakki/web/client/db/unlock.ts";
+import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { createAnalysisScheduler } from "@zakki/web/server/analysis.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 import { createAnalysisEvents } from "@zakki/web/server/events.ts";

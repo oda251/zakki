@@ -19,7 +19,7 @@ import type {
   ZakkiReplicationStates,
 } from "@zakki/web/client/db/replication.ts";
 import { startReplication } from "@zakki/web/client/db/replication.ts";
-import type { FetchLike } from "@zakki/web/client/db/unlock.ts";
+import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { fetchEnvelopes, unlockWithPrompt } from "@zakki/web/client/db/unlock.ts";
 
 export interface ClientDb {
@@ -51,10 +51,12 @@ const defaultPrompt = (attempt: number): Promise<string | null> =>
 
 /** DB を開き、アンロックできれば replication を開始して初回同期完了まで待つ */
 export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise<ClientDb> {
-  await ready();
-  const db = await createZakkiDb(options.storage ?? getRxStorageDexie(), options.dbName);
-
-  const envelopes = await fetchEnvelopes(options.fetchFn);
+  // 3 つは互いに独立（sodium 初期化・IndexedDB オープン・封筒フェッチ）なので重ねる
+  const [, db, envelopes] = await Promise.all([
+    ready(),
+    createZakkiDb(options.storage ?? getRxStorageDexie(), options.dbName),
+    fetchEnvelopes(options.fetchFn),
+  ]);
   const dek = await unlockWithPrompt(envelopes, options.promptFn ?? defaultPrompt);
   if (dek === null) {
     return { db, replication: null };

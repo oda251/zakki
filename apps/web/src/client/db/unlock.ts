@@ -12,23 +12,15 @@ import * as v from "valibot";
 import { unwrapDek } from "@zakki/core/crypto/dek.ts";
 import { deriveKey } from "@zakki/core/crypto/kdf.ts";
 import { sodium } from "@zakki/core/crypto/sodium.ts";
-import { API_BASE } from "@zakki/web/shared/api-base.ts";
+import type { FetchLike } from "@zakki/web/client/api/client.ts";
+import { request } from "@zakki/web/client/api/client.ts";
 import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
 import { CryptoEnvelopesResponseSchema } from "@zakki/web/shared/api-schemas.ts";
 
-/**
- * fetch 互換の最小型（テスト・Hono `app.request` を注入できるよう構造的に絞る。
- * bun の `typeof fetch` は preconnect 等の静的プロパティまで要求するため使わない）
- */
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
-
 /** サーバから封筒一覧を取得する（暗号未プロビジョンの DB では空配列） */
-export async function fetchEnvelopes(fetchFn: FetchLike = fetch): Promise<CryptoEnvelope[]> {
-  const res = await fetchFn(`${API_BASE}/crypto/envelopes`);
-  if (!res.ok) {
-    throw new Error(`crypto/envelopes: HTTP ${res.status}`);
-  }
-  return v.parse(CryptoEnvelopesResponseSchema, await res.json()).envelopes;
+export async function fetchEnvelopes(fetchFn?: FetchLike): Promise<CryptoEnvelope[]> {
+  const raw = await request<unknown>("/crypto/envelopes", undefined, fetchFn);
+  return v.parse(CryptoEnvelopesResponseSchema, raw).envelopes;
 }
 
 /**
