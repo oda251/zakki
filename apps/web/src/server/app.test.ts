@@ -4,7 +4,6 @@ import { createDb } from "@zakki/data/db/connect.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { chunks } from "@zakki/data/db/schema.ts";
 import type { Hono } from "hono";
-import { mergeDelta } from "@zakki/web/client/store/graph-core.ts";
 import type {
   Chunk,
   ChunkChildrenResponse,
@@ -62,11 +61,6 @@ function patch(path: string, body: unknown): Request {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-}
-
-/** ノード順序の正規化（全量とマージ結果の比較用） */
-function byId(g: GraphData): GraphData {
-  return { ...g, nodes: [...g.nodes].toSorted((x, y) => x.id - y.id) };
 }
 
 describe("GET /api/health", () => {
@@ -267,21 +261,18 @@ describe("グラフ", () => {
     await app.request(patch(`/api/chunks/${container.id}`, { content: "設計" }));
     await analysis.settle();
 
-    const delta = await json<GraphDelta>(
-      await app.request(`/api/graph?since=${encodeURIComponent(full0.version)}`),
-    );
     const full1 = await json<GraphData>(await app.request("/api/graph"));
 
-    // 受け入れ基準1: 差分ノードは「そのパスで変化した分」だけ（既存 2 チャンクの再送は
-    // 保存時の upsert bump 由来のみ許容 = ここでは updatedAt を倒してから触っていない a0 以外）
+    // 差分ノードは「そのパスで変化した分」だけ（既存 2 チャンクの再送は
+    // 保存時の upsert bump 由来のみ許容 = ここでは updatedAt を倒してから触っていない a0 以外）。
+    // クライアント側の差分マージ（mergeDelta）は #44 で liveQuery に置換され消滅。
+    // このルート自体の撤去は #45（それまではサーバ挙動のみ検証する）
     const sinceMid = await json<GraphDelta>(
       await app.request("/api/graph?since=2025-01-01T00:00:00.000Z"),
     );
     expect(sinceMid.nodes.map((x) => x.id)).toContain(b0);
     expect(sinceMid.nodes.map((x) => x.id)).not.toContain(date.id);
 
-    // 受け入れ基準2: 差分適用後のストア状態が全量取得と一致する
-    expect(byId(mergeDelta(full0, delta))).toEqual(byId(full1));
     expect(full1.nodes.find((x) => x.id === container.id)?.content).toBe("設計");
   });
 

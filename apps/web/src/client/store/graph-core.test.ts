@@ -2,11 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { GraphData, GraphEdge, GraphNode } from "@zakki/web/shared/api-types.ts";
 import {
   addManualEdges,
-  applySavedChildren,
   breadcrumbPath,
   EMPTY_FILTER,
   isDoubleClick,
-  mergeDelta,
   parentOf,
   recomputeCounts,
   resolveNodeActivation,
@@ -104,43 +102,6 @@ describe("recomputeCounts", () => {
   });
 });
 
-describe("applySavedChildren", () => {
-  test("既存 id の解析結果（タグ・極性）は温存し、content と position を更新する", () => {
-    const before = data([n(1, null), n(2, 1, { tags: ["旅"], polarity: 0.5 })]);
-    const parent = before.nodes.find((x) => x.id === 1);
-    if (parent === undefined) throw new Error("seed 不足");
-    const after = applySavedChildren(before, parent, [
-      { id: 7, content: "新規。" },
-      { id: 2, content: "改。" },
-    ]);
-    const c2 = after.nodes.find((x) => x.id === 2);
-    expect(c2).toMatchObject({ content: "改。", position: 1, tags: ["旅"], polarity: 0.5 });
-    const c7 = after.nodes.find((x) => x.id === 7);
-    expect(c7).toMatchObject({ parentId: 1, position: 0, date: "2026-07-05" });
-  });
-
-  test("応答に無い旧・子は子孫ごと消え、エッジも掃除される", () => {
-    const before = data(TREE, [edge(2, 4)]);
-    const parent = before.nodes.find((x) => x.id === 1);
-    if (parent === undefined) throw new Error("seed 不足");
-    const after = applySavedChildren(before, parent, [{ id: 2, content: "残る。" }]);
-    expect(after.nodes.map((x) => x.id)).toEqual([1, 2, 5, 6]); // 3, 4 が消える
-    expect(after.edges).toEqual([]);
-    expect(after.nodes.find((x) => x.id === 1)).toMatchObject({
-      childCount: 1,
-      descendantCount: 1,
-    });
-  });
-
-  test("他の親の子ノードには影響しない", () => {
-    const before = data(TREE);
-    const parent = before.nodes.find((x) => x.id === 5);
-    if (parent === undefined) throw new Error("seed 不足");
-    const after = applySavedChildren(before, parent, [{ id: 6, content: "更新。" }]);
-    expect(after.nodes.map((x) => x.id)).toEqual([1, 2, 3, 4, 5, 6]);
-  });
-});
-
 describe("addManualEdges", () => {
   test("from<to 正規化・重複と自己リンクは no-op", () => {
     const before = data(TREE, [edge(2, 3, "manual")]);
@@ -150,40 +111,6 @@ describe("addManualEdges", () => {
       { from: 6, to: 4 }, // 新規（4-6 へ正規化）
     ]);
     expect(after.edges).toEqual([edge(2, 3, "manual"), { ...edge(4, 6, "manual") }]);
-  });
-});
-
-describe("mergeDelta", () => {
-  test("変更分は置換・削除は落とし・温存ノードの派生値を aliveNodes で更新する", () => {
-    const before = data(TREE, [], "v1");
-    const delta = {
-      version: "v2",
-      nodes: [n(2, 1, { content: "改。", tags: ["旅"] })],
-      // 4 が消え、3 の派生値が変わった世界
-      aliveNodes: [
-        { id: 1, childCount: 2, descendantCount: 2 },
-        { id: 2, childCount: 0, descendantCount: 0 },
-        { id: 3, childCount: 0, descendantCount: 0 },
-        { id: 5, childCount: 1, descendantCount: 1 },
-        { id: 6, childCount: 0, descendantCount: 0 },
-      ],
-      edges: [edge(2, 3)],
-    };
-    const after = mergeDelta(before, delta);
-    expect(after.version).toBe("v2");
-    expect(after.nodes.map((x) => x.id)).toEqual([1, 2, 3, 5, 6]);
-    expect(after.nodes.find((x) => x.id === 2)?.content).toBe("改。");
-    expect(after.nodes.find((x) => x.id === 3)).toMatchObject({
-      childCount: 0,
-      descendantCount: 0,
-    });
-    expect(after.edges).toEqual([edge(2, 3)]);
-  });
-
-  test("version の後退は現在値を維持する（応答順序逆転の保護）", () => {
-    const before = data([], [], "v5");
-    const after = mergeDelta(before, { version: "v2", nodes: [], aliveNodes: [], edges: [] });
-    expect(after.version).toBe("v5");
   });
 });
 

@@ -1,22 +1,9 @@
 import { API_BASE } from "@zakki/web/shared/api-base.ts";
+import type { ConvertRequest, SaveConversionRequest } from "@zakki/web/shared/api-schemas.ts";
 import type {
-  ConvertRequest,
-  DateChunkRequest,
-  RenameChunkRequest,
-  SaveChildrenRequest,
-  SaveConversionRequest,
-  SaveCorrectionRequest,
-  SetUserTagsRequest,
-} from "@zakki/web/shared/api-schemas.ts";
-import type {
-  Chunk,
-  ChunkChildrenResponse,
   ConversionStateResponse,
   ConvertResponse,
-  GraphData,
-  GraphDelta,
   RelatedResponse,
-  SaveChildrenResponse,
 } from "@zakki/web/shared/api-types.ts";
 
 /** API エラー（fetch 失敗・非 2xx）。UI はメッセージ表示のみ */
@@ -37,7 +24,7 @@ export class ApiRequestError extends Error {
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
- * path は API_BASE からの相対（例: "/graph"）。プレフィクスはここで一元的に付与する。
+ * path は API_BASE からの相対（例: "/convert"）。プレフィクスはここで一元的に付与する。
  * fetchFn は replication / unlock（issue #43）がテスト用 Hono app を注入するための穴
  */
 export async function request<T>(
@@ -64,34 +51,14 @@ export async function request<T>(
 /** 送信リテラルは `satisfies <XxxRequest>` で注釈し、スキーマ派生型との乖離をコンパイルエラー化する */
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
+/**
+ * chunk の読み書きは RxDB（liveQuery + replication）へ移行済みで、ここに残るのは
+ * replication で代替できないサーバ機能のみ（#44）:
+ * - convert / conversion*: 変換エンジン（anco）とそのキャッシュ。#26 でクライアント移設予定
+ * - related: 埋め込み（サーバ解析の産物）による意味的近傍
+ */
 export const api = {
-  graph: () => request<GraphData>("/graph"),
-  graphDelta: (since: string) => request<GraphDelta>(`/graph?since=${encodeURIComponent(since)}`),
-  dateChunk: (date?: DateChunkRequest["date"]) =>
-    request<Chunk>("/chunks/date", {
-      method: "POST",
-      ...json({ date } satisfies DateChunkRequest),
-    }),
-  chunkChildren: (id: number) => request<ChunkChildrenResponse>(`/chunks/${id}`),
-  saveChildren: (id: number, converted: SaveChildrenRequest["converted"]) =>
-    request<SaveChildrenResponse>(`/chunks/${id}/children`, {
-      method: "PUT",
-      ...json({ converted } satisfies SaveChildrenRequest),
-    }),
-  renameChunk: (id: number, content: RenameChunkRequest["content"]) =>
-    request<{ ok: true }>(`/chunks/${id}`, {
-      method: "PATCH",
-      ...json({ content } satisfies RenameChunkRequest),
-    }),
-  deleteChunk: (id: number) => request<{ ok: true }>(`/chunks/${id}`, { method: "DELETE" }),
-  setUserTags: (id: number, names: SetUserTagsRequest["names"]) =>
-    request<{ ok: true }>(`/chunks/${id}/tags`, {
-      method: "PUT",
-      ...json({ names } satisfies SetUserTagsRequest),
-    }),
   related: (id: number) => request<RelatedResponse>(`/chunks/${id}/related`),
-  addLink: (from: number, to: number) =>
-    request<{ ok: true }>("/links", { method: "POST", ...json({ from, to }) }),
   convert: (kana: ConvertRequest["kana"], leftContext?: ConvertRequest["leftContext"]) =>
     request<ConvertResponse>("/convert", {
       method: "POST",
@@ -105,10 +72,5 @@ export const api = {
     request<{ ok: true }>("/conversion/cache", {
       method: "POST",
       ...json({ kana, converted } satisfies SaveConversionRequest),
-    }),
-  saveCorrection: (kana: SaveCorrectionRequest["kana"], chosen: SaveCorrectionRequest["chosen"]) =>
-    request<{ ok: true }>("/conversion/corrections", {
-      method: "POST",
-      ...json({ kana, chosen } satisfies SaveCorrectionRequest),
     }),
 };
