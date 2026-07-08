@@ -2,10 +2,9 @@
 
 ジャーナリング用メモ TUI。最上位プリンシパルは「考えを入力する以外の操作を可能な限り省く」。
 
-- ローマ字入力に対し、変換操作なしで文脈を勘案した自動かな漢字変換を行う（大文字で始まる単語は英単語としてそのまま残す）
-- 入力を自動でチャンク化し、タグ付け・関連付けを行う
-- 完全無料・ローカル完結で稼働する
-- データは Obsidian vault へ Markdown として一方向エクスポートできる（SQLite が source of truth）
+ローマ字を打つだけで、変換操作なしに文脈を勘案した自動かな漢字変換が走る。入力は自動でチャンク化され、タグ付け・関連付けされる。完全無料・ローカル完結で稼働し、データは SQLite（source of truth）に保存され、Obsidian vault へ Markdown として一方向エクスポートできる。
+
+挙動・仕様の詳細は各モジュールのテスト（`*.test.ts`）と [docs/](docs/) の設計ドキュメントを正本とする。
 
 ## 使い方
 
@@ -15,37 +14,24 @@ just setup-zenz  # 文脈校正モデル zenz（任意、約74MB）
 just tui
 ```
 
-コマンドの入口は [justfile](justfile) に集約している（`just` で一覧）。
+コマンドの入口は [justfile](justfile) に集約している（`just` で一覧）。起動すると当日エントリの末尾から即入力でき、設定・引数は不要。終了は Ctrl+C。
 
-起動すると当日エントリの末尾から即入力できる（設定・引数なし）。ローマ字を打つだけで即時にかな表示され、句点・改行で完結した文からバックグラウンドで漢字に置換される（タイピングは一切ブロックしない）。自動保存・チャンク化・Obsidian vault（`~/obsidian-vault/zakki/`）へのエクスポートも自動。終了は Ctrl+C。
-
-誤変換は Tab キーで直前の変換単位の候補をローテーションでき、選択は学習されて以後最優先される。anco 未導入の場合はかな表示のまま動作する（フォールバック）。zenz 導入時は文脈を考慮した校正変換になる。
-
-データは SQLite（`~/.local/share/zakki/`）と Obsidian vault（既定 `~/obsidian-vault/zakki/`）に書き出される。`ZAKKI_VAULT_DIR` で出力先を、`XDG_DATA_HOME` で DB の場所を差し替えられる（お試しは別ディレクトリを指定すると本番データを汚さずに済む）。
-
-チャンクには TF-IDF キーワードタグと関連リンク（キーワード共有 + 埋め込み類似）が自動付与され、Obsidian エクスポート（frontmatter タグ・`mood`・`[[リンク]]`）に反映される。`mood` はネガポジ極性 `[-1,+1]`（日本語評価極性辞書による決定的判定、モデル不要・ローカル完結）で、ダイジェストにも平均気分が出る。Ctrl+F でインクリメンタル全文検索（ローマ字のまま漢字本文を検索可能。意味が近いものも補完表示）、Esc で戻る。
-
-句点・改行の一次区切りに加え、ローカル embedding（ruri-v3-30m、初回起動時に約37MB を自動取得）による話題転換検出で隣接文が同一チャンクにまとまる。入力中は関連する過去チャンク（最大 5 件）が右ペインに自動表示され、項目をクリックすると下の詳細ペインにその投稿と前後が読み取り専用で開く（独立スクロール、Esc で閉じる）。`ZAKKI_NO_EMBEDDING=1` で embedding 系機能を無効化できる。
+データは SQLite（`~/.local/share/zakki/`）と Obsidian vault（既定 `~/obsidian-vault/zakki/`）に書き出される。`ZAKKI_VAULT_DIR` / `XDG_DATA_HOME` で出力先を差し替えられる（お試しは別ディレクトリを指定すると本番データを汚さない）。環境変数の一覧は [`packages/core/src/config/env.ts`](packages/core/src/config/env.ts) を参照。
 
 ```sh
-just digest          # 当日のふりかえりを vault へ書き出し（--week で直近7日）
-just tags            # タグの統合提案（--apply で適用）
+just digest      # 当日のふりかえりを vault へ書き出し（--week で直近7日）
+just tags        # タグの統合提案（--apply で適用）
 ```
 
 ## Web UI
 
-グラフビュー（ノード=チャンク、エッジ=関連リンク）を中心にした Web 版。右サイドバーに TUI と同じ入力モデル（ローマ字→自動かな漢字変換、raw 正本・凍結リテラル）の入力欄と関連表示、左に折り畳みメニュー（セッション一覧・作成・タグ）を持つ。
-
-日付ベースの管理は「セッション」に一般化されている。デフォルトは当日のセッション（TUI と同一）で、名前を付けたセッションを同日に複数作成できる。セッションにはユーザが明示的にタグを付けられ（自動タグとは別系統）、グラフをセッションやタグで絞り込める。
+グラフビュー（ノード=チャンク、エッジ=関連リンク）を中心にした Web 版。右に TUI と同じ入力欄と関連表示、左に日付チャンク一覧・タグフィルタを持つ（データモデルは [docs/CHUNKS.md](docs/CHUNKS.md)）。かな漢字変換はブラウザ内 wasm で完結する（サーバ往復なし、issue #26）。
 
 ```sh
 just setup-web   # クライアント（Vite）をビルドし、anco wasm 変換アセットを dist に導入
-just web         # http://localhost:3777 （API + SPA + wasm アセット配信。ZAKKI_WEB_PORT で変更可）
-
+just web         # http://localhost:3777（ZAKKI_WEB_PORT で変更可）
 just web-dev     # 開発時: vite dev サーバ（:5173）。別途 just web で API を起動
 ```
-
-かな漢字変換はブラウザ内の wasm で完結する（サーバ往復なし、issue #26）。初回アクセス時に変換エンジン + 辞書（brotli 約20MB）をダウンロードし、以降はブラウザにキャッシュされる。
 
 Docker で動かす場合（DB は `zakki-data` volume に永続化）:
 
@@ -57,17 +43,19 @@ docker compose up --build
 留意:
 
 - **TUI と Web サーバの同時起動は非推奨**（同一 SQLite への複数ライターとなり、解析パスが競合しうる）。どちらか一方を使う。
-- Web サーバは DEK を持たず復号しない（暗号文の中継・封筒配布・静的配信のみ。変換もクライアント wasm で行いサーバに変換エンジンはない）。E2E 暗号のアンロックはブラウザ側（パスフレーズ入力）で行い、`ZAKKI_ENCRYPTION` は TUI 専用。初回セットアップ・パスフレーズ操作は TUI（`just tui` / `just passphrase`）で行う。
+- Web サーバは DEK を持たず復号しない（暗号文の中継・封筒配布・静的配信のみ）。E2E 暗号のアンロックはブラウザ側、初回セットアップ・パスフレーズ操作は TUI（`just tui` / `just passphrase`）で行う。
 
-どちらも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.cpp server 等）が起動していれば強化される（要約文・類義判定）。未指定時は LM Studio → Ollama の順に自動検出し、`ZAKKI_LLM_BASE_URL` / `ZAKKI_LLM_MODEL` で明示指定もできる。LLM がなければ決定的な集計・編集距離 + embedding のみで動く。
+TUI・Web とも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.cpp server 等）が起動していれば要約・類義判定が強化される。未指定時は LM Studio → Ollama の順に自動検出し、`ZAKKI_LLM_BASE_URL` / `ZAKKI_LLM_MODEL` で明示指定もできる。無ければ決定的な処理のみで動く。
 
 ## ドキュメント
 
 - [構想・アーキテクチャ](docs/CONCEPT.md)
+- [統合チャンクモデル](docs/CHUNKS.md)
+- [入力アーキテクチャ](docs/COMPOSER.md)
 - [機能候補と実現方式](docs/FEATURES.md)
 - [技術候補調査記録](docs/RESEARCH.md)
 
-## 技術スタック（予定）
+## 技術スタック
 
 | 領域         | 採用                                                                                                                                                           |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
