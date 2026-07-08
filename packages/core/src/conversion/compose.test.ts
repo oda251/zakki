@@ -1,7 +1,25 @@
 import { describe, expect, test } from "bun:test";
+import { ResultAsync } from "neverthrow";
 import { createConversionSession } from "./compose.ts";
+import type { KanaKanjiEngine } from "./engine.ts";
 import { identityEngine } from "./engine.ts";
 import { PASTE_OPEN, wrapPaste } from "./paste.ts";
+
+/** convert 呼び出し（= web では /api/convert 往復）を記録するスパイエンジン */
+function spyEngine(): { engine: KanaKanjiEngine; calls: string[] } {
+  const calls: string[] = [];
+  return {
+    engine: {
+      name: "spy",
+      convert: (kana) => {
+        calls.push(kana);
+        return ResultAsync.fromSafePromise(Promise.resolve([kana]));
+      },
+      close: () => {},
+    },
+    calls,
+  };
+}
 
 const session = () =>
   createConversionSession(identityEngine, {
@@ -25,5 +43,24 @@ describe("createConversionSession", () => {
     expect(text).not.toContain(PASTE_OPEN);
     expect(text).toBe("あい");
     expect(pending).toBe("k");
+  });
+
+  // issue #34 受け入れ基準: シード（cache/corrections）に載ったかなの変換で
+  // エンジン（web では remoteEngine → /api/convert）を呼ばない。
+  test("シード済みかなの変換はエンジンを呼ばない（キャッシュヒットのサーバ往復スキップ）", () => {
+    const { engine, calls } = spyEngine();
+    const conv = createConversionSession(engine, {
+      onUpdate: () => {},
+      onError: () => {},
+      onChosen: () => {},
+      onConverted: () => {},
+      cache: new Map([["あれ。", "晴れ。"]]),
+      corrections: new Map([["はれ。", "貼れ。"]]),
+    });
+    expect(conv.convertRaw("are.").text).toBe("晴れ。");
+    expect(conv.convertRaw("hare.").text).toBe("貼れ。");
+    // 未シードのかなだけがエンジンに到達する
+    expect(conv.convertRaw("kaki.").text).toBe("かき。");
+    expect(calls).toEqual(["かき。"]);
   });
 });
