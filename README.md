@@ -10,11 +10,12 @@
 ## 使い方
 
 ```sh
-bun install
-./scripts/install-anco.sh   # かな漢字変換エンジン（Release から導入、Linux x64）
-./scripts/install-zenz.sh   # 文脈校正モデル zenz（任意、約74MB）
-bun start
+just setup       # bun install + かな漢字変換エンジン anco（Release から導入、Linux x64）
+just setup-zenz  # 文脈校正モデル zenz（任意、約74MB）
+just tui
 ```
+
+コマンドの入口は [justfile](justfile) に集約している（`just` で一覧）。
 
 起動すると当日エントリの末尾から即入力できる（設定・引数なし）。ローマ字を打つだけで即時にかな表示され、句点・改行で完結した文からバックグラウンドで漢字に置換される（タイピングは一切ブロックしない）。自動保存・チャンク化・Obsidian vault（`~/obsidian-vault/zakki/`）へのエクスポートも自動。終了は Ctrl+C。
 
@@ -27,8 +28,8 @@ bun start
 句点・改行の一次区切りに加え、ローカル embedding（ruri-v3-30m、初回起動時に約37MB を自動取得）による話題転換検出で隣接文が同一チャンクにまとまる。入力中は関連する過去チャンク（最大 5 件）が右ペインに自動表示され、項目をクリックすると下の詳細ペインにその投稿と前後が読み取り専用で開く（独立スクロール、Esc で閉じる）。`ZAKKI_NO_EMBEDDING=1` で embedding 系機能を無効化できる。
 
 ```sh
-bun run digest          # 当日のふりかえりを vault へ書き出し（--week で直近7日）
-bun run tags            # タグの統合提案（--apply で適用）
+just digest          # 当日のふりかえりを vault へ書き出し（--week で直近7日）
+just tags            # タグの統合提案（--apply で適用）
 ```
 
 ## Web UI
@@ -38,23 +39,25 @@ bun run tags            # タグの統合提案（--apply で適用）
 日付ベースの管理は「セッション」に一般化されている。デフォルトは当日のセッション（TUI と同一）で、名前を付けたセッションを同日に複数作成できる。セッションにはユーザが明示的にタグを付けられ（自動タグとは別系統）、グラフをセッションやタグで絞り込める。
 
 ```sh
-bun run web:build   # クライアント（Vite）をビルド
-bun run web         # http://localhost:3777 （API + SPA 配信。ZAKKI_WEB_PORT で変更可）
+just setup-web   # クライアント（Vite）をビルドし、anco wasm 変換アセットを dist に導入
+just web         # http://localhost:3777 （API + SPA + wasm アセット配信。ZAKKI_WEB_PORT で変更可）
 
-bun run web:dev     # 開発時: vite dev サーバ（:5173）。別途 bun run web で API を起動
+just web-dev     # 開発時: vite dev サーバ（:5173）。別途 just web で API を起動
 ```
+
+かな漢字変換はブラウザ内の wasm で完結する（サーバ往復なし、issue #26）。初回アクセス時に変換エンジン + 辞書（brotli 約20MB）をダウンロードし、以降はブラウザにキャッシュされる。
 
 Docker で動かす場合（DB は `zakki-data` volume に永続化）:
 
 ```sh
 docker compose up --build
-# zenz 込みでビルドする場合: docker compose build --build-arg WITH_ZENZ=1
+# anco wasm Release のタグを変える場合: docker compose build --build-arg ANCO_REF=vX.Y.Z
 ```
 
 留意:
 
 - **TUI と Web サーバの同時起動は非推奨**（同一 SQLite への複数ライターとなり、解析パスが競合しうる）。どちらか一方を使う。
-- Web サーバは DEK を持たず復号しない（暗号文の中継・封筒配布・変換エンジンのみ）。E2E 暗号のアンロックはブラウザ側（パスフレーズ入力）で行い、`ZAKKI_ENCRYPTION` は TUI 専用。初回セットアップ・パスフレーズ操作は TUI（`bun start` / `bun run passphrase`）で行う。
+- Web サーバは DEK を持たず復号しない（暗号文の中継・封筒配布・静的配信のみ。変換もクライアント wasm で行いサーバに変換エンジンはない）。E2E 暗号のアンロックはブラウザ側（パスフレーズ入力）で行い、`ZAKKI_ENCRYPTION` は TUI 専用。初回セットアップ・パスフレーズ操作は TUI（`just tui` / `just passphrase`）で行う。
 
 どちらも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.cpp server 等）が起動していれば強化される（要約文・類義判定）。未指定時は LM Studio → Ollama の順に自動検出し、`ZAKKI_LLM_BASE_URL` / `ZAKKI_LLM_MODEL` で明示指定もできる。LLM がなければ決定的な集計・編集距離 + embedding のみで動く。
 
