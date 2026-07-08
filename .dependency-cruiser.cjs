@@ -78,7 +78,7 @@ module.exports = {
         "web サーバは DEK・復号能力へ（推移的にも）到達しない（issue #45 / #28 項目1）。" +
         "復号（crypto-context / getCrypto）・アンロック（unlock / keyfile / init）・" +
         "平文前提の解析（backend/analysis・embedding）はクライアント wasm / TUI の責務。" +
-        "サーバに残すのは暗号文の中継（replication）・封筒配布・変換エンジンのみ",
+        "サーバに残すのは暗号文の中継（replication）・封筒配布のみ",
       severity: "error",
       from: { path: "^apps/web/src/server", pathNot: "\\.test\\.(ts|tsx)$" },
       to: {
@@ -89,6 +89,16 @@ module.exports = {
           "^packages/core/src/crypto/fields\\.ts$",
         reachable: true,
       },
+    },
+    {
+      name: "web-no-server-conversion",
+      comment:
+        "web は（client/server とも）サーバ側かな漢字変換エンジン（backend/anco = AncoEngine）へ" +
+        "推移的にも到達しない（issue #26）。変換はクライアント wasm 実行に移設済み。" +
+        "AncoEngine 自体は TUI が使い続けるため撤去しない（web からの到達だけを断つ）",
+      severity: "error",
+      from: { path: "^apps/web/src", pathNot: "\\.test\\.(ts|tsx)$" },
+      to: { path: "^packages/backend/src/anco/", reachable: true },
     },
     {
       name: "web-client-no-data-runtime",

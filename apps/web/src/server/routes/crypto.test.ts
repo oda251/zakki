@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { generateDek } from "@zakki/core/crypto/dek.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import { addKeyfileEnvelope, addPassphraseEnvelope } from "@zakki/data/crypto/envelopes.ts";
@@ -21,7 +20,7 @@ let app: Hono;
 beforeEach(async () => {
   await ready();
   db = await createDb(":memory:");
-  app = createApp({ db, engine: identityEngine });
+  app = createApp({ db });
 });
 
 async function getEnvelopes(): Promise<{ envelopes: CryptoEnvelope[] }> {

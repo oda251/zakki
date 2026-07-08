@@ -1,5 +1,4 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
@@ -23,7 +22,7 @@ let app: Hono;
 
 beforeEach(async () => {
   db = await createDb(":memory:");
-  app = createApp({ db, engine: identityEngine });
+  app = createApp({ db });
 });
 
 async function json<T>(res: Response): Promise<T> {

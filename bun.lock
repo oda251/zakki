@@ -40,7 +40,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@bjorn3/browser_wasi_shim": "0.4.2",
-        "@zakki/backend": "workspace:*",
         "@zakki/core": "workspace:*",
         "@zakki/data": "workspace:*",
         "drizzle-orm": "^0.45.2",

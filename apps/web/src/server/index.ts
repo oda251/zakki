@@ -19,7 +19,7 @@ const config = parseZakkiConfig(process.env).match(
 );
 
 // アンロック失敗・暗号ガード違反（issue #46）等は起動不能として即終了する。
-const { app, engineName } = await bootstrapServer(config).catch((err: unknown): never => {
+const { app } = await bootstrapServer(config).catch((err: unknown): never => {
   console.error(`zakki-web: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 });
@@ -59,4 +59,4 @@ if (existsSync(join(distDir, "index.html"))) {
 }
 
 const server = Bun.serve({ port: config.webPort, fetch: app.fetch });
-console.log(`zakki-web: http://localhost:${server.port} (engine: ${engineName})`);
+console.log(`zakki-web: http://localhost:${server.port}`);
