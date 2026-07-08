@@ -14,12 +14,19 @@ wasm/anco/
 ├── patch/anco-wasi-gate.py       # 上流 Package.swift を WASI 用に加工（anchor 方式）
 ├── patch/list-wasm-exports.py    # wasm の export セクションを解析（CI の C ABI 検証用）
 └── Sources/
-    ├── AncoWasmBridge/Bridge.swift   # 変換ロジック + C ABI（@_cdecl）
-    └── AncoWasmSmoke/main.swift       # 実変換スモーク（CI で wasmtime 実行）
+    ├── AncoWasmBridge/Bridge.swift   # 変換ロジック + C ABI（@_expose(wasm) + @_cdecl）
+    ├── AncoWasmSmoke/main.swift       # 実変換スモーク（command, wasmtime 実行）
+    └── AncoWasmReactor/main.swift     # ブラウザ配布用 reactor（_initialize + export）
 ```
 
 CI は上流を checkout → `anco-wasi-gate.py` で manifest を加工 → 上の Sources を
-`anco/Sources/` へコピー → `AncoWasmSmoke` をビルドして wasmtime で実変換を検証する。
+`anco/Sources/` へコピー → `AncoWasmSmoke`（command）をビルドして wasmtime で実変換を
+検証し、`AncoWasmReactor` を `-mexec-model=reactor` でビルドして export を検証する。
+
+`patch/` 配下がこのリポジトリで唯一の Python スクリプト。wasm の export セクション
+（LEB128 可変長整数）の解析や Package.swift のバランス括弧を見た構文編集は bash では
+壊れやすく、GitHub Actions ランナに `python3` が同梱されているため Python を使う
+（追加依存なし）。
 
 ## 辞書ロード方式: 明示パス（Bundle.module 非経由）
 
@@ -53,6 +60,14 @@ public な `DicdataStore(dictionaryURL:)` / `KanaKanjiConverter(dictionaryURL:)`
 結果バッファのポインタ、下位 32bit が長さ。JS 側は unsigned 64bit として扱い、
 `memory[ptr..<ptr+len]` を読んだ後 `zakki_free(ptr)` で解放する。
 
-Phase 1 時点ではブラウザ実行（WASI shim + reactor 化）は未実装で、CI スモークは
-コマンド実行ファイル（`_start`）で実変換の成立のみを検証する。reactor 化と
-ブラウザ初期化時間の実測は Phase 2。
+`zakki_anco_init` は辞書ディレクトリ構築後、既知の語を 1 回変換する probe を行い、
+候補が出た場合のみ 0（成功）を返す。辞書欠損・mount ミスを初期化失敗として検出する
+（issue #26: フォールバックなし・初期化失敗はブロッキングエラー）。
+
+## reactor（ブラウザ配布実体）
+
+ブラウザは `_start` を走らせず export を呼ぶため、Swift ランタイム初期化子が走らず
+クラッシュしうる。そこで `AncoWasmReactor` を `-mexec-model=reactor` でビルドし、
+エントリを `_initialize` にする。JS（WASI shim）は `initialize(instance)` で `_initialize`
+を呼んだ後に C ABI export を叩く。export は `@_expose(wasm, "name")` で行い、明示
+`--export` フラグは不要（`@_cdecl` は C ABI 呼び出しのため併記）。

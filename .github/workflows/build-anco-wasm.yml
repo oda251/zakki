@@ -1,8 +1,9 @@
 # anco (AzooKeyKanaKanjiConverter) を wasm32-unknown-wasi 向けにビルドし、
 # 明示パス辞書ロード + 実変換（Viterbi）が WASI 上で通ることをスモークで検証する。
-# issue #26 Phase 1。生成 wasm のサイズ（raw / wasm-opt / brotli）と init/convert
-# 所要時間を STEP_SUMMARY と artifact に出す。辞書は Bundle.module ではなく
-# DicdataStore(dictionaryURL:) の明示パスで読む（wasm/anco/patch/anco-wasi-gate.py）。
+# issue #26 Phase 1-2。command スモークで実変換を検証し、ブラウザ配布用の reactor
+# （_initialize + C ABI export）もビルド・検証する。生成 wasm/辞書のサイズと
+# init/convert 所要時間を STEP_SUMMARY と artifact に出す。辞書は Bundle.module では
+# なく DicdataStore(dictionaryURL:) の明示パスで読む（wasm/anco/patch/anco-wasi-gate.py）。
 name: build-anco-wasm
 
 on:
@@ -52,6 +53,7 @@ jobs:
           python3 zakki/wasm/anco/patch/anco-wasi-gate.py anco/Package.swift
           cp -r zakki/wasm/anco/Sources/AncoWasmBridge anco/Sources/AncoWasmBridge
           cp -r zakki/wasm/anco/Sources/AncoWasmSmoke anco/Sources/AncoWasmSmoke
+          cp -r zakki/wasm/anco/Sources/AncoWasmReactor anco/Sources/AncoWasmReactor
 
       - name: Install Swift WASM SDK
         run: |
@@ -177,6 +179,67 @@ jobs:
           grep -q '^ANCO_SMOKE_BEST ' smoke.out
           # 候補が空でないこと（辞書ロード成功の確証）
           grep -q '^ANCO_SMOKE_CANDIDATES \[".' smoke.out
+
+      # ブラウザ配布用 reactor（_initialize + C ABI export）をビルドして検証する。
+      # command スモーク（上）で実変換の成立は担保済み。ここでは reactor 形式で
+      # 同じ export が出ること・_initialize があり _start が無いことを確認する。
+      - name: Build + verify reactor (browser artifact)
+        working-directory: anco
+        env:
+          BUILDING_FOR_WASI: "1"
+        run: |
+          set -euxo pipefail
+          # @_expose(wasm) で export されるため明示 --export は不要。
+          swift build -c release \
+            --swift-sdk 6.1-RELEASE-wasm32-unknown-wasi \
+            --product AncoWasmReactor \
+            -Xswiftc -Xclang-linker -Xswiftc -mexec-model=reactor
+          RWASM="$(find .build -name 'AncoWasmReactor.wasm' -print -quit)"
+          test -n "$RWASM"
+          RRAW=$(stat -c%s "$RWASM")
+          ROPT="$GITHUB_WORKSPACE/out/anco.reactor.opt.wasm"
+          wasm-opt -Oz "$RWASM" -o "$ROPT"
+          ROPTSZ=$(stat -c%s "$ROPT")
+          brotli -q 11 -f "$ROPT" -o "$ROPT.br"
+          ROPTBR=$(stat -c%s "$ROPT.br")
+          EXPORTS="$(python3 "$GITHUB_WORKSPACE/zakki/wasm/anco/patch/list-wasm-exports.py" "$ROPT")"
+          {
+            echo
+            echo "### reactor wasm（ブラウザ配布実体、_initialize + C ABI）"
+            echo "- raw: **$(numfmt --to=iec $RRAW)** ($RRAW B)"
+            echo "- wasm-opt -Oz: **$(numfmt --to=iec $ROPTSZ)** ($ROPTSZ B)"
+            echo "- wasm-opt -Oz + brotli -q11: **$(numfmt --to=iec $ROPTBR)** ($ROPTBR B)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # C ABI export が揃っていること
+          for s in zakki_anco_init zakki_anco_convert zakki_alloc zakki_free; do
+            grep -qxF "$s" <<<"$EXPORTS" || { echo "::error::reactor export missing: $s"; exit 1; }
+          done
+          # reactor は _initialize を持ち _start を持たない
+          grep -qxF "_initialize" <<<"$EXPORTS" || { echo "::error::reactor missing _initialize"; exit 1; }
+          if grep -qxF "_start" <<<"$EXPORTS"; then echo "::error::reactor unexpectedly exports _start"; exit 1; fi
+          echo "reactor exports OK: zakki_* + _initialize, no _start" >> "$GITHUB_STEP_SUMMARY"
+
+      # ブラウザ wasm エンジン(node/V8 = Chrome と同一)で reactor を仮想 FS 辞書 mount
+      # → _initialize → zakki_anco_init(probe)→ 実変換まで通し、各段の所要時間を実測する。
+      # C ABI（alloc/init/convert/free のメモリ受け渡し）の end-to-end 検証も兼ねる。
+      - name: Measure browser-engine init time (node/V8)
+        run: |
+          set -euxo pipefail
+          node --version
+          brotli -d -f out/dict.tar.br -o dict.tar
+          RESULT="$(node zakki/wasm/anco/harness/measure.mjs out/anco.reactor.opt.wasm dict.tar)"
+          echo "$RESULT"
+          {
+            echo
+            echo "### ブラウザ wasm エンジン(node/V8)での初期化・変換 実測"
+            echo "> V8 は Chrome と同一 wasm エンジン。実ブラウザは streaming compile +"
+            echo "> ネットワーク取得で経路が異なる。over-the-wire は reactor 12.9MB(br) + 辞書 7.2MB(br)。"
+            echo '```json'
+            echo "$RESULT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # C ABI 経由の実変換が成立していること（回帰検知）
+          echo "$RESULT" | grep -q '日本語入力'
 
       - name: Upload artifacts
         if: always()

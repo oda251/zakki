@@ -29,8 +29,11 @@ CLI_TARGET_ANCHOR = '    .executableTarget(\n        name: "CliTool",'
 # かつ -lobjc は wasm リンクで無効なので丸ごと外す。
 OBJC_BLOCK_START = "#if os(Linux) && !canImport(Android)\nfunc checkObjcAvailability"
 PACKAGE_ANCHOR = "\nlet package = Package("
-# zakki の wasm ブリッジ（C ABI）とスモーク実行ファイルを package 宣言の直前に注入する。
-# ソースは呼び出し側が Sources/AncoWasmBridge/ と Sources/AncoWasmSmoke/ に配置する前提。
+# zakki の wasm ターゲット群を package 宣言の直前に注入する。ソースは呼び出し側が
+# Sources/AncoWasmBridge/ AncoWasmSmoke/ AncoWasmReactor/ に配置する前提。
+#   - AncoWasmBridge : 変換ロジック + C ABI（ライブラリ）
+#   - AncoWasmSmoke  : wasmtime 実変換スモーク（command 実行ファイル、_start）
+#   - AncoWasmReactor: ブラウザ配布用 reactor（-mexec-model=reactor でビルド、_initialize）
 INJECT_TARGETS = (
     "\n// --- injected by zakki wasm/anco/patch/anco-wasi-gate.py ---\n"
     "targets.append(\n"
@@ -43,6 +46,13 @@ INJECT_TARGETS = (
     "targets.append(\n"
     "    .executableTarget(\n"
     '        name: "AncoWasmSmoke",\n'
+    '        dependencies: ["AncoWasmBridge"],\n'
+    "        swiftSettings: swiftSettings\n"
+    "    )\n"
+    ")\n"
+    "targets.append(\n"
+    "    .executableTarget(\n"
+    '        name: "AncoWasmReactor",\n'
     '        dependencies: ["AncoWasmBridge"],\n'
     "        swiftSettings: swiftSettings\n"
     "    )\n"

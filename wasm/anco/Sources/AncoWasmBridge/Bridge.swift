@@ -34,11 +34,31 @@ private func packBytes(_ bytes: [UInt8]) -> Int64 {
 
 // MARK: - Swift API（スモークからも呼ぶ実体）
 
+/// CJK 統合漢字（拡張 A・互換含む）を 1 文字でも含むか。readiness probe 用。
+private func containsKanji(_ s: String) -> Bool {
+    s.unicodeScalars.contains {
+        (0x3400...0x9FFF).contains($0.value) || (0xF900...0xFAFF).contains($0.value)
+    }
+}
+
 /// 辞書ディレクトリを明示パスで受け取り変換器を初期化する。成功で true。
+///
+/// DicdataStore は遅延ロードで、コンストラクタは辞書ファイルを読まない
+/// （欠損してもここでは失敗しない）。そこで既知の語を 1 回変換する probe を行い、
+/// 辞書が実際に読めていることを確認してから true を返す。辞書欠損・mount ミスを
+/// 初期化失敗として扱う（issue #26: フォールバックなし・初期化失敗はブロッキング）。
+///
+/// 単に候補が非空かではなく「漢字を含む候補が出るか」で判定する。カタカナ等の特殊候補
+/// プロバイダは辞書無しでも候補を返すため、非空だけでは辞書ロード成功と言えない。
+/// probe は init 時 1 回のみで安価。
 public func ancoInitialize(dictPath: String) -> Bool {
     guard !dictPath.isEmpty else { return false }
     let store = DicdataStore(dictionaryURL: URL(fileURLWithPath: dictPath))
     sharedConverter = KanaKanjiConverter(dicdataStore: store)
+    if !ancoConvert(kana: "にほんご", leftContext: nil).contains(where: containsKanji) {
+        sharedConverter = nil
+        return false
+    }
     return true
 }
 
@@ -69,9 +89,13 @@ public func ancoConvert(kana: String, leftContext: String?) -> [String] {
     return converter.requestCandidates(composing, options: options).mainResults.map(\.text)
 }
 
-// MARK: - C ABI（ブラウザから呼ぶ export。--export リンカフラグで保持する）
+// MARK: - C ABI（ブラウザから呼ぶ export）
+//
+// reactor モジュールでは @_expose(wasm, "name") で export され、明示 --export は不要。
+// @_cdecl は C ABI で呼ぶために引き続き必要（book.swiftwasm.org/examples/exporting-function）。
 
 /// JS が入力バイト列を書き込むためのバッファを wasm メモリに確保する。
+@_expose(wasm, "zakki_alloc")
 @_cdecl("zakki_alloc")
 public func zakki_alloc(_ size: Int32) -> UnsafeMutableRawPointer? {
     guard size > 0 else { return nil }
@@ -79,18 +103,21 @@ public func zakki_alloc(_ size: Int32) -> UnsafeMutableRawPointer? {
 }
 
 /// zakki_alloc / zakki_anco_convert が返したバッファを解放する。
+@_expose(wasm, "zakki_free")
 @_cdecl("zakki_free")
 public func zakki_free(_ ptr: UnsafeMutableRawPointer?) {
     ptr?.deallocate()
 }
 
 /// 辞書ディレクトリの絶対パス（UTF-8）を受け取り初期化する。0 = 成功、非 0 = 失敗。
+@_expose(wasm, "zakki_anco_init")
 @_cdecl("zakki_anco_init")
 public func zakki_anco_init(_ pathPtr: UnsafePointer<UInt8>?, _ pathLen: Int32) -> Int32 {
     ancoInitialize(dictPath: decodeUTF8(pathPtr, pathLen)) ? 0 : 1
 }
 
 /// かな＋左文脈を変換し、候補の JSON 配列（UTF-8）を (ptr << 32 | len) で返す。
+@_expose(wasm, "zakki_anco_convert")
 @_cdecl("zakki_anco_convert")
 public func zakki_anco_convert(
     _ kanaPtr: UnsafePointer<UInt8>?, _ kanaLen: Int32,
