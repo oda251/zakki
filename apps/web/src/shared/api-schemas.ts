@@ -6,21 +6,8 @@
  */
 import * as v from "valibot";
 
-// chunks 書込み・読取系のスキーマは RxDB replication への移行で撤去済み（#44 → #45）
-
-// --- conversion（server/routes/convert.ts） ---
-
-/** POST /api/convert */
-export const ConvertSchema = v.object({
-  kana: v.pipe(v.string(), v.minLength(1)),
-  leftContext: v.optional(v.string()),
-});
-
-/** POST /api/conversion/cache */
-export const SaveConversionSchema = v.object({ kana: v.string(), converted: v.string() });
-
-/** POST /api/conversion/corrections */
-export const SaveCorrectionSchema = v.object({ kana: v.string(), chosen: v.string() });
+// chunks 書込み・読取系のスキーマは RxDB replication への移行で撤去済み（#44 → #45）。
+// かな漢字変換のスキーマも #26 でクライアント wasm 実行へ移設し撤去した。
 
 // --- replication（server/routes/replication.ts, issue #42） ---
 
@@ -72,7 +59,4 @@ export const CryptoEnvelopesResponseSchema = v.object({
 export type CryptoEnvelope = v.InferOutput<typeof CryptoEnvelopeSchema>;
 
 // --- 派生型（client の送信形はここから得る） ---
-// chunk 書込み系の派生型は #44（RxDB 移行）で client から消えたため削除済み
-
-export type ConvertRequest = v.InferInput<typeof ConvertSchema>;
-export type SaveConversionRequest = v.InferInput<typeof SaveConversionSchema>;
+// chunk 書込み系（#44 RxDB 移行）・変換系（#26 wasm 移設）の派生型は撤去済み。

@@ -8,16 +8,6 @@ import type { Chunk, ChunkUserTag, Correction, Link, Tag } from "@zakki/data/db/
 export type { GraphData, GraphEdge, GraphNode } from "@zakki/data/graph/queries.ts";
 export type { Chunk, ChunkUserTag, Correction, Link, Tag };
 
-export interface ConvertResponse {
-  candidates: string[];
-}
-
-/** かな → 確定変換の学習・キャッシュ（ConversionPipeline のシード用） */
-export interface ConversionStateResponse {
-  corrections: Record<string, string>;
-  cache: Record<string, string>;
-}
-
 export interface ApiError {
   error: string;
 }

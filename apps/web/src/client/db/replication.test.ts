@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
@@ -32,7 +31,7 @@ beforeEach(async () => {
   const s = await ready();
   fc = makeFieldCrypto(s.crypto_aead_xchacha20poly1305_ietf_keygen());
   serverDb = await createDb(":memory:");
-  app = createApp({ db: serverDb, engine: identityEngine });
+  app = createApp({ db: serverDb });
   fetchFn = async (input, init) => app.request(input, init);
 });
 

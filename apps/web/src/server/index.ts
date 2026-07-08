@@ -19,7 +19,7 @@ const config = parseZakkiConfig(process.env).match(
 );
 
 // アンロック失敗・暗号ガード違反（issue #46）等は起動不能として即終了する。
-const { app, engineName } = await bootstrapServer(config).catch((err: unknown): never => {
+const { app } = await bootstrapServer(config).catch((err: unknown): never => {
   console.error(`zakki-web: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 });
@@ -28,6 +28,30 @@ const { app, engineName } = await bootstrapServer(config).catch((err: unknown): 
 // 開発時は dist が無くてもよい（vite dev サーバが /api を proxy する）。
 // serveStatic の root は cwd 相対のため、import.meta.url 起点で cwd 非依存に解決する。
 const distDir = fileURLToPath(new URL("../../dist", import.meta.url));
+
+// anco wasm 変換アセット（#26）: reactor wasm と辞書 tar を同一オリジンで配信する。
+// ファイルは brotli 済み（.br）なので Content-Encoding: br を付け、ブラウザに透過解凍
+// させる（over-the-wire は reactor ~13MB + 辞書 ~7MB）。dist/anco へ install-anco-wasm.sh
+// が配置する。SPA フォールバックより前に登録する。
+const ancoDir = fileURLToPath(new URL("../../dist/anco", import.meta.url));
+const ancoAssets = new Map<string, string>([
+  ["anco.reactor.wasm.br", "application/wasm"],
+  ["dict.tar.br", "application/x-tar"],
+]);
+app.get("/anco/:file", (c) => {
+  const file = c.req.param("file");
+  const contentType = ancoAssets.get(file);
+  const path = join(ancoDir, file);
+  if (contentType === undefined || !existsSync(path)) return c.notFound();
+  return new Response(Bun.file(path), {
+    headers: {
+      "Content-Type": contentType,
+      "Content-Encoding": "br",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
+});
+
 if (existsSync(join(distDir, "index.html"))) {
   const root = relative(process.cwd(), distDir);
   app.get("/assets/*", serveStatic({ root }));
@@ -35,4 +59,4 @@ if (existsSync(join(distDir, "index.html"))) {
 }
 
 const server = Bun.serve({ port: config.webPort, fetch: app.fetch });
-console.log(`zakki-web: http://localhost:${server.port} (engine: ${engineName})`);
+console.log(`zakki-web: http://localhost:${server.port}`);

@@ -1,5 +1,4 @@
 import type { Hono } from "hono";
-import { resolveDefaultEngine } from "@zakki/backend/anco/engine.ts";
 import type { ZakkiConfig } from "@zakki/core/config/env.ts";
 import { defaultDbPath, openDb } from "@zakki/data/db/connect.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
@@ -26,9 +25,7 @@ import { createApp } from "./app.ts";
  *   撤去（クライアント移設は #28/#26 の別トラック。TUI ではローカル平文の
  *   世界としてそのまま動き続ける）。
  */
-export async function bootstrapServer(
-  config: ZakkiConfig,
-): Promise<{ app: Hono; engineName: string }> {
+export async function bootstrapServer(config: ZakkiConfig): Promise<{ app: Hono }> {
   const dataHome = xdgDataHome(config.xdgDataHome);
   const configHome = xdgConfigHome(config.xdgConfigHome);
 
@@ -40,7 +37,5 @@ export async function bootstrapServer(
   // syncWithAnalysisReset）も不要になった。
   await sync();
 
-  const engine = resolveDefaultEngine(config, dataHome);
-  const app = createApp({ db, engine });
-  return { app, engineName: engine.name };
+  return { app: createApp({ db }) };
 }

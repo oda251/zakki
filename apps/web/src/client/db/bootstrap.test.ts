@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { generateDek } from "@zakki/core/crypto/dek.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import { addPassphraseEnvelope } from "@zakki/data/crypto/envelopes.ts";
@@ -29,7 +28,7 @@ let nameSeq = 0;
 beforeEach(async () => {
   await ready();
   serverDb = await createDb(":memory:");
-  app = createApp({ db: serverDb, engine: identityEngine });
+  app = createApp({ db: serverDb });
   fetchFn = async (input, init) => app.request(input, init);
 });
 

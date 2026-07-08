@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import { API_BASE } from "@zakki/web/shared/api-base.ts";
 import type { AppDeps } from "./deps.ts";
-import { conversionRoutes } from "./routes/convert.ts";
 import { cryptoRoutes } from "./routes/crypto.ts";
 import { replicationRoutes } from "./routes/replication.ts";
 
@@ -34,12 +33,11 @@ export function createApp(deps: AppDeps): Hono {
   );
 
   // chunk / graph の読み書き・SSE は RxDB replication（+ liveQuery）へ移行済みで
-  // 撤去された（#44 → #45）。残るのは replication で代替できないサーバ機能のみ:
-  // 変換エンジン（anco, #26 でクライアント移設予定）・封筒配布・replication 中継。
+  // 撤去された（#44 → #45）。かな漢字変換もクライアント wasm 実行へ移設（#26）。
+  // 残るのは replication で代替できないサーバ機能のみ: 封筒配布・replication 中継。
   const api = new Hono();
 
-  api.get("/health", (c) => c.json({ engine: deps.engine.name }));
-  api.route("/", conversionRoutes(deps));
+  api.get("/health", (c) => c.json({ ok: true }));
   api.route("/replication", replicationRoutes(deps));
   api.route("/crypto", cryptoRoutes(deps));
 

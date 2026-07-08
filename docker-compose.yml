@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       # args:
-      #   WITH_ZENZ: "1"        # zenz GGUF（文脈校正）を焼く場合
+      #   ANCO_REF: "v0.11.2"   # anco wasm Release（anco-wasm-<ref>）の <ref>。変換アセットを焼く
     ports:
       # 3777 の既定値定義は packages/core/src/config/env.ts の DEFAULT_WEB_PORT（issue #56）。
       # compose からは TS を参照できないため、変更時はここと apps/web/Dockerfile も揃える

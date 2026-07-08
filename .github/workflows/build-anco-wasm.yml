@@ -21,7 +21,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write # workflow_dispatch 時に配布アセットの Release を作る
 
 jobs:
   build:
@@ -248,3 +248,25 @@ jobs:
           name: anco-wasm
           path: out/
           if-no-files-found: warn
+
+      # ブラウザ配布アセット（reactor wasm + 辞書, brotli 済み）を Release に添付する。
+      # scripts/install-anco-wasm.sh がここから取得する。手動実行時のみ発行。
+      - name: Publish browser assets to Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          cp out/anco.reactor.opt.wasm.br anco.reactor.wasm.br
+          cp out/dict.tar.br dict.tar.br
+          tag="anco-wasm-${{ inputs.anco_ref || 'v0.11.2' }}"
+          title="anco wasm ${{ inputs.anco_ref || 'v0.11.2' }} (reactor + dictionary)"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$tag" --repo "${{ github.repository }}" --clobber \
+              anco.reactor.wasm.br dict.tar.br
+          else
+            gh release create "$tag" --repo "${{ github.repository }}" \
+              --title "$title" \
+              --notes "issue #26: ブラウザ実行用 reactor wasm と辞書 tar（いずれも brotli）。scripts/install-anco-wasm.sh で導入。" \
+              anco.reactor.wasm.br dict.tar.br
+          fi
