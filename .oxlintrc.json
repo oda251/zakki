@@ -15,7 +15,7 @@
     "typescript/consistent-type-imports": "error",
     "typescript/switch-exhaustiveness-check": "error",
     "no-unused-vars": "error",
-    "max-lines": ["warn", { "max": 500, "skipBlankLines": true, "skipComments": true }],
+    "max-lines": ["error", { "max": 500, "skipBlankLines": true, "skipComments": true }],
     "no-underscore-dangle": ["warn", { "allow": ["_unsafeUnwrap", "_unsafeUnwrapErr"] }],
     "no-restricted-imports": [
       "error",
@@ -34,6 +34,29 @@
       "files": ["**/*.test.ts", "**/*.test.tsx"],
       "rules": {
         "typescript/consistent-type-assertions": "off"
+      }
+    },
+    {
+      "files": ["apps/web/src/client/**/*.ts", "apps/web/src/client/**/*.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "react",
+                "importNames": ["useEffect"],
+                "message": "web client は URL ファースト + イベントハンドラで状態を導出する（issue #52 / #59）。同期には useSyncExternalStore・派生値は useMemo を使う"
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["../*", "../**"],
+                "message": "Use the @zakki/* path alias instead of parent-relative imports"
+              }
+            ]
+          }
+        ]
       }
     }
   ]
