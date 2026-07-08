@@ -4,14 +4,13 @@ import { chunkText, makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
 import { SAVE_DEBOUNCE_MS } from "@zakki/core/config/timing.ts";
 import { createConversionSession } from "@zakki/core/conversion/compose.ts";
+import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import { freezeLiveTail, replaceBlock, splitDisplay } from "@zakki/core/entry/records.ts";
 import { applyKey } from "@zakki/core/input/controller.ts";
 import { createEditorStore } from "@zakki/core/input/store.ts";
-import { api } from "@zakki/web/client/api/client.ts";
 import { chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
 import { newChunkIds, planAutoLink } from "@zakki/web/client/composer/auto-link.ts";
-import { remoteEngine } from "@zakki/web/client/composer/remote-engine.ts";
 import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { docId, numId } from "@zakki/web/client/db/ids.ts";
@@ -31,9 +30,10 @@ interface ComposerProps {
   initialRaw: string;
   /** ロード時点の既存チャンク id（初回保存で全チャンクが「新規」扱いになるのを防ぐ） */
   initialChunkIds: readonly number[];
-  /** ConversionPipeline のシード（corrections はローカル RxDB・cache はサーバから） */
+  /** ConversionPipeline のシード（corrections はローカル RxDB。#44） */
   corrections: ReadonlyMap<string, string>;
-  conversionCache: ReadonlyMap<string, string>;
+  /** かな漢字変換エンジン（#26 で wasm クライアント実行）。ready 済みを注入する */
+  engine: KanaKanjiEngine;
 }
 
 /**
@@ -55,7 +55,7 @@ export function Composer({
   initialRaw,
   initialChunkIds,
   corrections,
-  conversionCache,
+  engine,
 }: ComposerProps) {
   const [store] = useState(() =>
     createEditorStore({
@@ -138,22 +138,18 @@ export function Composer({
   // 変換合成（機能ロジック）は core と共有し、副作用（永続化・エラー表示・再保存）だけ注入する
   const conversion = useMemo(
     () =>
-      createConversionSession(remoteEngine, {
+      createConversionSession(engine, {
         corrections,
-        cache: conversionCache,
         onUpdate: () => {
           bump();
           scheduleSave();
         },
         onError: (m) => setMessage(`変換エラー: ${m}`),
-        onConverted: (kana, conv) => {
-          void api.saveConversion(kana, conv).catch(() => setMessage("変換キャッシュの保存に失敗"));
-        },
         onChosen: (kana, chosen) => {
           void upsertCorrection(db, kana, chosen).catch(() => setMessage("学習の保存に失敗"));
         },
       }),
-    [corrections, conversionCache, bump, scheduleSave, db],
+    [corrections, engine, bump, scheduleSave, db],
   );
   conversionRef.current = conversion;
 

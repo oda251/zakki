@@ -1,6 +1,4 @@
 import { API_BASE } from "@zakki/web/shared/api-base.ts";
-import type { ConvertRequest, SaveConversionRequest } from "@zakki/web/shared/api-schemas.ts";
-import type { ConversionStateResponse, ConvertResponse } from "@zakki/web/shared/api-types.ts";
 
 /** API エラー（fetch 失敗・非 2xx）。UI はメッセージ表示のみ */
 export class ApiRequestError extends Error {
@@ -43,29 +41,3 @@ export async function request<T>(
   // oxlint-disable-next-line typescript/consistent-type-assertions -- HTTP JSON は untyped。サーバの api-types と 1:1 の呼び出し規約を型に読み替える境界
   return (await res.json()) as T;
 }
-
-/** 送信リテラルは `satisfies <XxxRequest>` で注釈し、スキーマ派生型との乖離をコンパイルエラー化する */
-const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
-
-/**
- * chunk の読み書きは RxDB（liveQuery + replication）へ移行済みで、ここに残るのは
- * replication で代替できないサーバ機能のみ（#44 → #45）:
- * - convert / conversion*: 変換エンジン（anco）とそのキャッシュ。#26 でクライアント移設予定
- * （related はサーバ解析（embedder）の撤去と同時に消えた。クライアント解析は #28/#26）
- */
-export const api = {
-  convert: (kana: ConvertRequest["kana"], leftContext?: ConvertRequest["leftContext"]) =>
-    request<ConvertResponse>("/convert", {
-      method: "POST",
-      ...json({ kana, leftContext } satisfies ConvertRequest),
-    }),
-  conversionState: () => request<ConversionStateResponse>("/conversion/state"),
-  saveConversion: (
-    kana: SaveConversionRequest["kana"],
-    converted: SaveConversionRequest["converted"],
-  ) =>
-    request<{ ok: true }>("/conversion/cache", {
-      method: "POST",
-      ...json({ kana, converted } satisfies SaveConversionRequest),
-    }),
-};

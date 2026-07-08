@@ -28,6 +28,8 @@ export default defineConfig({
   server: {
     proxy: {
       [API_BASE]: `http://localhost:${config.webPort}`,
+      // anco wasm アセット（#26）も dev では API サーバ（dist/anco 配信）へ proxy する。
+      "/anco": `http://localhost:${config.webPort}`,
     },
   },
 });
