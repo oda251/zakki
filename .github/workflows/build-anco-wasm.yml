@@ -219,6 +219,28 @@ jobs:
           if grep -qxF "_start" <<<"$EXPORTS"; then echo "::error::reactor unexpectedly exports _start"; exit 1; fi
           echo "reactor exports OK: zakki_* + _initialize, no _start" >> "$GITHUB_STEP_SUMMARY"
 
+      # ブラウザ wasm エンジン(node/V8 = Chrome と同一)で reactor を仮想 FS 辞書 mount
+      # → _initialize → zakki_anco_init(probe)→ 実変換まで通し、各段の所要時間を実測する。
+      # C ABI（alloc/init/convert/free のメモリ受け渡し）の end-to-end 検証も兼ねる。
+      - name: Measure browser-engine init time (node/V8)
+        run: |
+          set -euxo pipefail
+          node --version
+          brotli -d -f out/dict.tar.br -o dict.tar
+          RESULT="$(node zakki/wasm/anco/harness/measure.mjs out/anco.reactor.opt.wasm dict.tar)"
+          echo "$RESULT"
+          {
+            echo
+            echo "### ブラウザ wasm エンジン(node/V8)での初期化・変換 実測"
+            echo "> V8 は Chrome と同一 wasm エンジン。実ブラウザは streaming compile +"
+            echo "> ネットワーク取得で経路が異なる。over-the-wire は reactor 12.9MB(br) + 辞書 7.2MB(br)。"
+            echo '```json'
+            echo "$RESULT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # C ABI 経由の実変換が成立していること（回帰検知）
+          echo "$RESULT" | grep -q '日本語入力'
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
