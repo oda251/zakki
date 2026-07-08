@@ -1,0 +1,187 @@
+# anco (AzooKeyKanaKanjiConverter) を wasm32-unknown-wasi 向けにビルドし、
+# 明示パス辞書ロード + 実変換（Viterbi）が WASI 上で通ることをスモークで検証する。
+# issue #26 Phase 1。生成 wasm のサイズ（raw / wasm-opt / brotli）と init/convert
+# 所要時間を STEP_SUMMARY と artifact に出す。辞書は Bundle.module ではなく
+# DicdataStore(dictionaryURL:) の明示パスで読む（wasm/anco/patch/anco-wasi-gate.py）。
+name: build-anco-wasm
+
+on:
+  # feat ブランチでの反復用（wasm/anco 配下の変更時のみ）。main では dispatch のみ。
+  push:
+    branches: ["feat/26-**"]
+    paths:
+      - "wasm/anco/**"
+      - ".github/workflows/build-anco-wasm.yml"
+  workflow_dispatch:
+    inputs:
+      anco_ref:
+        description: "AzooKeyKanaKanjiConverter の git ref"
+        default: "v0.11.2"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout zakki (patch + bridge/smoke sources)
+        uses: actions/checkout@v6
+        with:
+          path: zakki
+
+      # ホスト Swift は wasm SDK と同一の 6.1 に固定する（6.3 系だと SDK の
+      # stdlib swiftmodule を "compiled with Swift 6.1 cannot be imported" で弾く）。
+      - name: Setup Swift 6.1
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1.0"
+
+      - name: Checkout AzooKeyKanaKanjiConverter
+        uses: actions/checkout@v6
+        with:
+          repository: azooKey/AzooKeyKanaKanjiConverter
+          ref: ${{ inputs.anco_ref || 'v0.11.2' }}
+          submodules: true
+          path: anco
+
+      - name: Gate manifest + inject wasm targets
+        run: |
+          set -euxo pipefail
+          python3 zakki/wasm/anco/patch/anco-wasi-gate.py anco/Package.swift
+          cp -r zakki/wasm/anco/Sources/AncoWasmBridge anco/Sources/AncoWasmBridge
+          cp -r zakki/wasm/anco/Sources/AncoWasmSmoke anco/Sources/AncoWasmSmoke
+
+      - name: Install Swift WASM SDK
+        run: |
+          set -euxo pipefail
+          swift sdk install \
+            https://github.com/swiftwasm/swift/releases/download/swift-wasm-6.1-RELEASE/swift-wasm-6.1-RELEASE-wasm32-unknown-wasi.artifactbundle.zip \
+            --checksum 7550b4c77a55f4b637c376f5d192f297fe185607003a6212ad608276928db992
+          swift sdk list
+
+      - name: Install measurement tools (binaryen, brotli, wasmtime)
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binaryen brotli
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+
+      - name: Build AncoWasmSmoke (linked .wasm + C ABI exports)
+        working-directory: anco
+        env:
+          BUILDING_FOR_WASI: "1"
+        run: |
+          set -euxo pipefail
+          swift build -c release \
+            --swift-sdk 6.1-RELEASE-wasm32-unknown-wasi \
+            --product AncoWasmSmoke \
+            -Xlinker --export=zakki_anco_init \
+            -Xlinker --export=zakki_anco_convert \
+            -Xlinker --export=zakki_alloc \
+            -Xlinker --export=zakki_free
+
+      - name: Measure wasm size + verify C ABI exports
+        working-directory: anco
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          WASM="$(find .build -name 'AncoWasmSmoke.wasm' -print -quit)"
+          test -n "$WASM"
+          cp "$WASM" "$GITHUB_WORKSPACE/out/anco.wasm"
+          RAW=$(stat -c%s "$WASM")
+          # 配布実体は wasm-opt 済み。以降の export 検証・実変換スモークもこの
+          # 最適化 wasm に対して行う（配るものをそのまま検証する）。
+          OPTWASM="$GITHUB_WORKSPACE/out/anco.opt.wasm"
+          wasm-opt -Oz "$WASM" -o "$OPTWASM"
+          OPT=$(stat -c%s "$OPTWASM")
+          brotli -q 11 -f "$OPTWASM" -o "$OPTWASM.br"
+          OPTBR=$(stat -c%s "$OPTWASM.br")
+          {
+            echo "## anco wasm — Phase 1 (explicit-path dictionary)"
+            echo
+            echo "- anco ref: \`${{ inputs.anco_ref || 'v0.11.2' }}\`  / SDK: swift-wasm-6.1-RELEASE"
+            echo "- traits: default (Zenzai off) → llama.cpp / SwiftyMarisa 非リンク"
+            echo
+            echo "### wasm 本体（コード + Swift ランタイム。辞書は非埋め込み）"
+            echo "- raw: **$(numfmt --to=iec $RAW)** ($RAW B)"
+            echo "- wasm-opt -Oz: **$(numfmt --to=iec $OPT)** ($OPT B)"
+            echo "- wasm-opt -Oz + brotli -q11: **$(numfmt --to=iec $OPTBR)** ($OPTBR B)"
+            echo
+            echo "### C ABI exports（配布 wasm の export セクションを wasm-objdump で検証）"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # 文字列の byte 検索ではなく export セクションを直接解析して確認する。
+          EXPORTS="$(python3 "$GITHUB_WORKSPACE/zakki/wasm/anco/patch/list-wasm-exports.py" "$OPTWASM")"
+          for s in zakki_anco_init zakki_anco_convert zakki_alloc zakki_free; do
+            if grep -qxF "$s" <<<"$EXPORTS"; then
+              echo "- present: \`$s\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- **MISSING: \`$s\`**" >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::C ABI export missing from export section: $s"
+              exit 1
+            fi
+          done
+
+      - name: Prepare dictionary mount
+        working-directory: anco
+        run: |
+          set -euxo pipefail
+          # 辞書ディレクトリ（louds/charID.chid を含む親）を submodule から特定する。
+          CHID="$(find Sources/KanaKanjiConverterModuleWithDefaultDictionary -path '*louds/charID.chid' -print -quit)"
+          test -n "$CHID"
+          DICT_SRC="$(dirname "$(dirname "$CHID")")"
+          echo "DICT_SRC=$DICT_SRC"
+          mkdir -p run/dict
+          cp -r "$DICT_SRC" run/dict/Dictionary
+          DICTSZ=$(du -sb run/dict/Dictionary | cut -f1)
+          tar -C run/dict -cf - Dictionary | brotli -q 11 -o run/dict.tar.br
+          DICTBR=$(stat -c%s run/dict.tar.br)
+          {
+            echo
+            echo "### 辞書（wasm 外・別配信、仮想 FS に mount）"
+            echo "- raw: **$(numfmt --to=iec $DICTSZ)** ($DICTSZ B)"
+            echo "- tar + brotli -q11: **$(numfmt --to=iec $DICTBR)** ($DICTBR B)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp run/dict.tar.br "$GITHUB_WORKSPACE/out/"
+
+      - name: Smoke — real conversion under wasmtime (dict load + Viterbi)
+        working-directory: anco
+        run: |
+          set -euxo pipefail
+          # 配布実体（wasm-opt 済み）で実変換を検証する。wasm-opt が壊した場合もここで落ちる。
+          WASM="$GITHUB_WORKSPACE/out/anco.opt.wasm"
+          test -f "$WASM"
+          wasmtime --version
+          # run/dict をゲスト /dict に mount。辞書は /dict/Dictionary。
+          set +e
+          /usr/bin/time -v wasmtime run --dir=run/dict::/dict "$WASM" /dict/Dictionary にほんごにゅうりょく \
+            > smoke.out 2> smoke.err
+          rc=$?
+          set -e
+          echo "--- stdout ---"; cat smoke.out
+          echo "--- stderr (tail) ---"; tail -20 smoke.err
+          {
+            echo
+            echo "### 実変換スモーク（wasmtime, dict load + Viterbi）"
+            echo '```'
+            cat smoke.out
+            grep -E 'Elapsed|Maximum resident' smoke.err || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::wasmtime smoke exited $rc (conversion failed)"
+            exit "$rc"
+          fi
+          grep -q '^ANCO_SMOKE_BEST ' smoke.out
+          # 候補が空でないこと（辞書ロード成功の確証）
+          grep -q '^ANCO_SMOKE_CANDIDATES \[".' smoke.out
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anco-wasm
+          path: out/
+          if-no-files-found: warn
