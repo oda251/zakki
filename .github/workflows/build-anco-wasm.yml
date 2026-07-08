@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq binaryen brotli
+          sudo apt-get install -y -qq binaryen brotli wabt
           curl https://wasmtime.dev/install.sh -sSf | bash
           echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
 
@@ -92,10 +92,13 @@ jobs:
           test -n "$WASM"
           cp "$WASM" "$GITHUB_WORKSPACE/out/anco.wasm"
           RAW=$(stat -c%s "$WASM")
-          wasm-opt -Oz "$WASM" -o "$GITHUB_WORKSPACE/out/anco.opt.wasm"
-          OPT=$(stat -c%s "$GITHUB_WORKSPACE/out/anco.opt.wasm")
-          brotli -q 11 -f "$GITHUB_WORKSPACE/out/anco.opt.wasm" -o "$GITHUB_WORKSPACE/out/anco.opt.wasm.br"
-          OPTBR=$(stat -c%s "$GITHUB_WORKSPACE/out/anco.opt.wasm.br")
+          # 配布実体は wasm-opt 済み。以降の export 検証・実変換スモークもこの
+          # 最適化 wasm に対して行う（配るものをそのまま検証する）。
+          OPTWASM="$GITHUB_WORKSPACE/out/anco.opt.wasm"
+          wasm-opt -Oz "$WASM" -o "$OPTWASM"
+          OPT=$(stat -c%s "$OPTWASM")
+          brotli -q 11 -f "$OPTWASM" -o "$OPTWASM.br"
+          OPTBR=$(stat -c%s "$OPTWASM.br")
           {
             echo "## anco wasm — Phase 1 (explicit-path dictionary)"
             echo
@@ -107,14 +110,18 @@ jobs:
             echo "- wasm-opt -Oz: **$(numfmt --to=iec $OPT)** ($OPT B)"
             echo "- wasm-opt -Oz + brotli -q11: **$(numfmt --to=iec $OPTBR)** ($OPTBR B)"
             echo
-            echo "### C ABI exports"
+            echo "### C ABI exports（配布 wasm の export セクションを wasm-objdump で検証）"
           } >> "$GITHUB_STEP_SUMMARY"
+          # 文字列の byte 検索ではなく export セクションを実際に確認する。
+          # wasm-objdump -x の export 行は ` - func[N] <name> -> "exportname"` 形式で、
+          # `-> "name"` は export セクションにしか現れない。
+          OBJDUMP="$(wasm-objdump -x "$OPTWASM")"
           for s in zakki_anco_init zakki_anco_convert zakki_alloc zakki_free; do
-            if grep -qa "$s" "$WASM"; then
+            if grep -qF "-> \"$s\"" <<<"$OBJDUMP"; then
               echo "- present: \`$s\`" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "- **MISSING: \`$s\`**" >> "$GITHUB_STEP_SUMMARY"
-              echo "::error::C ABI export missing: $s"
+              echo "::error::C ABI export missing from export section: $s"
               exit 1
             fi
           done
@@ -145,7 +152,9 @@ jobs:
         working-directory: anco
         run: |
           set -euxo pipefail
-          WASM="$(find .build -name 'AncoWasmSmoke.wasm' -print -quit)"
+          # 配布実体（wasm-opt 済み）で実変換を検証する。wasm-opt が壊した場合もここで落ちる。
+          WASM="$GITHUB_WORKSPACE/out/anco.opt.wasm"
+          test -f "$WASM"
           wasmtime --version
           # run/dict をゲスト /dict に mount。辞書は /dict/Dictionary。
           set +e
