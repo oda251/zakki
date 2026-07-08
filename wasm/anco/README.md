@@ -11,7 +11,8 @@ anco（AzooKeyKanaKanjiConverter, Swift）を `wasm32-unknown-wasi` にビルド
 
 ```
 wasm/anco/
-├── patch/anco-wasi-gate.py     # 上流 Package.swift を WASI 用に加工（anchor 方式）
+├── patch/anco-wasi-gate.py       # 上流 Package.swift を WASI 用に加工（anchor 方式）
+├── patch/list-wasm-exports.py    # wasm の export セクションを解析（CI の C ABI 検証用）
 └── Sources/
     ├── AncoWasmBridge/Bridge.swift   # 変換ロジック + C ABI（@_cdecl）
     └── AncoWasmSmoke/main.swift       # 実変換スモーク（CI で wasmtime 実行）
