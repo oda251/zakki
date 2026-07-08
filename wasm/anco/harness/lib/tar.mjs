@@ -20,20 +20,29 @@ export function parseTar(u8) {
     if (allZero) break;
     const name = str(0, 100);
     const size = parseInt(str(124, 12).trim(), 8) || 0;
-    const typeflag = String.fromCharCode(u8[off + 156]);
+    const typeflag = u8[off + 156]; // 生バイトで判定（'0'=0x30, NUL=0x00, '5'=0x35, 'L'=0x4c, '7'=0x37）
     const prefix = str(345, 155);
     off += 512;
-    if (typeflag === "L") {
-      // GNU long name: 次エントリの本名がこのデータブロック
+    const dataLen = Math.ceil(size / 512) * 512;
+    if (typeflag === 0x4c) {
+      // GNU long name('L'): 次エントリの本名がこのデータブロック
       longName = new TextDecoder().decode(u8.subarray(off, off + size)).replace(/\0+$/, "");
-      off += Math.ceil(size / 512) * 512;
+      off += dataLen;
+      continue;
+    }
+    const isDir = typeflag === 0x35; // '5'
+    // 通常ファイル: '0' / NUL / '7'(contiguous)。それ以外（pax 'x'/'g'・symlink 等）は
+    // 辞書 FS に不要なのでデータごとスキップする（junk として mount しない）。
+    const isFile = typeflag === 0x30 || typeflag === 0x00 || typeflag === 0x37;
+    if (!isDir && !isFile) {
+      off += dataLen;
+      longName = null;
       continue;
     }
     const path = (longName ?? (prefix ? prefix + "/" + name : name)).replace(/\/+$/, "");
     longName = null;
-    const isDir = typeflag === "5";
     const data = isDir ? null : u8.subarray(off, off + size);
-    off += Math.ceil(size / 512) * 512;
+    off += dataLen;
     if (path) out.push({ path, isDir, data });
   }
   return out;

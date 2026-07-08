@@ -34,18 +34,28 @@ private func packBytes(_ bytes: [UInt8]) -> Int64 {
 
 // MARK: - Swift API（スモークからも呼ぶ実体）
 
+/// CJK 統合漢字（拡張 A・互換含む）を 1 文字でも含むか。readiness probe 用。
+private func containsKanji(_ s: String) -> Bool {
+    s.unicodeScalars.contains {
+        (0x3400...0x9FFF).contains($0.value) || (0xF900...0xFAFF).contains($0.value)
+    }
+}
+
 /// 辞書ディレクトリを明示パスで受け取り変換器を初期化する。成功で true。
 ///
 /// DicdataStore は遅延ロードで、コンストラクタは辞書ファイルを読まない
 /// （欠損してもここでは失敗しない）。そこで既知の語を 1 回変換する probe を行い、
-/// 辞書が実際に読めている（候補が出る）ことを確認してから true を返す。
-/// 辞書欠損・mount ミスを初期化失敗として扱う（issue #26: フォールバックなし・
-/// 初期化失敗はブロッキングエラー）。probe は init 時 1 回のみで安価。
+/// 辞書が実際に読めていることを確認してから true を返す。辞書欠損・mount ミスを
+/// 初期化失敗として扱う（issue #26: フォールバックなし・初期化失敗はブロッキング）。
+///
+/// 単に候補が非空かではなく「漢字を含む候補が出るか」で判定する。カタカナ等の特殊候補
+/// プロバイダは辞書無しでも候補を返すため、非空だけでは辞書ロード成功と言えない。
+/// probe は init 時 1 回のみで安価。
 public func ancoInitialize(dictPath: String) -> Bool {
     guard !dictPath.isEmpty else { return false }
     let store = DicdataStore(dictionaryURL: URL(fileURLWithPath: dictPath))
     sharedConverter = KanaKanjiConverter(dicdataStore: store)
-    if ancoConvert(kana: "にほんご", leftContext: nil).isEmpty {
+    if !ancoConvert(kana: "にほんご", leftContext: nil).contains(where: containsKanji) {
         sharedConverter = nil
         return false
     }
