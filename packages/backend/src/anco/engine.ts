@@ -1,4 +1,3 @@
-import type { Subprocess } from "bun";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { errAsync, ResultAsync } from "neverthrow";
@@ -51,9 +50,33 @@ const toEngineError = (cause: unknown): EngineError => ({
 interface PendingRequest {
   resolve: (lines: string[]) => void;
   reject: (cause: unknown) => void;
+  /** 現在読み取り中のブロック（直前のバナー以降の行）。最終ブロックだけを resolve に渡す */
   lines: string[];
+  /** 完了までに残り消費するバナー数。バッチ送信では 1 コマンド 1 バナー */
+  bannersRemaining: number;
   timer: ReturnType<typeof setTimeout>;
 }
+
+/**
+ * anco session の外部プロセス最小 IF（テストでモック差し替え可能にする境界）。
+ * 実体は Bun.spawn の Subprocess（stdin=FileSink / stdout=ReadableStream）が構造的に満たす。
+ */
+export interface AncoProcess {
+  readonly stdin: {
+    write(chunk: string): unknown;
+    flush(): unknown;
+    end(): unknown;
+  };
+  readonly stdout: AsyncIterable<Uint8Array>;
+  readonly exited: Promise<unknown>;
+  kill(): void;
+}
+
+/** 引数配列を受けて anco session プロセスを起動する関数（既定は Bun.spawn） */
+export type SpawnAnco = (args: string[]) => AncoProcess;
+
+const defaultSpawn: SpawnAnco = (args) =>
+  Bun.spawn(args, { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
 
 /**
  * anco session を常駐外部プロセスとして保持する KanaKanjiEngine 実装
@@ -67,7 +90,7 @@ interface PendingRequest {
  */
 export class AncoEngine implements KanaKanjiEngine {
   readonly name: string;
-  private proc: Subprocess<"pipe", "pipe", "ignore"> | null = null;
+  private proc: AncoProcess | null = null;
   private ready: Promise<void> | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private pending: PendingRequest | null = null;
@@ -76,10 +99,12 @@ export class AncoEngine implements KanaKanjiEngine {
   private readonly ancoPath: string;
   /** zenz GGUF のパス。指定すると文脈校正（Zenzai）が有効になる */
   private readonly zenzPath?: string;
+  private readonly spawn: SpawnAnco;
 
-  constructor(ancoPath: string, zenzPath?: string) {
+  constructor(ancoPath: string, zenzPath?: string, spawn: SpawnAnco = defaultSpawn) {
     this.ancoPath = ancoPath;
     this.zenzPath = zenzPath;
+    this.spawn = spawn;
     this.name = zenzPath === undefined ? "anco" : "anco+zenz";
   }
 
@@ -109,11 +134,19 @@ export class AncoEngine implements KanaKanjiEngine {
 
   private async request(kana: string, leftContext?: string): Promise<string[]> {
     await this.ensureStarted();
-    await this.send(":c");
+    // `:c`（コンポジション+文脈リセット）→ `:ctx`（左文脈）→ かな を 1 バッチで書き込み、
+    // バナー区切りの応答をまとめて 1 往復で読む。session は 1 コマンドごとに必ずバナーを
+    // 返す（loop 先頭で毎回出力）ため、コマンド数 = 消費バナー数として畳める。
+    // これで 1 変換あたりの IPC 往復を 3（文脈あり）/ 2（文脈なし）→ 1 に削減する（issue #34）。
+    // なお anco プロトコルはコンテキストとかなを 1 メッセージに合成する形式を持たない
+    // （`:ctx <前文>` と かな入力は別々の行コマンド。docs/RESEARCH.md §1 / protocol.ts）ため、
+    // バイナリ非改変の範囲では「往復の畳み込み」が最大の削減になる。
+    const commands = [":c"];
     if (leftContext !== undefined && leftContext !== "") {
-      await this.send(`:ctx ${lastLine(leftContext)}`);
+      commands.push(`:ctx ${lastLine(leftContext)}`);
     }
-    const lines = await this.send(kana);
+    commands.push(kana);
+    const lines = await this.sendBatch(commands);
     const { candidates } = parseCandidates(lines);
     if (candidates.length === 0 || candidates[0] === undefined) {
       throw new Error(`anco returned no candidate for: ${kana}`);
@@ -143,11 +176,7 @@ export class AncoEngine implements KanaKanjiEngine {
     if (this.zenzPath !== undefined) {
       args.push("--zenz", this.zenzPath, "--zenz_v3");
     }
-    this.proc = Bun.spawn(args, {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    this.proc = this.spawn(args);
     void this.proc.exited.then(() => {
       this.failPending(new Error("anco session exited"));
       this.proc = null;
@@ -155,15 +184,17 @@ export class AncoEngine implements KanaKanjiEngine {
     });
     void this.readLoop();
     // 最初のバナー行 = 起動完了
-    return this.waitForBanner().then(() => {});
+    return this.waitForBanners(1).then(() => {});
   }
 
-  private waitForBanner(): Promise<string[]> {
+  /** 残り `count` 個のバナーを消費するまで待ち、最終ブロックの行を返す */
+  private waitForBanners(count: number): Promise<string[]> {
     return new Promise((resolve, reject) => {
       this.pending = {
         resolve,
         reject,
         lines: [],
+        bannersRemaining: count,
         timer: setTimeout(
           () => this.failPending(new Error("anco response timeout")),
           REQUEST_TIMEOUT_MS,
@@ -172,13 +203,19 @@ export class AncoEngine implements KanaKanjiEngine {
     });
   }
 
-  private send(line: string): Promise<string[]> {
+  /**
+   * 複数コマンドをまとめて書き込み、コマンド数分のバナーを 1 往復で読む。
+   * 中間ブロック（`:c` / `:ctx` の応答）は破棄し、最終コマンド（かな）の候補行だけを返す。
+   */
+  private sendBatch(commands: readonly string[]): Promise<string[]> {
     const proc = this.proc;
     if (proc === null) {
       return Promise.reject(new Error("anco session is not running"));
     }
-    const response = this.waitForBanner();
-    void proc.stdin.write(`${line}\n`);
+    const response = this.waitForBanners(commands.length);
+    for (const line of commands) {
+      void proc.stdin.write(`${line}\n`);
+    }
     void proc.stdin.flush();
     return response;
   }
@@ -207,9 +244,15 @@ export class AncoEngine implements KanaKanjiEngine {
       return;
     }
     if (isBannerLine(line)) {
-      clearTimeout(pending.timer);
-      this.pending = null;
-      pending.resolve(pending.lines);
+      pending.bannersRemaining -= 1;
+      if (pending.bannersRemaining <= 0) {
+        clearTimeout(pending.timer);
+        this.pending = null;
+        pending.resolve(pending.lines);
+        return;
+      }
+      // 中間ブロックは破棄し、次のブロック（最終コマンドの応答）だけを残す
+      pending.lines = [];
       return;
     }
     pending.lines.push(line);
