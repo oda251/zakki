@@ -59,6 +59,28 @@ module.exports = {
       to: { path: "^packages/data/src/db/schema\\.ts$" },
     },
     {
+      name: "api-control-plane-standalone",
+      comment:
+        "apps/api（コントロールプレーン, issue #99）はジャーナル系（packages/data・backend）・" +
+        "他 app に依存しない。共有してよいのはランタイム非依存の packages/core のみ。" +
+        "コントロールプレーン DB（apps/api/src/db）はジャーナル DB と完全に別物で、" +
+        "node 依存（data の fs アダプタ等）の混入も同時に断つ",
+      severity: "error",
+      from: { path: "^apps/api/src" },
+      to: { path: "^(packages/(data|backend)|apps/(tui|web))/" },
+    },
+    {
+      name: "api-workers-portable",
+      comment:
+        "apps/api は Cloudflare Workers ランタイム（Web 標準 API のみ）。node 組み込みへ" +
+        "到達しない（issue #99）。node:* / Bun 固有 API の全量は grep ガード" +
+        "（scripts/check-arch-guards.sh Guard 5）が縛り、ここでは resolved 済みの fs / os を縛る。" +
+        "テストは bun test で動くため除外",
+      severity: "error",
+      from: { path: "^apps/api/src", pathNot: "\\.test\\.ts$" },
+      to: { dependencyTypes: ["core"], path: "^(fs|os)(/|$)" },
+    },
+    {
       name: "web-client-server-boundary",
       comment:
         "web の client ↔ server 相互 import 禁止（shared のみ共有点）。テストは純ロジックの検証で越境してよい",
