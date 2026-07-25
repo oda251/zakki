@@ -1,4 +1,5 @@
 import type { ControlDb } from "@zakki/api/db/client.ts";
+import type { TursoPlatform } from "@zakki/api/turso/platform.ts";
 
 /**
  * ルートが使う依存の束（apps/web/src/server/deps.ts と同じ流儀）。
@@ -8,6 +9,8 @@ import type { ControlDb } from "@zakki/api/db/client.ts";
 export interface AppDeps {
   db: ControlDb;
   auth: AuthConfig;
+  /** ユーザごと DB のプロビジョニング先（issue #101）。テストは fake サーバを向ける */
+  turso: TursoPlatform;
 }
 
 /**

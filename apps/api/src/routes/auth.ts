@@ -283,9 +283,12 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
 
   // --- セッション確認 -----------------------------------------------------
 
-  // requireSession の到達点。api-3（#101）の保護ルートも同じミドルウェアを使う
+  // requireSession の到達点。api-3（#101）の保護ルートも同じミドルウェアを使う。
+  // `use` のパスは保護対象と同じ `/me` に絞る: `"*"` だと同じインスタンスに後から
+  // 未認証ルートを足したときに巻き込む（あるいは登録順に依存する）ため、
+  // 「このパスだけが保護対象」を形で示す
   const session = new Hono<SessionEnv>();
-  session.use("*", requireSession(auth.sessionSecret));
+  session.use("/me", requireSession(auth.sessionSecret));
   session.get("/me", (c) => c.json({ accountId: c.get("accountId") }));
   app.route("/", session);
 
