@@ -29,10 +29,9 @@ export function meRoutes(deps: AppDeps): Hono<SessionEnv> {
   const { db, auth, turso } = deps;
 
   // 認証必須。#100 の requireSession をそのまま再利用する。
-  // このサブアプリは `/me` 配下の保護ルート専用で、未認証で通したいルートは
-  // ここに足さない（足すなら別のサブアプリへ）。だから `"*"` の適用範囲が
-  // 「このプレフィックス配下すべて」で意図どおりになる
-  app.use("*", requireSession(auth.sessionSecret));
+  // 適用範囲は登録順ではなくパスで示す（`"*"` だと後からルートを足したときに
+  // 保護漏れが読み取れない。#110 レビューで auth.ts に入れたのと同じ形）
+  app.use("/db", requireSession(auth.sessionSecret));
 
   app.get("/db", async (c) => {
     const accountId = c.get("accountId");
@@ -55,6 +54,8 @@ export function meRoutes(deps: AppDeps): Hono<SessionEnv> {
       return c.json({ error: "データベーストークンを発行できませんでした" }, 502);
     }
 
+    // 本文にベアラトークンを載せるので、どの階層にも残さない
+    c.header("Cache-Control", "no-store");
     return c.json({
       dbUrl: databaseUrl(ensured.value.hostname),
       token: token.value,

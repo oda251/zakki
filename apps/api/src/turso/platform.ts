@@ -10,9 +10,9 @@ import * as v from "valibot";
  * - DB トークン発行 `POST /v1/organizations/{org}/databases/{db}/auth/tokens`
  *   （https://docs.turso.tech/api-reference/databases/create-token）
  *
- * Workers ランタイム制約により fetch と Web 標準 API のみで書く（node:* / Bun.* 禁止、
+ * Workers ランタイム制約により fetch と Web 標準 API のみで書く（node 組込み・Bun 固有 API は禁止、
  * scripts/check-arch-guards.sh Guard 5）。base URL を設定にしてあるのはテストが
- * fake Platform API（Bun.serve + Hono）を向けられるようにするため——本物の Turso は
+ * fake Platform API（Hono をテスト側の serve に載せたもの）を向けられるようにするため——本物の Turso は
  * ローカルで再現できないので、プロトコルレベルで差し替える。
  *
  * ここに現れるのは DB の所在とアクセストークンだけで、E2E の鍵材料（DEK・封筒・本文）は

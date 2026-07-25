@@ -8,11 +8,11 @@ import * as v from "valibot";
  * に従い**プロトコルレベル**で用意する: Hono で実際の API と同じ経路・同じ JSON 形
  * （https://docs.turso.tech/api-reference/databases/create,
  *  https://docs.turso.tech/api-reference/databases/create-token）を返すサーバを組み、
- * テストはこれを Bun.serve で立てて base URL を向ける。クライアントのメソッドは
+ * テストはこれをローカルの serve に載せて base URL を向ける。クライアントのメソッドは
  * 一切 mock しない——URL・認証ヘッダ・クエリ・ステータスの解釈まで実体で通す。
  *
  * プロダクションコードからは import しない（auth/test-fixtures.ts と同じ分離）。
- * このファイル自身は Workers 制約下（node:* / Bun.* 禁止）で書く: Guard 5 の
+ * このファイル自身も Workers 制約下（node 組込み・Bun 固有 API は禁止）で書く: Guard 5 の
  * 除外は *.test.ts だけなので、サーバの起動は呼び出し側のテストが行う。
  */
 
@@ -35,7 +35,7 @@ export interface FakePlatformState {
 }
 
 export interface FakePlatformApi {
-  /** Bun.serve に渡す fetch ハンドラを持つ Hono アプリ */
+  /** テスト側の serve に渡す fetch ハンドラを持つ Hono アプリ */
   readonly app: Hono;
   readonly state: FakePlatformState;
 }
