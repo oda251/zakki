@@ -100,11 +100,19 @@ export class AncoEngine implements KanaKanjiEngine {
   /** zenz GGUF のパス。指定すると文脈校正（Zenzai）が有効になる */
   private readonly zenzPath?: string;
   private readonly spawn: SpawnAnco;
+  /** 応答待ちタイムアウト（ms）。テストから短縮値を注入できる（issue #85） */
+  private readonly timeoutMs: number;
 
-  constructor(ancoPath: string, zenzPath?: string, spawn: SpawnAnco = defaultSpawn) {
+  constructor(
+    ancoPath: string,
+    zenzPath?: string,
+    spawn: SpawnAnco = defaultSpawn,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ) {
     this.ancoPath = ancoPath;
     this.zenzPath = zenzPath;
     this.spawn = spawn;
+    this.timeoutMs = timeoutMs;
     this.name = zenzPath === undefined ? "anco" : "anco+zenz";
   }
 
@@ -122,6 +130,10 @@ export class AncoEngine implements KanaKanjiEngine {
     const proc = this.proc;
     this.proc = null;
     this.ready = null;
+    // in-flight の pending を即 reject してタイマーも解除する。proc を先に null 化すると
+    // exited ハンドラの現役チェックが早期 return するため、ここで畳まないと pending が
+    // timeoutMs まで滞留し、残タイマーが close 後の状態に干渉しうる（issue #85）
+    this.failPending(new Error("anco session closed"));
     if (proc !== null) {
       try {
         void proc.stdin.write(":q\n");
@@ -162,6 +174,8 @@ export class AncoEngine implements KanaKanjiEngine {
   }
 
   private start(): Promise<void> {
+    // 前プロセスが行の途中で死んだ場合の残渣を捨て、新プロセスの先頭出力と連結させない（issue #85）
+    this.buffer = "";
     // stdbuf -oL は必須: anco の stdout は pipe 接続時に全面バッファリングされ、
     // exit までバナーも候補も届かない（WSL2 + Bun.spawn 実測）。coreutils 前提（Linux）
     const args = [
@@ -176,13 +190,17 @@ export class AncoEngine implements KanaKanjiEngine {
     if (this.zenzPath !== undefined) {
       args.push("--zenz", this.zenzPath, "--zenz_v3");
     }
-    this.proc = this.spawn(args);
-    void this.proc.exited.then(() => {
-      this.failPending(new Error("anco session exited"));
-      this.proc = null;
-      this.ready = null;
+    const proc = this.spawn(args);
+    this.proc = proc;
+    void proc.exited.then(() => {
+      // kill → 再起動後に旧プロセスの exited が遅延発火しうる。現役プロセスでなければ
+      // 何もしない（新プロセスの proc / ready / pending を巻き込まない）（issue #85）
+      if (this.proc !== proc) {
+        return;
+      }
+      this.teardown(new Error("anco session exited"));
     });
-    void this.readLoop();
+    void this.readLoop(proc);
     // 最初のバナー行 = 起動完了
     return this.waitForBanners(1).then(() => {});
   }
@@ -195,10 +213,7 @@ export class AncoEngine implements KanaKanjiEngine {
         reject,
         lines: [],
         bannersRemaining: count,
-        timer: setTimeout(
-          () => this.failPending(new Error("anco response timeout")),
-          REQUEST_TIMEOUT_MS,
-        ),
+        timer: setTimeout(() => this.handleTimeout(), this.timeoutMs),
       };
     });
   }
@@ -220,13 +235,16 @@ export class AncoEngine implements KanaKanjiEngine {
     return response;
   }
 
-  private async readLoop(): Promise<void> {
-    const proc = this.proc;
-    if (proc === null) {
-      return;
-    }
+  /**
+   * 起動時点の proc に束縛した受信ループ。kill / 再起動後に旧プロセスの遅延出力が
+   * 届いても、現役プロセス（this.proc）でなければ破棄し、ストリームずれを防ぐ（issue #85）
+   */
+  private async readLoop(proc: AncoProcess): Promise<void> {
     const decoder = new TextDecoder();
     for await (const chunk of proc.stdout) {
+      if (this.proc !== proc) {
+        return;
+      }
       this.buffer += decoder.decode(chunk, { stream: true });
       let index = this.buffer.indexOf("\n");
       while (index !== -1) {
@@ -256,6 +274,23 @@ export class AncoEngine implements KanaKanjiEngine {
       return;
     }
     pending.lines.push(line);
+  }
+
+  /**
+   * 応答待ちタイムアウト発火時: 応答不能になった現行プロセスを kill して破棄する。
+   * kill() は必ずしも exited を即時解決しない（実プロセスでも終了は非同期）ため、
+   * exited ハンドラ任せにせずここでリセットし、次の convert がクリーンに再起動できるようにする。
+   */
+  private handleTimeout(): void {
+    this.proc?.kill();
+    this.teardown(new Error("anco response timeout"));
+  }
+
+  /** 現行プロセスを破棄して pending を reject する。次の convert は ensureStarted から再起動する */
+  private teardown(cause: Error): void {
+    this.proc = null;
+    this.ready = null;
+    this.failPending(cause);
   }
 
   private failPending(cause: unknown): void {

@@ -78,6 +78,85 @@ function makeFakeAnco(): {
   return { spawn, writes, flushes: () => flushCount, spawned: () => spawned, push };
 }
 
+/** spawn 1 回ごとに独立した fake プロセスを生成するプール（再起動・レース系の観測用） */
+interface FakeProcHandle {
+  writes: string[];
+  push: (text: string) => void;
+  killed: () => boolean;
+  /** exited を解決し stdout を閉じる（プロセス死亡の模擬）。kill() とは独立に呼べる */
+  exit: () => void;
+}
+
+function makeFakeAncoPool(): { spawn: SpawnAnco; procs: FakeProcHandle[] } {
+  const procs: FakeProcHandle[] = [];
+  const spawn: SpawnAnco = () => {
+    const writes: string[] = [];
+    let killed = false;
+    let closed = false;
+    const chunks: Uint8Array[] = [];
+    const encoder = new TextEncoder();
+    let notify: (() => void) | null = null;
+    let resolveExited: () => void = () => {};
+    const exited = new Promise<void>((resolve) => {
+      resolveExited = resolve;
+    });
+
+    const push = (text: string): void => {
+      chunks.push(encoder.encode(text));
+      const n = notify;
+      notify = null;
+      n?.();
+    };
+
+    async function* stdout(): AsyncGenerator<Uint8Array> {
+      for (;;) {
+        const chunk = chunks.shift();
+        if (chunk !== undefined) {
+          yield chunk;
+          continue;
+        }
+        if (closed) {
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          notify = resolve;
+        });
+      }
+    }
+
+    const exit = (): void => {
+      closed = true;
+      const n = notify;
+      notify = null;
+      n?.();
+      resolveExited();
+    };
+
+    const proc: AncoProcess = {
+      stdin: {
+        write: (chunk: string) => {
+          writes.push(chunk);
+          return chunk.length;
+        },
+        flush: () => 0,
+        end: () => {
+          exit();
+          return 0;
+        },
+      },
+      stdout: stdout(),
+      exited,
+      // kill は記録のみ（exited の解決タイミングをテスト側で制御し、遅延発火を模擬する）
+      kill: () => {
+        killed = true;
+      },
+    };
+    procs.push({ writes, push, killed: () => killed, exit });
+    return proc;
+  };
+  return { spawn, procs };
+}
+
 const waitFor = async (predicate: () => boolean, timeoutMs = 1000): Promise<void> => {
   const start = Date.now();
   while (!predicate()) {
@@ -167,6 +246,176 @@ describe("AncoEngine の IPC バッチ送信（issue #34）", () => {
     const result = await engine.convert("ふく\nすう");
     expect(result.isErr()).toBe(true);
     expect(fake.spawned()).toBe(false);
+    engine.close();
+  });
+});
+
+/** 1 回目の convert を応答なしでタイムアウトさせ、Err で終わることを確認する（各テストの前段） */
+async function timeoutFirstConvert(
+  pool: ReturnType<typeof makeFakeAncoPool>,
+  engine: AncoEngine,
+): Promise<void> {
+  const first = engine.convert("いち");
+  await waitFor(() => pool.procs.length === 1);
+  pool.procs[0]?.push(BANNER); // 起動完了
+  await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+  expect((await first).isErr()).toBe(true);
+}
+
+describe("AncoEngine の異常系リカバリ（issue #85）", () => {
+  test("タイムアウト時に pending を reject し旧プロセスを kill する", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
+
+    const result = engine.convert("かな");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER); // 起動完了
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+
+    // 応答を返さない → タイムアウト
+    const res = await result;
+    expect(res.isErr()).toBe(true);
+    expect(res._unsafeUnwrapErr().message).toContain("timeout");
+    expect(pool.procs[0]?.killed()).toBe(true);
+
+    engine.close();
+  });
+
+  test("タイムアウト後の次の convert で新プロセスを spawn し正常に候補を返す", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
+
+    // 1 回目: 応答なしでタイムアウトさせる
+    await timeoutFirstConvert(pool, engine);
+
+    // 2 回目: 新プロセスが spawn され、クリーンに応答できる
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER); // 新プロセスの起動バナー
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+    expect(pool.procs[1]?.writes).toEqual([":c\n", "に\n"]);
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    engine.close();
+  });
+
+  test("タイムアウト後に旧プロセスの遅延応答が届いても次リクエストと混線しない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
+
+    // 1 回目: 応答なしでタイムアウトさせる（旧プロセスは kill 済みだが stdout は生きている想定）
+    await timeoutFirstConvert(pool, engine);
+
+    // 2 回目を開始し、新プロセスの起動バナーを返す
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+
+    // ここで旧プロセスの遅延応答（:c ブロック + 候補ブロック）が届く
+    pool.procs[0]?.push(BANNER);
+    pool.procs[0]?.push(`いち\n0. 一\nTime: 0.005\n${BANNER}`);
+
+    // 新プロセスの正しい応答だけが second に対応づくこと
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    engine.close();
+  });
+
+  test("行の途中でプロセスが死んだ後の再起動で旧バッファ残渣が混入しない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 500);
+
+    // 1 回目: 改行なしの中途出力を残したままプロセスが死ぬ
+    const first = engine.convert("いち");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER);
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+    pool.procs[0]?.push("0. 途中"); // 改行なし → buffer に残渣が残る
+    // 中途チャンクが readLoop に消費されるのを待ってからプロセスを殺す
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    pool.procs[0]?.exit();
+    expect((await first).isErr()).toBe(true);
+
+    // 2 回目: 新プロセスの先頭バナーが残渣と連結されず、起動・応答が正常に完了する
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    engine.close();
+  });
+
+  test("kill 後に旧プロセスの exited が遅延発火しても新プロセスを巻き込まない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
+
+    // 1 回目: タイムアウト → kill（exited はまだ解決しない）
+    await timeoutFirstConvert(pool, engine);
+    expect(pool.procs[0]?.killed()).toBe(true);
+
+    // 2 回目: 新プロセスが起動して応答待ちに入る
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+
+    // ここで旧プロセスの exited が遅延発火する（kill の後始末）
+    pool.procs[0]?.exit();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // 新プロセスの pending は巻き込まれず、応答が正常に返ること
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    // proc / ready が null 上書きされていない = 3 回目でも spawn は増えない
+    const third = engine.convert("さん");
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 4);
+    expect(pool.procs.length).toBe(2);
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`さん\n0. 三\nTime: 0.005\n${BANNER}`);
+    expect((await third)._unsafeUnwrap()).toEqual(["三"]);
+
+    engine.close();
+  });
+
+  test("close() は in-flight の pending を即 reject し、残タイマーが新プロセスを殺さない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
+
+    // 応答待ちの最中に close する
+    const first = engine.convert("いち");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER);
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+    engine.close();
+
+    // タイムアウト滞留ではなく close 由来のエラーで即 reject されること
+    const res = await first;
+    expect(res.isErr()).toBe(true);
+    expect(res._unsafeUnwrapErr().message).toContain("closed");
+
+    // close 後の再 convert が正常に動くこと
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    // 旧 pending の残タイマー窓（close から timeoutMs=150ms）を跨いでも新プロセスは殺されない
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(pool.procs[1]?.killed()).toBe(false);
+
     engine.close();
   });
 });
