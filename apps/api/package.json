@@ -1,0 +1,24 @@
+{
+  "name": "@zakki/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "build": "bun build src/index.ts --target=browser --outfile dist/index.js"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.9.12",
+    "neverthrow": "^8.2.0",
+    "valibot": "^1.4.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "drizzle-kit": "^0.31.10"
+  }
+}

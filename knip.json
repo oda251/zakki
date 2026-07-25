@@ -6,6 +6,9 @@
       "project": [],
       "ignoreDependencies": ["dependency-cruiser", "@opentui/react"]
     },
+    "apps/api": {
+      "project": "src/**/*.ts"
+    },
     "apps/tui": {
       "entry": ["src/cli/*.ts"],
       "project": "src/**/*.{ts,tsx}"

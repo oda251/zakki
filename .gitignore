@@ -3,6 +3,7 @@ node_modules/
 *.sqlite-journal
 *.db
 apps/web/dist/
+apps/api/dist/
 
 # Claude Code の作業ディレクトリ（エージェント worktree 等）
 .claude/
