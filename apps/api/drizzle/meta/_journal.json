@@ -8,6 +8,13 @@
       "when": 1784997810340,
       "tag": "0000_even_franklin_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785002657357,
+      "tag": "0001_strong_proemial_gods",
+      "breakpoints": true
     }
   ]
 }

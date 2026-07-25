@@ -1,11 +1,7 @@
 import { Hono } from "hono";
-import type { ControlDb } from "@zakki/api/db/client.ts";
+import type { ApiEnv } from "./context.ts";
 import type { AppDeps } from "./deps.ts";
-
-/** ルートがコンテキスト変数として受け取る依存（api-2 以降が c.get("db") で使う） */
-interface ApiEnv {
-  Variables: { db: ControlDb };
-}
+import { authRoutes } from "./routes/auth.ts";
 
 /**
  * コントロールプレーン API の合成（テスト可能な純関数, issue #99）。
@@ -24,6 +20,9 @@ export function createApp(deps: AppDeps): Hono<ApiEnv> {
 
   // 死活監視のみ（DB ping なしの静的 200）
   app.get("/healthz", (c) => c.json({ ok: true }));
+
+  // パスキー認証（issue #100）
+  app.route("/auth", authRoutes(deps));
 
   return app;
 }

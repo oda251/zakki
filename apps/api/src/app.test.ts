@@ -11,7 +11,10 @@ import { createApp } from "./app.ts";
 
 function makeApp() {
   const db = drizzle(createClient({ url: ":memory:" }), { schema });
-  return createApp({ db });
+  return createApp({
+    db,
+    auth: { rpId: "zakki.test", rpOrigin: "https://zakki.test", sessionSecret: "test-secret" },
+  });
 }
 
 describe("createApp", () => {
