@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.15.0",
+    "@simplewebauthn/server": "^13.3.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.9.12",
     "neverthrow": "^8.2.0",

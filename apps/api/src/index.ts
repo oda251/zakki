@@ -29,7 +29,14 @@ function composeApp(env: Record<string, unknown>): ReturnType<typeof createApp> 
     },
   );
   const db = createControlDb({ url: config.controlDbUrl, authToken: config.controlDbToken });
-  const app = createApp({ db });
+  const app = createApp({
+    db,
+    auth: {
+      rpId: config.rpId,
+      rpOrigin: config.rpOrigin,
+      sessionSecret: config.sessionSecret,
+    },
+  });
   apps.set(env, app);
   return app;
 }

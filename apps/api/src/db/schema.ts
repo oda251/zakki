@@ -37,6 +37,33 @@ export const credentials = sqliteTable(
 );
 
 /**
+ * WebAuthn challenge の短命ストア（api-2, issue #100）。
+ *
+ * Workers はリクエスト間で状態を持てない（isolate はいつでも捨てられる）ため、
+ * options 発行 → verify の間の challenge をメモリに置けない。challenge 自体を
+ * 主キーにして「発行済みか」を DB で引き、verify 時に必ず消す（単回使用）。
+ * expiresAt を過ぎた行は無効扱いにし、発行のたびに掃除する。
+ *
+ * accountId は registration のときだけ入る（options 時点で採番した account の
+ * 予約。verify が通って初めて accounts へ INSERT するので FK は張れない）。
+ * authentication では NULL で、アカウントは提示されたクレデンシャルから引く。
+ */
+export const authChallenges = sqliteTable(
+  "auth_challenges",
+  {
+    /** base64url の challenge そのもの。単回使用なので主キーで足りる */
+    challenge: text("challenge").primaryKey(),
+    /** "registration" | "authentication"。取り違え（登録用を認証に流用）を防ぐ */
+    kind: text("kind").notNull(),
+    /** registration で予約した account id。authentication では NULL */
+    accountId: text("account_id"),
+    /** 失効時刻（epoch ミリ秒）。過ぎた行は無効・掃除対象 */
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (t) => [index("auth_challenges_expires").on(t.expiresAt)],
+);
+
+/**
  * アカウント → ユーザごと Turso DB の台帳（api-3 のプロビジョニングが書く）。
  * DB の所在（名前・ホスト名）のみ。アクセストークンは都度 scoped 発行するため
  * 保存しない。E2E のため本文・鍵・DEK に関わる列は将来も追加しない。
