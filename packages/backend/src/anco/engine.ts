@@ -170,6 +170,8 @@ export class AncoEngine implements KanaKanjiEngine {
   }
 
   private start(): Promise<void> {
+    // 前プロセスが行の途中で死んだ場合の残渣を捨て、新プロセスの先頭出力と連結させない（issue #85）
+    this.buffer = "";
     // stdbuf -oL は必須: anco の stdout は pipe 接続時に全面バッファリングされ、
     // exit までバナーも候補も届かない（WSL2 + Bun.spawn 実測）。coreutils 前提（Linux）
     const args = [

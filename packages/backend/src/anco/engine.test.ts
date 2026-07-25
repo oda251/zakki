@@ -321,4 +321,31 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
 
     engine.close();
   });
+
+  test("行の途中でプロセスが死んだ後の再起動で旧バッファ残渣が混入しない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 500);
+
+    // 1 回目: 改行なしの中途出力を残したままプロセスが死ぬ
+    const first = engine.convert("いち");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER);
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+    pool.procs[0]?.push("0. 途中"); // 改行なし → buffer に残渣が残る
+    // 中途チャンクが readLoop に消費されるのを待ってからプロセスを殺す
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    pool.procs[0]?.exit();
+    expect((await first).isErr()).toBe(true);
+
+    // 2 回目: 新プロセスの先頭バナーが残渣と連結されず、起動・応答が正常に完了する
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    engine.close();
+  });
 });
