@@ -9,11 +9,12 @@ import type { Hono } from "hono";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import {
   createPasskeyCredential,
-  enrollPasskey,
   evaluatePrf,
   PRF_SALT,
+  savePasskeyEnvelope,
   unlockWithPasskey,
 } from "@zakki/web/client/db/passkey.ts";
+import type { FakeAuthenticator } from "@zakki/web/client/db/test-passkey.ts";
 import { fakeAuthenticator } from "@zakki/web/client/db/test-passkey.ts";
 import { fetchEnvelopes } from "@zakki/web/client/db/unlock.ts";
 import { createApp } from "@zakki/web/server/app.ts";
@@ -29,6 +30,28 @@ let serverDb: Db;
 let app: Hono;
 let fetchFn: FetchLike;
 let dek: Uint8Array;
+
+/**
+ * 失敗を **await して** 検証する。bun の型では `expect(...).rejects.toThrow()` が
+ * void を返し await できない（型なしで放置すると assertion がテスト外で解決してしまう）
+ */
+async function expectRejects(promise: Promise<unknown>, pattern?: RegExp): Promise<void> {
+  let error: unknown = null;
+  try {
+    await promise;
+  } catch (err: unknown) {
+    error = err;
+  }
+  expect(error).not.toBeNull();
+  if (pattern !== undefined) expect(String(error)).toMatch(pattern);
+}
+
+/** 登録 2 段（作成 → 保存）をまとめた、テスト内での定型 */
+async function enroll(api: FakeAuthenticator): Promise<string> {
+  const credentialId = await createPasskeyCredential(api);
+  await savePasskeyEnvelope(dek, api, credentialId, { fetchFn });
+  return credentialId;
+}
 
 beforeEach(async () => {
   await ready();
@@ -60,21 +83,22 @@ describe("createPasskeyCredential / evaluatePrf", () => {
 
   test("P2: PRF 未対応の認証器は登録段階で拒否する（開けない封筒を作らない）", async () => {
     const api = fakeAuthenticator({ prfSupported: false });
-    expect(createPasskeyCredential(api)).rejects.toThrow(/PRF/u);
+    await expectRejects(createPasskeyCredential(api), /PRF/u);
   });
 
   test("P2: 登録後に PRF 対応が失われた（別ブラウザ）場合は評価が失敗する", async () => {
     const api = fakeAuthenticator();
     const credentialId = await createPasskeyCredential(api);
     api.setPrfSupported(false);
-    expect(evaluatePrf(api, [credentialId])).rejects.toThrow(/PRF/u);
+    await expectRejects(evaluatePrf(api, [credentialId]), /PRF/u);
   });
 });
 
-describe("enrollPasskey", () => {
+describe("createPasskeyCredential → savePasskeyEnvelope（登録の 2 段）", () => {
   test("P3: 封筒がサーバに保存され、wire には PRF 出力・平文 DEK が現れない", async () => {
     const api = fakeAuthenticator();
-    const credentialId = await enrollPasskey(dek, api, { fetchFn });
+    const credentialId = await createPasskeyCredential(api);
+    await savePasskeyEnvelope(dek, api, credentialId, { fetchFn });
 
     const envelopes = await fetchEnvelopes(fetchFn);
     const passkey = envelopes.find((e) => e.kind === "passkey");
@@ -96,14 +120,34 @@ describe("enrollPasskey", () => {
     const emptyDb = await createDb(":memory:");
     const emptyApp = createApp({ db: emptyDb });
     const emptyFetch: FetchLike = async (input, init) => emptyApp.request(input, init);
-    expect(enrollPasskey(dek, fakeAuthenticator(), { fetchFn: emptyFetch })).rejects.toThrow();
+    const api = fakeAuthenticator();
+    const credentialId = await createPasskeyCredential(api);
+    await expectRejects(savePasskeyEnvelope(dek, api, credentialId, { fetchFn: emptyFetch }));
+  });
+
+  test("P4b: 2 段目（PRF 評価）が弾かれても、同じ credentialId で保存だけやり直せる（Safari 対応）", async () => {
+    const api = fakeAuthenticator();
+    const credentialId = await createPasskeyCredential(api);
+    // 作成のジェスチャを使い切り、続く get が NotAllowedError になる状況
+    api.setFailGet(true);
+    await expectRejects(savePasskeyEnvelope(dek, api, credentialId, { fetchFn }));
+    expect((await fetchEnvelopes(fetchFn)).some((e) => e.kind === "passkey")).toBe(false);
+
+    // 「続けて認証する」= 別ジェスチャからの再実行（credential は作り直さない）
+    api.setFailGet(false);
+    await savePasskeyEnvelope(dek, api, credentialId, { fetchFn });
+    const envelopes = await fetchEnvelopes(fetchFn);
+    const passkey = envelopes.find((e) => e.kind === "passkey");
+    expect(passkey?.credentialId).toBe(credentialId);
+    expect(api.credentialIds()).toEqual([credentialId]);
+    expect(await unlockWithPasskey(envelopes, api)).toEqual(dek);
   });
 });
 
 describe("unlockWithPasskey", () => {
   test("P5: 登録 → 再読込相当（新しい封筒フェッチ）→ 無言アンロックで DEK が戻る", async () => {
     const api = fakeAuthenticator();
-    await enrollPasskey(dek, api, { fetchFn });
+    await enroll(api);
 
     // 再読込相当: 封筒をサーバから取り直し、prompt 無しでアンロックする
     const envelopes = await fetchEnvelopes(fetchFn);
@@ -112,7 +156,7 @@ describe("unlockWithPasskey", () => {
 
   test("P6: PRF 評価の失敗（キャンセル）は null（呼び出し側がパスフレーズへ落ちる）", async () => {
     const api = fakeAuthenticator();
-    await enrollPasskey(dek, api, { fetchFn });
+    await enroll(api);
     const envelopes = await fetchEnvelopes(fetchFn);
 
     expect(await unlockWithPasskey(envelopes, fakeAuthenticator({ failGet: true }))).toBeNull();
@@ -120,7 +164,7 @@ describe("unlockWithPasskey", () => {
 
   test("P6: PRF 出力が別物（認証器が変わった）なら復号に失敗して null", async () => {
     const api = fakeAuthenticator();
-    await enrollPasskey(dek, api, { fetchFn });
+    await enroll(api);
     const envelopes = await fetchEnvelopes(fetchFn);
     api.rotateSeed();
 
@@ -137,7 +181,7 @@ describe("unlockWithPasskey", () => {
 
   test("P8: 未対応ブラウザ（adapter が null）→ null", async () => {
     const api = fakeAuthenticator();
-    await enrollPasskey(dek, api, { fetchFn });
+    await enroll(api);
     const envelopes = await fetchEnvelopes(fetchFn);
     expect(await unlockWithPasskey(envelopes, null)).toBeNull();
   });

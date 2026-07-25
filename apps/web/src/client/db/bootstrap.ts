@@ -21,27 +21,47 @@ import type {
 } from "@zakki/web/client/db/replication.ts";
 import { startReplication } from "@zakki/web/client/db/replication.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
+import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
 import type { CredentialsApi } from "@zakki/web/client/db/passkey.ts";
 import {
   browserCredentials,
-  enrollPasskey,
+  createPasskeyCredential,
+  savePasskeyEnvelope,
   unlockWithPasskey,
 } from "@zakki/web/client/db/passkey.ts";
 import { fetchEnvelopes, unlockWithPrompt } from "@zakki/web/client/db/unlock.ts";
 
-/** UI（設定パネル）へ渡す passkey の状態と操作（#104）。DEK 自体は外へ出さない */
+/**
+ * UI（設定パネル）へ渡す passkey の状態と操作（#104）。DEK 自体は外へ出さず、
+ * すべてクロージャの中に閉じる。
+ *
+ * 登録が create / save の 2 段に分かれ、アンロックにも再試行口があるのは
+ * WebKit が WebAuthn 呼び出しに **ユーザジェスチャ** を要求するため
+ * （出典: https://webkit.org/blog/11312/meet-face-id-and-touch-id-for-the-web/ ）。
+ * 起動直後の自動試行は非ジェスチャ文脈なので Safari では失敗し、UI から
+ * クリック起点で呼び直せる必要がある。
+ */
 export interface PasskeyControls {
   /** この環境で WebAuthn（PRF）を試せるか。false ならパスフレーズのみ */
   available: boolean;
-  /** サーバに passkey 封筒が既にあるか（起動時点の値） */
+  /** サーバに passkey 封筒が既にあるか */
   enrolled: boolean;
-  /** アンロック済み + WebAuthn 利用可のときだけ非 null。DEK はこのクロージャの中だけに閉じる */
-  enroll: (() => Promise<void>) | null;
+  /** アンロック済み + WebAuthn 利用可のときだけ非 null。パスキーを作成し credentialId を返す */
+  createCredential: (() => Promise<string>) | null;
+  /** 作成済み credential の PRF を評価して封筒を保存する（Safari では別クリックで呼び直せる） */
+  saveEnvelope: ((credentialId: string) => Promise<void>) | null;
+  /**
+   * 未アンロック + passkey 封筒あり + WebAuthn 利用可のときだけ非 null。
+   * ユーザジェスチャ起点で passkey アンロックを再試行する。成功すれば（DB は同じ
+   * インスタンスのまま）replication が開始され、更新後の操作一式を返す。
+   * 失敗時は `unlocked: false` で、返る controls から再度試せる。
+   */
+  unlock: (() => Promise<{ unlocked: boolean; passkey: PasskeyControls }>) | null;
 }
 
 export interface ClientDb {
   db: ZakkiDatabase;
-  /** アンロックできなかった場合は null（同期なし・local のみ） */
+  /** アンロックできなかった場合は null（後から `passkey.unlock()` で開始されうる） */
   replication: ZakkiReplicationStates | null;
   passkey: PasskeyControls;
 }
@@ -94,14 +114,45 @@ export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise
       ? null
       : ((await unlockWithPasskey(envelopes, credentialsApi)) ??
         (await unlockWithPrompt(envelopes, options.promptFn ?? defaultPrompt)));
+  return composeClientDb(db, envelopes, credentialsApi, options, dek);
+}
+
+/**
+ * DEK の有無から replication と passkey 操作を組み立てる。ジェスチャ起点の再アンロック
+ * （`passkey.unlock`）も同じ関数を通るので、起動時と再試行時で経路が分岐しない。
+ */
+function composeClientDb(
+  db: ZakkiDatabase,
+  envelopes: readonly CryptoEnvelope[] | null,
+  credentialsApi: CredentialsApi | null,
+  options: BootstrapOptions,
+  dek: Uint8Array | null,
+): ClientDb {
+  const hasPasskeyEnvelope = (envelopes ?? []).some((e) => e.kind === "passkey");
   const passkey: PasskeyControls = {
     available: credentialsApi !== null,
-    enrolled: (envelopes ?? []).some((e) => e.kind === "passkey"),
-    enroll:
+    enrolled: hasPasskeyEnvelope,
+    createCredential:
       dek === null || credentialsApi === null
         ? null
+        : () => createPasskeyCredential(credentialsApi),
+    saveEnvelope:
+      dek === null || credentialsApi === null
+        ? null
+        : (credentialId) =>
+            savePasskeyEnvelope(dek, credentialsApi, credentialId, { fetchFn: options.fetchFn }),
+    unlock:
+      dek !== null || credentialsApi === null || envelopes === null || !hasPasskeyEnvelope
+        ? null
         : async () => {
-            await enrollPasskey(dek, credentialsApi, { fetchFn: options.fetchFn });
+            const next = composeClientDb(
+              db,
+              envelopes,
+              credentialsApi,
+              options,
+              await unlockWithPasskey(envelopes, credentialsApi),
+            );
+            return { unlocked: next.replication !== null, passkey: next.passkey };
           },
   };
   if (dek === null) {

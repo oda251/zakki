@@ -193,6 +193,10 @@ export async function evaluatePrf(
  *
  * 封筒が無い / adapter が無い（未対応ブラウザ）/ 評価・復号に失敗した場合は **null** を返し、
  * 呼び出し側はパスフレーズ経路へフォールバックする。秘密（PRF 出力・DEK）はログに出さない。
+ *
+ * 起動時の自動試行（非ジェスチャ文脈）は WebKit のユーザジェスチャ要求により
+ * `NotAllowedError` になりうるため、**クリックハンドラからも再実行できる**ように
+ * 副作用を持たない純粋な再試行として設計している（bootstrap の `passkey.unlock`）。
  */
 export async function unlockWithPasskey(
   envelopes: readonly CryptoEnvelope[],
@@ -214,18 +218,22 @@ export async function unlockWithPasskey(
 }
 
 /**
- * アンロック済み（DEK 保持）状態からパスキーを登録する。
- * create → PRF 評価 → **クライアントで wrap** → `POST /crypto/envelopes/passkey`（#103 の経路）。
- * 平文 DEK・PRF 出力は送らない。
+ * 作成済みのパスキーで PRF を評価し、DEK を **クライアントで wrap** して
+ * `POST /crypto/envelopes/passkey`（#103 の経路）へ保存する。平文 DEK・PRF 出力は送らない。
  *
- * @returns 登録した資格情報の credentialId
+ * 登録が「作成（{@link createPasskeyCredential}）」と「保存（この関数）」に分かれているのは、
+ * WebKit がプラットフォーム認証器の WebAuthn 呼び出しに **ユーザジェスチャ** を要求し、
+ * 1 回のクリックで消費した activation では 2 度目（PRF 評価の `get`）が
+ * `NotAllowedError` になりうるため（出典: https://webkit.org/blog/11312/meet-face-id-and-touch-id-for-the-web/ ）。
+ * 続けて呼べる環境（Chrome/Edge）では 1 クリックで完了し、失敗した場合は
+ * UI が credentialId を保持したまま別のクリックからこの関数だけを再実行できる。
  */
-export async function enrollPasskey(
+export async function savePasskeyEnvelope(
   dek: Uint8Array,
   api: CredentialsApi,
-  options: { rpName?: string; userName?: string; fetchFn?: FetchLike } = {},
-): Promise<string> {
-  const credentialId = await createPasskeyCredential(api, options);
+  credentialId: string,
+  options: { fetchFn?: FetchLike } = {},
+): Promise<void> {
   const prfOutput = await evaluatePrf(api, [credentialId]);
   const wrappedDek = wrapDek(dek, deriveKekFromPrf(prfOutput));
   await request<{ ok: boolean }>(
@@ -239,5 +247,4 @@ export async function enrollPasskey(
     },
     options.fetchFn,
   );
-  return credentialId;
 }

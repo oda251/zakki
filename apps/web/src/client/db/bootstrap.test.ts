@@ -57,6 +57,28 @@ async function boot(
   return handle;
 }
 
+/**
+ * 後から開始された replication（`passkey.unlock` 経由）は awaitInitialReplication を
+ * 掴めないため、ローカルレプリカに doc が現れるまで短く待つ
+ */
+async function waitForChunk(handle: ClientDb, id: string): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const doc = await handle.db.chunks.findOne(id).exec();
+    if (doc !== null) return doc.content;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return undefined;
+}
+
+/** パスフレーズでアンロックした状態から、パスキー登録（作成 → 保存）を済ませる */
+async function enrollVia(api: CredentialsApi): Promise<void> {
+  const handle = await boot(() => Promise.resolve(PASSPHRASE), api);
+  if (handle.passkey.createCredential === null || handle.passkey.saveEnvelope === null) {
+    throw new Error("アンロック済みなら登録できるはず");
+  }
+  await handle.passkey.saveEnvelope(await handle.passkey.createCredential());
+}
+
 /** サーバへ暗号文 wire を直接シードする（別デバイスが push 済みの状態） */
 async function seedEncryptedChunk(dek: Uint8Array, id: string, content: string): Promise<void> {
   const wire = chunkPush(makeFieldCrypto(dek), {
@@ -155,8 +177,11 @@ describe("bootstrapClientDb + passkey (#104)", () => {
     const first = await boot(() => Promise.resolve(PASSPHRASE), api);
     expect(first.passkey.available).toBe(true);
     expect(first.passkey.enrolled).toBe(false);
-    if (first.passkey.enroll === null) throw new Error("アンロック済みなら登録できるはず");
-    await first.passkey.enroll();
+    if (first.passkey.createCredential === null || first.passkey.saveEnvelope === null) {
+      throw new Error("アンロック済みなら登録できるはず");
+    }
+    expect(first.passkey.unlock).toBeNull(); // アンロック済みなので再試行口は出さない
+    await first.passkey.saveEnvelope(await first.passkey.createCredential());
 
     // 2 回目（再読込相当）: prompt は一度も呼ばれず、passkey だけでアンロックできる
     let asked = 0;
@@ -178,8 +203,7 @@ describe("bootstrapClientDb + passkey (#104)", () => {
     await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
     await seedEncryptedChunk(dek, "p2", "フォールバックで読めた記録");
     const api = fakeAuthenticator();
-    const enrolled = await boot(() => Promise.resolve(PASSPHRASE), api);
-    await enrolled.passkey.enroll?.();
+    await enrollVia(api);
 
     // 認証器がキャンセル・エラーを返す状況
     let asked = 0;
@@ -205,13 +229,60 @@ describe("bootstrapClientDb + passkey (#104)", () => {
     await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
     const handle = await boot(() => Promise.resolve(PASSPHRASE), null);
     expect(handle.passkey.available).toBe(false);
-    expect(handle.passkey.enroll).toBeNull();
+    expect(handle.passkey.createCredential).toBeNull();
+    expect(handle.passkey.unlock).toBeNull();
     expect(handle.replication).not.toBeNull();
+  });
+
+  test("P5: 自動試行が弾かれ（Safari のジェスチャ要求）パスフレーズも入れない → ボタン相当の再試行で開く", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
+    await seedEncryptedChunk(dek, "p5", "ジェスチャ再試行で読めた記録");
+    const api = fakeAuthenticator();
+    await enrollVia(api);
+
+    // 起動直後の自動試行は非ジェスチャ文脈で NotAllowedError、パスフレーズもキャンセル
+    api.setFailGet(true);
+    const handle = await boot(() => Promise.resolve(null), api);
+    expect(handle.replication).toBeNull();
+    if (handle.passkey.unlock === null) throw new Error("再試行の入口が必要");
+
+    // 「パスキーでアンロック」ボタン（ユーザジェスチャ）からの再実行
+    api.setFailGet(false);
+    const unlocked = await handle.passkey.unlock();
+    expect(unlocked.unlocked).toBe(true);
+    expect(unlocked.passkey.unlock).toBeNull(); // アンロック後は再試行口を出さない
+    expect(unlocked.passkey.createCredential).not.toBeNull(); // 登録操作は使える
+
+    // DB は同じインスタンスのまま。再試行で始まった replication が復号済みで流れ込む
+    expect(await waitForChunk(handle, "p5")).toBe("ジェスチャ再試行で読めた記録");
+  });
+
+  test("P5: 再試行が再び失敗しても未アンロックのまま、さらに再試行できる", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
+    const api = fakeAuthenticator();
+    await enrollVia(api);
+
+    api.setFailGet(true);
+    const handle = await boot(() => Promise.resolve(null), api);
+    const retried = await handle.passkey.unlock?.();
+    expect(retried?.unlocked).toBe(false);
+    expect(retried?.passkey.unlock).not.toBeNull();
+  });
+
+  test("P6: passkey 封筒が無ければ再試行の入口は出さない（パスフレーズのみ）", async () => {
+    await addPassphraseEnvelope(serverDb, generateDek(), PASSPHRASE);
+    const handle = await boot(() => Promise.resolve(null), fakeAuthenticator());
+    expect(handle.replication).toBeNull();
+    expect(handle.passkey.unlock).toBeNull();
   });
 
   test("P4: アンロックできていない（封筒なし）状態では登録操作を出さない", async () => {
     const handle = await boot(() => Promise.resolve(PASSPHRASE), fakeAuthenticator());
-    expect(handle.passkey.enroll).toBeNull();
+    expect(handle.passkey.createCredential).toBeNull();
+    expect(handle.passkey.saveEnvelope).toBeNull();
+    expect(handle.passkey.unlock).toBeNull();
     expect(handle.passkey.enrolled).toBe(false);
   });
 });

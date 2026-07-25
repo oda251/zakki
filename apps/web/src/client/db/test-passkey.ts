@@ -51,11 +51,17 @@ export interface FakeAuthenticator extends CredentialsApi {
   rotateSeed: () => void;
   /** 登録後に PRF 対応が失われた状況（ブラウザ更新・別ブラウザ）を再現する */
   setPrfSupported: (supported: boolean) => void;
+  /**
+   * get の成否を切り替える。Safari のユーザジェスチャ要求（非ジェスチャ文脈の
+   * 自動試行は NotAllowedError、クリック起点なら成功）を再現するために使う。
+   */
+  setFailGet: (fail: boolean) => void;
 }
 
 /** PublicKeyCredential 形状を返す fake を組み立てる */
 export function fakeAuthenticator(options: FakeAuthenticatorOptions = {}): FakeAuthenticator {
   let prfSupported = options.prfSupported ?? true;
+  let failGet = options.failGet ?? false;
   const seeds = new Map<string, Uint8Array>();
 
   return {
@@ -65,6 +71,9 @@ export function fakeAuthenticator(options: FakeAuthenticatorOptions = {}): FakeA
     },
     setPrfSupported: (supported) => {
       prfSupported = supported;
+    },
+    setFailGet: (fail) => {
+      failGet = fail;
     },
 
     create: (credentialOptions) => {
@@ -78,7 +87,8 @@ export function fakeAuthenticator(options: FakeAuthenticatorOptions = {}): FakeA
     },
 
     get: (credentialOptions) => {
-      if (options.failGet === true) return Promise.reject(new Error("user cancelled"));
+      // 実機の NotAllowedError（キャンセル・ジェスチャ無し）に対応する失敗
+      if (failGet) return Promise.reject(new Error("NotAllowedError: user gesture required"));
       const publicKey = credentialOptions.publicKey;
       if (publicKey === undefined) throw new Error("publicKey が無い");
       const allowed = (publicKey.allowCredentials ?? []).map((c) => base64url(toBytes(c.id)));
