@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { analyzeAll } from "@zakki/backend/analysis/service.ts";
 import { fmtPolarity, moodLabel } from "@zakki/core/analysis/sentiment.ts";
 import { createDb, defaultDbPath } from "@zakki/data/db/connect.ts";
+import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
 import { dailySentiment } from "@zakki/data/chunk/queries.ts";
 import { xdgDataHome } from "@zakki/data/util/paths.ts";
 import { loadConfigOrExit } from "@zakki/tui/config.ts";
@@ -19,6 +20,16 @@ import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 const config = loadConfigOrExit(process.env);
 
 const db = await createDb(defaultDbPath(xdgDataHome(config.xdgDataHome)));
+// 暗号 ON で作成した DB をアンロックなしで開くと、暗号文をそのまま平文として
+// 読み書きしてしまう（issue #64）。analyzeAll は書き込みも行うため、
+// 最初のデータアクセス（analyzeAll）より前に拒否する。
+// 暗号 OFF（封筒なし）の DB では no-op。CLI での keyfile アンロックはスコープ外。
+try {
+  await assertCryptoReady(db);
+} catch (err) {
+  console.error(`zakki: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
 (await analyzeAll(db))._unsafeUnwrap();
 const rows = (await dailySentiment(db))._unsafeUnwrap();
 
