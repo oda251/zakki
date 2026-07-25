@@ -189,6 +189,11 @@ export class AncoEngine implements KanaKanjiEngine {
     const proc = this.spawn(args);
     this.proc = proc;
     void proc.exited.then(() => {
+      // kill → 再起動後に旧プロセスの exited が遅延発火しうる。現役プロセスでなければ
+      // 何もしない（新プロセスの proc / ready / pending を巻き込まない）（issue #85）
+      if (this.proc !== proc) {
+        return;
+      }
       this.failPending(new Error("anco session exited"));
       this.proc = null;
       this.ready = null;

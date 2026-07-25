@@ -348,4 +348,42 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
 
     engine.close();
   });
+
+  test("kill 後に旧プロセスの exited が遅延発火しても新プロセスを巻き込まない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
+
+    // 1 回目: タイムアウト → kill（exited はまだ解決しない）
+    const first = engine.convert("いち");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER);
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+    expect((await first).isErr()).toBe(true);
+    expect(pool.procs[0]?.killed()).toBe(true);
+
+    // 2 回目: 新プロセスが起動して応答待ちに入る
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+
+    // ここで旧プロセスの exited が遅延発火する（kill の後始末）
+    pool.procs[0]?.exit();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // 新プロセスの pending は巻き込まれず、応答が正常に返ること
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    // proc / ready が null 上書きされていない = 3 回目でも spawn は増えない
+    const third = engine.convert("さん");
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 4);
+    expect(pool.procs.length).toBe(2);
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`さん\n0. 三\nTime: 0.005\n${BANNER}`);
+    expect((await third)._unsafeUnwrap()).toEqual(["三"]);
+
+    engine.close();
+  });
 });
