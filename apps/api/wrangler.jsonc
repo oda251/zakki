@@ -1,0 +1,21 @@
+// zakki コントロールプレーン Worker（issue #99, docs/RESEARCH.md §7）。
+// デプロイはユーザが `bun run --cwd apps/api deploy` で行う（CI では実行しない）。
+// migration（apps/api/drizzle/）はデプロイ前に primary（Turso）へ適用しておく
+// （Workers ランタイムでは migrate しない）。
+{
+  "name": "zakki-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  // 非機密の設定（プレースホルダ。本番値は Pulumi / wrangler で上書きする）
+  "vars": {
+    "TURSO_ORG": "<turso-org-slug>",
+    "TURSO_GROUP": "<turso-group>",
+    "RP_ID": "<rp-id: 例 zakki.example.com>",
+    "RP_ORIGIN": "<rp-origin: 例 https://zakki.example.com>",
+  },
+  // secrets（値はコミットしない。`wrangler secret put <NAME>` で設定する）:
+  //   CONTROL_DB_URL    コントロールプレーン DB（Turso）の URL
+  //   CONTROL_DB_TOKEN  コントロールプレーン DB の認証トークン
+  //   SESSION_SECRET    セッション署名鍵（api-2）
+  //   TURSO_API_TOKEN   Turso Platform API トークン（api-3 のプロビジョニング）
+}

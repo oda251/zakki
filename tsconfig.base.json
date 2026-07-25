@@ -18,6 +18,7 @@
     "skipLibCheck": true,
     "types": ["bun"],
     "paths": {
+      "@zakki/api/*": ["./apps/api/src/*"],
       "@zakki/core/*": ["./packages/core/src/*"],
       "@zakki/backend/*": ["./packages/backend/src/*"],
       "@zakki/data/*": ["./packages/data/src/*"],
