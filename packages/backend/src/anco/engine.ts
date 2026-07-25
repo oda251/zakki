@@ -100,11 +100,19 @@ export class AncoEngine implements KanaKanjiEngine {
   /** zenz GGUF のパス。指定すると文脈校正（Zenzai）が有効になる */
   private readonly zenzPath?: string;
   private readonly spawn: SpawnAnco;
+  /** 応答待ちタイムアウト（ms）。テストから短縮値を注入できる（issue #85） */
+  private readonly timeoutMs: number;
 
-  constructor(ancoPath: string, zenzPath?: string, spawn: SpawnAnco = defaultSpawn) {
+  constructor(
+    ancoPath: string,
+    zenzPath?: string,
+    spawn: SpawnAnco = defaultSpawn,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ) {
     this.ancoPath = ancoPath;
     this.zenzPath = zenzPath;
     this.spawn = spawn;
+    this.timeoutMs = timeoutMs;
     this.name = zenzPath === undefined ? "anco" : "anco+zenz";
   }
 
@@ -195,10 +203,7 @@ export class AncoEngine implements KanaKanjiEngine {
         reject,
         lines: [],
         bannersRemaining: count,
-        timer: setTimeout(
-          () => this.failPending(new Error("anco response timeout")),
-          REQUEST_TIMEOUT_MS,
-        ),
+        timer: setTimeout(() => this.handleTimeout(), this.timeoutMs),
       };
     });
   }
@@ -256,6 +261,12 @@ export class AncoEngine implements KanaKanjiEngine {
       return;
     }
     pending.lines.push(line);
+  }
+
+  /** 応答待ちタイムアウト発火時: pending を reject しつつ、応答不能になった現行プロセスを kill する */
+  private handleTimeout(): void {
+    this.proc?.kill();
+    this.failPending(new Error("anco response timeout"));
   }
 
   private failPending(cause: unknown): void {

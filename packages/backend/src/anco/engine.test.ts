@@ -78,6 +78,85 @@ function makeFakeAnco(): {
   return { spawn, writes, flushes: () => flushCount, spawned: () => spawned, push };
 }
 
+/** spawn 1 回ごとに独立した fake プロセスを生成するプール（再起動・レース系の観測用） */
+interface FakeProcHandle {
+  writes: string[];
+  push: (text: string) => void;
+  killed: () => boolean;
+  /** exited を解決し stdout を閉じる（プロセス死亡の模擬）。kill() とは独立に呼べる */
+  exit: () => void;
+}
+
+function makeFakeAncoPool(): { spawn: SpawnAnco; procs: FakeProcHandle[] } {
+  const procs: FakeProcHandle[] = [];
+  const spawn: SpawnAnco = () => {
+    const writes: string[] = [];
+    let killed = false;
+    let closed = false;
+    const chunks: Uint8Array[] = [];
+    const encoder = new TextEncoder();
+    let notify: (() => void) | null = null;
+    let resolveExited: () => void = () => {};
+    const exited = new Promise<void>((resolve) => {
+      resolveExited = resolve;
+    });
+
+    const push = (text: string): void => {
+      chunks.push(encoder.encode(text));
+      const n = notify;
+      notify = null;
+      n?.();
+    };
+
+    async function* stdout(): AsyncGenerator<Uint8Array> {
+      for (;;) {
+        const chunk = chunks.shift();
+        if (chunk !== undefined) {
+          yield chunk;
+          continue;
+        }
+        if (closed) {
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          notify = resolve;
+        });
+      }
+    }
+
+    const exit = (): void => {
+      closed = true;
+      const n = notify;
+      notify = null;
+      n?.();
+      resolveExited();
+    };
+
+    const proc: AncoProcess = {
+      stdin: {
+        write: (chunk: string) => {
+          writes.push(chunk);
+          return chunk.length;
+        },
+        flush: () => 0,
+        end: () => {
+          exit();
+          return 0;
+        },
+      },
+      stdout: stdout(),
+      exited,
+      // kill は記録のみ（exited の解決タイミングをテスト側で制御し、遅延発火を模擬する）
+      kill: () => {
+        killed = true;
+      },
+    };
+    procs.push({ writes, push, killed: () => killed, exit });
+    return proc;
+  };
+  return { spawn, procs };
+}
+
 const waitFor = async (predicate: () => boolean, timeoutMs = 1000): Promise<void> => {
   const start = Date.now();
   while (!predicate()) {
@@ -167,6 +246,26 @@ describe("AncoEngine の IPC バッチ送信（issue #34）", () => {
     const result = await engine.convert("ふく\nすう");
     expect(result.isErr()).toBe(true);
     expect(fake.spawned()).toBe(false);
+    engine.close();
+  });
+});
+
+describe("AncoEngine の異常系リカバリ（issue #85）", () => {
+  test("タイムアウト時に pending を reject し旧プロセスを kill する", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
+
+    const result = engine.convert("かな");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER); // 起動完了
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+
+    // 応答を返さない → タイムアウト
+    const res = await result;
+    expect(res.isErr()).toBe(true);
+    expect(res._unsafeUnwrapErr().message).toContain("timeout");
+    expect(pool.procs[0]?.killed()).toBe(true);
+
     engine.close();
   });
 });
