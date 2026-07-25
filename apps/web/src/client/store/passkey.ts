@@ -95,16 +95,26 @@ export const usePasskeyStore = create<PasskeyState>((set, get) => ({
   unlock: async () => {
     const controls = get().controls;
     if (controls === null || controls.unlock === null) return;
+    // 再入したまま replication が二重に張られないよう、状態側でも弾く
+    // （UI の disabled だけに頼らない）
+    if (get().status === "running") return;
     set({ status: "running", message: null });
-    const next = await controls.unlock();
-    set(
-      next.unlocked
-        ? { controls: next.passkey, status: "done", message: "パスキーでアンロックしました" }
-        : {
-            controls: next.passkey,
-            status: "error",
-            message: "パスキーでのアンロックに失敗しました（もう一度お試しください）",
-          },
-    );
+    try {
+      const next = await controls.unlock();
+      set(
+        next.unlocked
+          ? { controls: next.passkey, status: "done", message: "パスキーでアンロックしました" }
+          : {
+              controls: next.passkey,
+              status: "error",
+              message: "パスキーでのアンロックに失敗しました（もう一度お試しください）",
+            },
+      );
+    } catch (err: unknown) {
+      // unlockWithPasskey は自前で null に畳むので、ここへ来るのは replication 開始や
+      // FieldCrypto 生成が投げた場合。status を running のままにするとボタンが
+      // すべて disabled で固まり、リロード以外に復帰手段が無くなる
+      set({ status: "error", message: describeError(err) });
+    }
   },
 }));

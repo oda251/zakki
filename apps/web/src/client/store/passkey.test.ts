@@ -105,4 +105,21 @@ describe("usePasskeyStore.unlock", () => {
     expect(usePasskeyStore.getState().message).toContain("パスキー");
     expect(usePasskeyStore.getState().controls?.unlock).not.toBeNull();
   });
+
+  test("S6: unlock が throw しても running で固まらず、再度押せる", async () => {
+    // replication 開始や FieldCrypto 生成が投げるケース。running のままだと
+    // ボタンがすべて disabled になりリロード以外に復帰手段が無くなる
+    const locked: PasskeyControls = {
+      ...base,
+      enrolled: true,
+      createCredential: null,
+      saveEnvelope: null,
+      unlock: () => Promise.reject(new Error("replication 開始に失敗")),
+    };
+    usePasskeyStore.getState().connect(locked);
+    await usePasskeyStore.getState().unlock();
+    expect(usePasskeyStore.getState().status).toBe("error");
+    expect(usePasskeyStore.getState().message).toContain("replication 開始に失敗");
+    expect(usePasskeyStore.getState().controls?.unlock).not.toBeNull();
+  });
 });
