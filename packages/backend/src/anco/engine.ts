@@ -184,13 +184,14 @@ export class AncoEngine implements KanaKanjiEngine {
     if (this.zenzPath !== undefined) {
       args.push("--zenz", this.zenzPath, "--zenz_v3");
     }
-    this.proc = this.spawn(args);
-    void this.proc.exited.then(() => {
+    const proc = this.spawn(args);
+    this.proc = proc;
+    void proc.exited.then(() => {
       this.failPending(new Error("anco session exited"));
       this.proc = null;
       this.ready = null;
     });
-    void this.readLoop();
+    void this.readLoop(proc);
     // 最初のバナー行 = 起動完了
     return this.waitForBanners(1).then(() => {});
   }
@@ -225,13 +226,16 @@ export class AncoEngine implements KanaKanjiEngine {
     return response;
   }
 
-  private async readLoop(): Promise<void> {
-    const proc = this.proc;
-    if (proc === null) {
-      return;
-    }
+  /**
+   * 起動時点の proc に束縛した受信ループ。kill / 再起動後に旧プロセスの遅延出力が
+   * 届いても、現役プロセス（this.proc）でなければ破棄し、ストリームずれを防ぐ（issue #85）
+   */
+  private async readLoop(proc: AncoProcess): Promise<void> {
     const decoder = new TextDecoder();
     for await (const chunk of proc.stdout) {
+      if (this.proc !== proc) {
+        return;
+      }
       this.buffer += decoder.decode(chunk, { stream: true });
       let index = this.buffer.indexOf("\n");
       while (index !== -1) {

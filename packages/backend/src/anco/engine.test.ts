@@ -292,4 +292,33 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
 
     engine.close();
   });
+
+  test("タイムアウト後に旧プロセスの遅延応答が届いても次リクエストと混線しない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
+
+    // 1 回目: 応答なしでタイムアウトさせる（旧プロセスは kill 済みだが stdout は生きている想定）
+    const first = engine.convert("いち");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER);
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+    expect((await first).isErr()).toBe(true);
+
+    // 2 回目を開始し、新プロセスの起動バナーを返す
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+
+    // ここで旧プロセスの遅延応答（:c ブロック + 候補ブロック）が届く
+    pool.procs[0]?.push(BANNER);
+    pool.procs[0]?.push(`いち\n0. 一\nTime: 0.005\n${BANNER}`);
+
+    // 新プロセスの正しい応答だけが second に対応づくこと
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    engine.close();
+  });
 });
