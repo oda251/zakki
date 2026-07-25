@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import * as schema from "@zakki/api/db/schema.ts";
+import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
 import { createApp } from "./app.ts";
 
 /**
@@ -14,6 +15,14 @@ function makeApp() {
   return createApp({
     db,
     auth: { rpId: "zakki.test", rpOrigin: "https://zakki.test", sessionSecret: "test-secret" },
+    // このスイートは /me/db を叩かないので、到達不能な base URL でよい
+    // （プロビジョニング本体の検証は routes/me.test.ts）
+    turso: createTursoPlatform({
+      baseUrl: "http://127.0.0.1:1",
+      apiToken: "unused",
+      organization: "unused",
+      group: "unused",
+    }),
   });
 }
 

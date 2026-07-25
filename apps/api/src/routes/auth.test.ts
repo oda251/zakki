@@ -11,6 +11,7 @@ import { createSoftAuthenticator, type SoftAuthenticator } from "@zakki/api/auth
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { authChallenges, credentials } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
+import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
 
 /**
  * パスキー認証の統合検証（issue #100）。
@@ -41,6 +42,14 @@ beforeEach(async () => {
   app = createApp({
     db,
     auth: { rpId: RP_ID, rpOrigin: RP_ORIGIN, sessionSecret: SESSION_SECRET },
+    // 認証の検証に Turso は要らない。到達不能な base URL を入れておく
+    // （プロビジョニングの検証は routes/me.test.ts）
+    turso: createTursoPlatform({
+      baseUrl: "http://127.0.0.1:1",
+      apiToken: "unused",
+      organization: "unused",
+      group: "unused",
+    }),
   });
   authenticator = await createSoftAuthenticator(RP_ID);
 });
@@ -209,6 +218,18 @@ describe("登録の異常系", () => {
     const payload = await authenticator.attest({ challenge, origin: RP_ORIGIN });
     const res = await post("/auth/register/verify", payload);
     expect(res.status).toBe(401);
+  });
+
+  test("clientData の type が webauthn.create でなければ 401（儀式の取り違え）", async () => {
+    const { challenge } = await registerOptions();
+    const payload = await authenticator.attest({
+      challenge,
+      origin: RP_ORIGIN,
+      type: "webauthn.get",
+    });
+    const res = await post("/auth/register/verify", payload);
+    expect(res.status).toBe(401);
+    expect(await db.select().from(credentials)).toEqual([]);
   });
 
   test("形の壊れたボディは 400", async () => {

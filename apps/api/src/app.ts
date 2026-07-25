@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { ApiEnv } from "./context.ts";
 import type { AppDeps } from "./deps.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { meRoutes } from "./routes/me.ts";
 
 /**
  * コントロールプレーン API の合成（テスト可能な純関数, issue #99）。
@@ -23,6 +24,9 @@ export function createApp(deps: AppDeps): Hono<ApiEnv> {
 
   // パスキー認証（issue #100）
   app.route("/auth", authRoutes(deps));
+
+  // ユーザごと DB のプロビジョニング（issue #101、要セッション）
+  app.route("/me", meRoutes(deps));
 
   return app;
 }
