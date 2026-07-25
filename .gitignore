@@ -11,3 +11,5 @@ apps/web/dist/
 infra/bin/
 infra/sdks/
 infra/.pulumi/
+# infra は Bun workspaces 対象外で lockfile はコミットしない（pulumi install が生成）
+infra/bun.lock

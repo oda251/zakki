@@ -4,11 +4,13 @@
   "description": "zakki のクラウドインフラ（Pulumi / Turso）",
   "main": "index.ts",
   "dependencies": {
+    "@pulumi/cloudflare": "^6.18.0",
     "@pulumi/pulumi": "^3.140.0",
     "@pulumi/turso": "file:sdks/turso"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
-  }
+  },
+  "trustedDependencies": ["@pulumi/turso"]
 }
