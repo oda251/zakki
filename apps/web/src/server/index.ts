@@ -38,6 +38,19 @@ const ancoAssets = new Map<string, string>([
   ["anco.reactor.wasm.br", "application/wasm"],
   ["dict.tar.br", "application/x-tar"],
 ]);
+// ref マーカー（issue #89）: install-anco-wasm.sh が書く導入 ref。これだけ no-cache で
+// 配信し、クライアントはこの値でアセット URL（?v=<ref>）と Cache API 名を versioning
+// する。アセット本体は ref 込み URL で不変になるため immutable のままでよい。
+app.get("/anco/ref.txt", (c) => {
+  const path = join(ancoDir, "ref.txt");
+  if (!existsSync(path)) return c.notFound();
+  return new Response(Bun.file(path), {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache",
+    },
+  });
+});
 app.get("/anco/:file", (c) => {
   const file = c.req.param("file");
   const contentType = ancoAssets.get(file);

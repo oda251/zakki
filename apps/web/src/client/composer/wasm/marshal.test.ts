@@ -22,6 +22,7 @@ function fakeExports(): AncoExports {
     zakki_anco_init: (ptr, len) => (readStr(ptr, len).includes("Dictionary") ? 0 : 1),
     zakki_anco_convert: (kp, kl) => {
       const kana = readStr(kp, kl);
+      if (kana === "") return 0n; // 失敗/結果なしは packed=0（ptr=0, len=0）
       const json = encoder.encode(JSON.stringify([`${kana}変換`, kana]));
       const p = alloc(json.length);
       new Uint8Array(memory.buffer).set(json, p);
@@ -46,5 +47,10 @@ describe("bindEngine", () => {
     const calls = bindEngine(fakeExports());
     const result = calls.convert("あさ", "きょうは");
     expect(result[0]).toBe("あさ変換");
+  });
+
+  test("packed=0（失敗/結果なし）は JSON.parse を踏まず空配列を返す（#89）", () => {
+    const calls = bindEngine(fakeExports());
+    expect(calls.convert("", "")).toEqual([]);
   });
 });

@@ -9,16 +9,53 @@ import { buildTree, parseTar } from "./tar.ts";
  * Content-Encoding: br で返すので、fetch は解凍済みバイトを得る。Cache API で
  * 2 回目以降の DL（reactor ~13MB + 辞書 ~7MB, brotli）を省く。
  * 辞書は browser_wasi_shim の仮想 FS で /dict/Dictionary に mount する。
+ *
+ * キャッシュは導入 ref に連動させる（issue #89）: まず /anco/ref.txt（no-cache 配信）
+ * で ref を取得し、アセット URL（?v=<ref>）と Cache API 名を versioning する。
+ * 旧 ref のキャッシュは丸ごと破棄し、wasm と辞書が別 ref で混ざるのを防ぐ。
  */
-export const ANCO_WASM_URL = "/anco/anco.reactor.wasm.br";
-export const ANCO_DICT_URL = "/anco/dict.tar.br";
-const CACHE_NAME = "zakki-anco-v1";
+export const ANCO_REF_URL = "/anco/ref.txt";
+const CACHE_PREFIX = "zakki-anco-";
 const GUEST_MOUNT = "/dict";
 const GUEST_DICT_PATH = "/dict/Dictionary";
 
-async function cachedFetch(url: string): Promise<Response> {
+/** ref からアセット URL と Cache API 名を導く（純関数）。 */
+export function ancoAssetPlan(ref: string): {
+  readonly wasmUrl: string;
+  readonly dictUrl: string;
+  readonly cacheName: string;
+} {
+  const v = encodeURIComponent(ref);
+  return {
+    // Hono の /anco/:file はパスのみマッチするため、クエリはサーバ変更なしで素通しできる。
+    wasmUrl: `/anco/anco.reactor.wasm.br?v=${v}`,
+    dictUrl: `/anco/dict.tar.br?v=${v}`,
+    cacheName: `${CACHE_PREFIX}${ref}`,
+  };
+}
+
+/** 現行 ref 以外の anco キャッシュ名を選ぶ（純関数）。wasm×辞書のミスマッチ防止。 */
+export function staleAncoCaches(names: readonly string[], current: string): string[] {
+  return names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== current);
+}
+
+async function fetchAncoRef(): Promise<string> {
+  const res = await fetch(ANCO_REF_URL);
+  if (!res.ok) throw new AncoLoadError(`ref fetch failed: ${res.status}`);
+  const ref = (await res.text()).trim();
+  if (ref === "") throw new AncoLoadError("ref fetch failed: empty ref.txt");
+  return ref;
+}
+
+async function dropStaleCaches(currentCacheName: string): Promise<void> {
+  if (!("caches" in globalThis)) return;
+  const stale = staleAncoCaches(await globalThis.caches.keys(), currentCacheName);
+  await Promise.all(stale.map((name) => globalThis.caches.delete(name)));
+}
+
+async function cachedFetch(url: string, cacheName: string): Promise<Response> {
   if ("caches" in globalThis) {
-    const cache = await globalThis.caches.open(CACHE_NAME);
+    const cache = await globalThis.caches.open(cacheName);
     const hit = await cache.match(url);
     if (hit) return hit;
     const res = await fetch(url);
@@ -56,9 +93,12 @@ function isReactorInstance(instance: WebAssembly.Instance): instance is ReactorI
 }
 
 export async function loadAncoEngine(): Promise<AncoCalls> {
+  const ref = await fetchAncoRef();
+  const { wasmUrl, dictUrl, cacheName } = ancoAssetPlan(ref);
+  await dropStaleCaches(cacheName);
   const [wasmRes, dictRes] = await Promise.all([
-    cachedFetch(ANCO_WASM_URL),
-    cachedFetch(ANCO_DICT_URL),
+    cachedFetch(wasmUrl, cacheName),
+    cachedFetch(dictUrl, cacheName),
   ]);
   if (!wasmRes.ok) throw new AncoLoadError(`wasm fetch failed: ${wasmRes.status}`);
   if (!dictRes.ok) throw new AncoLoadError(`dict fetch failed: ${dictRes.status}`);

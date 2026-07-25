@@ -61,6 +61,8 @@ export function bindEngine(ex: AncoExports): AncoCalls {
     const packed = ex.zakki_anco_convert(k.ptr, k.len, c.ptr, c.len);
     ex.zakki_free(k.ptr);
     ex.zakki_free(c.ptr);
+    // 0 は wasm 側の失敗/結果なし（ptr=0, len=0）。JSON.parse("") の throw を踏まない。
+    if (packed === 0n) return [];
     const ptr = Number(BigInt.asUintN(32, packed >> 32n));
     const len = Number(packed & 0xffffffffn);
     const bytes = mem().slice(ptr, ptr + len);

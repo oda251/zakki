@@ -15,4 +15,7 @@ for asset in anco.reactor.wasm.br dict.tar.br; do
   curl -fL -o "${DEST}/${asset}" \
     "https://github.com/${REPO}/releases/download/${TAG}/${asset}"
 done
-echo "installed: ${DEST}/{anco.reactor.wasm.br,dict.tar.br}"
+# キャッシュバスティング用の ref マーカー（issue #89）。サーバが /anco/ref.txt を
+# no-cache で配信し、クライアントはこの値でアセット URL と Cache API 名を versioning する。
+printf '%s\n' "$ANCO_REF" > "${DEST}/ref.txt"
+echo "installed: ${DEST}/{anco.reactor.wasm.br,dict.tar.br,ref.txt}"
