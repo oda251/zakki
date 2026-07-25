@@ -263,9 +263,15 @@ export class AncoEngine implements KanaKanjiEngine {
     pending.lines.push(line);
   }
 
-  /** 応答待ちタイムアウト発火時: pending を reject しつつ、応答不能になった現行プロセスを kill する */
+  /**
+   * 応答待ちタイムアウト発火時: pending を reject しつつ、応答不能になった現行プロセスを kill する。
+   * kill() は必ずしも exited を解決しない（実プロセスでも終了が非同期）ため、次の convert が
+   * クリーンに新プロセスを spawn できるよう、ここで明示的に proc / ready をリセットする。
+   */
   private handleTimeout(): void {
     this.proc?.kill();
+    this.proc = null;
+    this.ready = null;
     this.failPending(new Error("anco response timeout"));
   }
 
