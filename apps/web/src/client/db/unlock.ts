@@ -10,11 +10,15 @@
  */
 import * as v from "valibot";
 import { unwrapDek } from "@zakki/core/crypto/dek.ts";
-import { deriveKey } from "@zakki/core/crypto/kdf.ts";
+import { deriveKekFromPrf, deriveKey } from "@zakki/core/crypto/kdf.ts";
 import { sodium } from "@zakki/core/crypto/sodium.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { request } from "@zakki/web/client/api/client.ts";
-import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
+import type {
+  CryptoEnvelope,
+  KdfCryptoEnvelope,
+  PasskeyCryptoEnvelope,
+} from "@zakki/web/shared/api-schemas.ts";
 import { CryptoEnvelopesResponseSchema } from "@zakki/web/shared/api-schemas.ts";
 
 /** サーバから封筒一覧を取得する（暗号未プロビジョンの DB では空配列） */
@@ -27,9 +31,23 @@ export async function fetchEnvelopes(fetchFn?: FetchLike): Promise<CryptoEnvelop
  * 封筒を secret（パスフレーズ／リカバリコード）で開いて DEK を返す。
  * secret 違い・改竄は `unwrapDek`（AEAD 認証）が例外を投げる。
  */
-export function openEnvelope(envelope: CryptoEnvelope, secret: string): Uint8Array {
+export function openEnvelope(envelope: KdfCryptoEnvelope, secret: string): Uint8Array {
   const salt = sodium.from_base64(envelope.kdfSalt, sodium.base64_variants.ORIGINAL);
   const kek = deriveKey(secret, salt, envelope.kdfOps, envelope.kdfMem);
+  return unwrapDek(sodium.from_base64(envelope.wrappedDek, sodium.base64_variants.ORIGINAL), kek);
+}
+
+/**
+ * passkey 封筒を WebAuthn PRF 出力（32 バイト）で開いて DEK を返す（issue #103）。
+ * PRF 出力 → KEK は `deriveKekFromPrf`（BLAKE2b, domain separation 付き）。
+ * PRF 出力違い・改竄は `unwrapDek`（AEAD 認証）が例外を投げる。
+ * navigator.credentials の呼び出し（PRF 評価）はここでは行わない（passkey-2）。
+ */
+export function openPasskeyEnvelope(
+  envelope: PasskeyCryptoEnvelope,
+  prfOutput: Uint8Array,
+): Uint8Array {
+  const kek = deriveKekFromPrf(prfOutput);
   return unwrapDek(sodium.from_base64(envelope.wrappedDek, sodium.base64_variants.ORIGINAL), kek);
 }
 
@@ -44,7 +62,7 @@ export async function unlockWithPrompt(
   envelopes: readonly CryptoEnvelope[],
   promptFn: (attempt: number) => Promise<string | null>,
 ): Promise<Uint8Array | null> {
-  const envelope = envelopes.find((e) => e.kind === "passphrase");
+  const envelope = envelopes.find((e): e is KdfCryptoEnvelope => e.kind === "passphrase");
   if (envelope === undefined) return null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

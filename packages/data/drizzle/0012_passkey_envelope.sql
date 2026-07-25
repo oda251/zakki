@@ -1,0 +1,1 @@
+ALTER TABLE `key_envelopes` ADD `credential_id` text;

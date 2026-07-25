@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { unwrapDek, wrapDek } from "@zakki/core/crypto/dek.ts";
-import { defaultKdfParams, deriveKey, generateSalt } from "@zakki/core/crypto/kdf.ts";
+import {
+  defaultKdfParams,
+  deriveKekFromPrf,
+  deriveKey,
+  generateSalt,
+} from "@zakki/core/crypto/kdf.ts";
 import { sodium } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { EnvelopeKind } from "@zakki/data/db/schema.ts";
@@ -35,6 +40,7 @@ async function upsertEnvelope(
   kind: EnvelopeKind,
   wrappedDek: Uint8Array,
   kdf: { salt: Uint8Array; ops: number; mem: number } | null,
+  credentialId: string | null = null,
 ): Promise<void> {
   const row = {
     kind,
@@ -42,6 +48,7 @@ async function upsertEnvelope(
     kdfSalt: kdf === null ? null : Buffer.from(kdf.salt),
     kdfOps: kdf === null ? null : kdf.ops,
     kdfMem: kdf === null ? null : kdf.mem,
+    credentialId,
     createdAt: new Date().toISOString(),
   };
   await db
@@ -54,6 +61,7 @@ async function upsertEnvelope(
         kdfSalt: row.kdfSalt,
         kdfOps: row.kdfOps,
         kdfMem: row.kdfMem,
+        credentialId: row.credentialId,
         createdAt: row.createdAt,
       },
     });
@@ -87,6 +95,36 @@ export async function addPassphraseEnvelope(
     ops: opsLimit,
     mem: memLimit,
   });
+}
+
+/**
+ * クライアント側で wrap 済みの passkey 封筒を kind='passkey' として upsert する
+ * （issue #103）。サーバの登録経路（POST /crypto/envelopes/passkey）から呼ぶ想定で、
+ * この関数は **平文 DEK にも PRF 出力にも触れない**（wrap はクライアントで済んでいる）。
+ * KEK は PRF 出力から決定的に導出される（`deriveKekFromPrf`）ため kdf メタは持たない。
+ *
+ * kind 主キー＝passkey 封筒は 1 つ（schema.ts の keyEnvelopes コメント参照）。
+ * 同期パスキーで同一クレデンシャルが多端末に行き渡る前提の最小設計。
+ */
+export async function putPasskeyEnvelope(
+  db: Db,
+  wrappedDek: Uint8Array,
+  credentialId: string,
+): Promise<void> {
+  await upsertEnvelope(db, "passkey", wrappedDek, null, credentialId);
+}
+
+/**
+ * WebAuthn PRF 出力（32 バイト）から KEK を導出して DEK を wrap し、kind='passkey' を
+ * upsert する（issue #103）。PRF 出力を扱えるプロセス（クライアント相当）専用。
+ */
+export async function addPasskeyEnvelope(
+  db: Db,
+  dek: Uint8Array,
+  prfOutput: Uint8Array,
+  credentialId: string,
+): Promise<void> {
+  await putPasskeyEnvelope(db, wrapDek(dek, deriveKekFromPrf(prfOutput)), credentialId);
 }
 
 /** リカバリコードから KEK を導出して DEK を wrap し、kind='recovery' を upsert する。 */
@@ -134,6 +172,28 @@ export async function unlockWithKeyfile(db: Db, kek: Uint8Array): Promise<Uint8A
     throw new Error("keyfile envelope not found");
   }
   return unwrapDek(toBytes(row.wrappedDek), kek);
+}
+
+/**
+ * kind='passkey' 封筒を PRF 出力から再導出した KEK で開いて DEK を返す（issue #103）。
+ * PRF 出力違い・封筒改竄は `unwrapDek`（AEAD 認証）が **例外を投げる**。
+ * どのクレデンシャルの PRF を評価すべきかは {@link getPasskeyCredentialId} で照合する。
+ */
+export async function unlockWithPasskey(db: Db, prfOutput: Uint8Array): Promise<Uint8Array> {
+  const row = await readEnvelope(db, "passkey");
+  if (row === undefined) {
+    throw new Error("passkey envelope not found");
+  }
+  return unwrapDek(toBytes(row.wrappedDek), deriveKekFromPrf(prfOutput));
+}
+
+/**
+ * passkey 封筒に紐づく WebAuthn credential id を返す（封筒が無ければ null）。
+ * navigator.credentials.get の allowCredentials 照合用（実ブラウザ統合は passkey-2）。
+ */
+export async function getPasskeyCredentialId(db: Db): Promise<string | null> {
+  const row = await readEnvelope(db, "passkey");
+  return row?.credentialId ?? null;
 }
 
 /**

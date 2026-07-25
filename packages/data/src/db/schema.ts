@@ -154,23 +154,33 @@ export const cryptoMeta = sqliteTable("crypto_meta", {
  * - `keyfile`: キーファイル KEK（このデバイスを信頼する）。`kdf_*` は null。
  * - `passphrase`: パスフレーズから Argon2id 導出した KEK。`kdf_salt/ops/mem` を保存。
  * - `recovery`: リカバリコードから Argon2id 導出した KEK。同上。
+ * - `passkey`: WebAuthn PRF 出力から BLAKE2b 導出した KEK（issue #103）。PRF 出力は
+ *   高エントロピーなので Argon2id 不要＝`kdf_*` は null。`credential_id` にどの
+ *   クレデンシャルで開けるかを保存する。
  *
  * `kdf_ops/kdf_mem` は導出時の Argon2id パラメータ。将来パラメータを引き上げても、
  * 既存封筒は保存値で再導出して開けるように、封筒ごとに保存する。
  *
  * パスフレーズ変更は `passphrase` 行の再 wrap（新ソルト）だけで完結し、データ行の
  * 再暗号化は一切しない（DEK は不変）。
+ *
+ * `kind` 主キー＝1 kind につき封筒 1 つは passkey でも維持する（issue #103 の判断）。
+ * 複数デバイスは Apple/Google の同期パスキーで同一クレデンシャル（同一 PRF 出力）が
+ * 行き渡る前提で 1 封筒あれば足りる。デバイス固有キー等で複数 passkey 封筒が必要に
+ * なったら別 issue で主キーごと再設計する。
  */
 export const keyEnvelopes = sqliteTable("key_envelopes", {
-  kind: text("kind", { enum: ["keyfile", "passphrase", "recovery"] }).primaryKey(),
+  kind: text("kind", { enum: ["keyfile", "passphrase", "recovery", "passkey"] }).primaryKey(),
   /** KEK で AEAD した DEK 封筒（`nonce || ciphertext`） */
   wrappedDek: blob("wrapped_dek", { mode: "buffer" }).notNull(),
-  /** Argon2id ソルト（keyfile は null） */
+  /** Argon2id ソルト（keyfile / passkey は null） */
   kdfSalt: blob("kdf_salt", { mode: "buffer" }),
-  /** Argon2id opsLimit（keyfile は null） */
+  /** Argon2id opsLimit（keyfile / passkey は null） */
   kdfOps: integer("kdf_ops"),
-  /** Argon2id memLimit（バイト, keyfile は null） */
+  /** Argon2id memLimit（バイト, keyfile / passkey は null） */
   kdfMem: integer("kdf_mem"),
+  /** WebAuthn credential id（base64url 等の文字列。passkey 封筒のみ、他は null） */
+  credentialId: text("credential_id"),
   createdAt: text("created_at").notNull(),
 });
 

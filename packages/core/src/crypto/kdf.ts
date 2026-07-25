@@ -62,3 +62,35 @@ export function deriveKey(
 export function generateSalt(): Uint8Array {
   return sodium.randombytes_buf(sodium.crypto_pwhash_SALTBYTES);
 }
+
+/** WebAuthn PRF 拡張の出力長（バイト）。仕様上 32 バイトのシークレットが得られる */
+export const PRF_OUTPUT_BYTES = 32;
+
+/**
+ * {@link deriveKekFromPrf} の domain separation 用コンテキスト。BLAKE2b の鍵として
+ * 使い、同じ PRF 出力を他用途（別アプリ・別バージョン）でハッシュした値と衝突しない
+ * ようにする。**変更すると既存の passkey 封筒が開けなくなる**（変更時は v2 として
+ * 別コンテキストを追加し、封筒側にバージョンを持たせること）。
+ * BLAKE2b の鍵長制約（16..64 バイト）内の ASCII 固定文字列。
+ */
+const PRF_KEK_CONTEXT = "zakki-passkey-prf-kek-v1";
+
+/**
+ * WebAuthn PRF 拡張の出力（32 バイトの高エントロピーシークレット）から KEK を導出する
+ * （issue #103, docs/RESEARCH.md §6 の passkey 封筒）。
+ *
+ * PRF 出力は認証器由来の一様ランダム値なので、パスフレーズと違い memory-hard KDF
+ * （Argon2id）による総当たり遅延は不要。BLAKE2b（`crypto_generichash`）の keyed hash に
+ * {@link PRF_KEK_CONTEXT} を鍵として与え、domain separation した 32 バイト KEK を返す。
+ * 決定的（同じ PRF 出力 → 同じ KEK）なのでソルトは持たない。
+ *
+ * @param prfOutput WebAuthn PRF 評価結果（{@link PRF_OUTPUT_BYTES} = 32 バイト厳守）
+ * @returns {@link DEK_BYTES}（= 32）バイトの KEK
+ * @throws prfOutput が 32 バイトでない場合（PRF 未対応環境の切り詰め値等を拒否する）
+ */
+export function deriveKekFromPrf(prfOutput: Uint8Array): Uint8Array {
+  if (prfOutput.length !== PRF_OUTPUT_BYTES) {
+    throw new Error(`PRF 出力は ${PRF_OUTPUT_BYTES} バイトのはず: got ${prfOutput.length}`);
+  }
+  return sodium.crypto_generichash(DEK_BYTES, prfOutput, sodium.from_string(PRF_KEK_CONTEXT));
+}
