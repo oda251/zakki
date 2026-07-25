@@ -8,7 +8,7 @@
   },
   "scripts": {
     "generate": "drizzle-kit generate",
-    "deploy": "wrangler deploy"
+    "build": "bun build src/index.ts --target=browser --outfile dist/index.js"
   },
   "dependencies": {
     "@libsql/client": "^0.15.0",
