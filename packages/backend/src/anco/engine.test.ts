@@ -265,7 +265,7 @@ async function timeoutFirstConvert(
 describe("AncoEngine の異常系リカバリ（issue #85）", () => {
   test("タイムアウト時に pending を reject し旧プロセスを kill する", async () => {
     const pool = makeFakeAncoPool();
-    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
 
     const result = engine.convert("かな");
     await waitFor(() => pool.procs.length === 1);
@@ -283,7 +283,7 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
 
   test("タイムアウト後の次の convert で新プロセスを spawn し正常に候補を返す", async () => {
     const pool = makeFakeAncoPool();
-    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
 
     // 1 回目: 応答なしでタイムアウトさせる
     await timeoutFirstConvert(pool, engine);
@@ -303,7 +303,7 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
 
   test("タイムアウト後に旧プロセスの遅延応答が届いても次リクエストと混線しない", async () => {
     const pool = makeFakeAncoPool();
-    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
 
     // 1 回目: 応答なしでタイムアウトさせる（旧プロセスは kill 済みだが stdout は生きている想定）
     await timeoutFirstConvert(pool, engine);
@@ -355,7 +355,7 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
 
   test("kill 後に旧プロセスの exited が遅延発火しても新プロセスを巻き込まない", async () => {
     const pool = makeFakeAncoPool();
-    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
 
     // 1 回目: タイムアウト → kill（exited はまだ解決しない）
     await timeoutFirstConvert(pool, engine);
@@ -383,6 +383,38 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
     pool.procs[1]?.push(BANNER);
     pool.procs[1]?.push(`さん\n0. 三\nTime: 0.005\n${BANNER}`);
     expect((await third)._unsafeUnwrap()).toEqual(["三"]);
+
+    engine.close();
+  });
+
+  test("close() は in-flight の pending を即 reject し、残タイマーが新プロセスを殺さない", async () => {
+    const pool = makeFakeAncoPool();
+    const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 150);
+
+    // 応答待ちの最中に close する
+    const first = engine.convert("いち");
+    await waitFor(() => pool.procs.length === 1);
+    pool.procs[0]?.push(BANNER);
+    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+    engine.close();
+
+    // タイムアウト滞留ではなく close 由来のエラーで即 reject されること
+    const res = await first;
+    expect(res.isErr()).toBe(true);
+    expect(res._unsafeUnwrapErr().message).toContain("closed");
+
+    // close 後の再 convert が正常に動くこと
+    const second = engine.convert("に");
+    await waitFor(() => pool.procs.length === 2);
+    pool.procs[1]?.push(BANNER);
+    await waitFor(() => (pool.procs[1]?.writes.length ?? 0) >= 2);
+    pool.procs[1]?.push(BANNER);
+    pool.procs[1]?.push(`に\n0. 二\nTime: 0.005\n${BANNER}`);
+    expect((await second)._unsafeUnwrap()).toEqual(["二"]);
+
+    // 旧 pending の残タイマー窓（close から timeoutMs=150ms）を跨いでも新プロセスは殺されない
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(pool.procs[1]?.killed()).toBe(false);
 
     engine.close();
   });

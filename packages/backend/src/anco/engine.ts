@@ -130,6 +130,10 @@ export class AncoEngine implements KanaKanjiEngine {
     const proc = this.proc;
     this.proc = null;
     this.ready = null;
+    // in-flight の pending を即 reject してタイマーも解除する。proc を先に null 化すると
+    // exited ハンドラの現役チェックが早期 return するため、ここで畳まないと pending が
+    // timeoutMs まで滞留し、残タイマーが close 後の状態に干渉しうる（issue #85）
+    this.failPending(new Error("anco session closed"));
     if (proc !== null) {
       try {
         void proc.stdin.write(":q\n");
