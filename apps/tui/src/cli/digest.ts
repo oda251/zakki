@@ -10,10 +10,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { generateDigest } from "@zakki/tui/digest/digest.ts";
 import { createDb, defaultDbPath } from "@zakki/data/db/connect.ts";
-import { assertCryptoReady } from "@zakki/data/crypto/guard.ts";
 import { localDate } from "@zakki/core/util/local-date.ts";
 import { countTags, listChunksWithDate, listTagsByChunk } from "@zakki/data/chunk/queries.ts";
 import { xdgDataHome } from "@zakki/data/util/paths.ts";
+import { unlockCliOrExit } from "@zakki/tui/cli/unlock.ts";
 import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 import { detectLlm } from "@zakki/backend/llm/client.ts";
@@ -37,15 +37,9 @@ if (week) {
 const period = week ? `${[...dates].toSorted()[0]} 〜 ${endDate}` : endDate;
 
 const db = await createDb(defaultDbPath(xdgDataHome(config.xdgDataHome)));
-// 暗号 ON で作成した DB をアンロックなしで開くと、暗号文をそのまま平文として
-// 読み書きしてしまう（issue #64）。データアクセス前に拒否する。
-// 暗号 OFF（封筒なし）の DB では no-op。CLI での keyfile アンロックはスコープ外。
-try {
-  await assertCryptoReady(db);
-} catch (err) {
-  console.error(`zakki: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-}
+// ZAKKI_ENCRYPTION=1 なら keyfile KEK で無言アンロックする（issue #93）。
+// 失敗時・暗号 ON DB を未アンロックで開いた場合（issue #64）はデータアクセス前に終了する。
+await unlockCliOrExit(db, config);
 const chunks = (await listChunksWithDate(db))._unsafeUnwrap().filter((c) => dates.has(c.date));
 const tagsByChunk = (await listTagsByChunk(db))._unsafeUnwrap();
 const tagCounts = countTags(
