@@ -6,6 +6,9 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "sourceMap": true,
+    // リポジトリルートの node_modules から bun-types 等が自動包含されて
+    // 型エラーになるのを防ぐ（infra は Node/Pulumi ランタイム）。
+    "types": ["node"],
     "experimentalDecorators": true,
     "pretty": true,
     "noFallthroughCasesInSwitch": true,
