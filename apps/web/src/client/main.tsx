@@ -4,6 +4,7 @@ import { App } from "@zakki/web/client/App.tsx";
 import { connectRouter } from "@zakki/web/client/router/controller.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
+import { usePasskeyStore } from "@zakki/web/client/store/passkey.ts";
 import "@zakki/web/client/styles.css";
 
 const root = document.getElementById("root");
@@ -19,9 +20,11 @@ createRoot(root).render(<App />);
 // RxDB + libsodium が重いため、GraphView と同じく初期チャンクから dynamic import で分離する。
 void import("@zakki/web/client/db/bootstrap.ts")
   .then(async (m) => {
-    const { db } = await m.bootstrapClientDb();
+    const { db, passkey } = await m.bootstrapClientDb();
     useGraphStore.getState().connect(db);
     useBufferStore.getState().connect(db);
+    // パスキー登録 UI（#104）。DEK は bootstrap のクロージャに閉じたまま渡らない
+    usePasskeyStore.getState().connect(passkey);
     connectRouter();
   })
   .catch((err: unknown) => {
