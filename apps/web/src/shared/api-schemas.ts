@@ -40,11 +40,12 @@ export const ReplicationPushSchema = v.object({
 // --- crypto envelopes（server/routes/crypto.ts, issue #43） ---
 
 /**
- * GET /api/crypto/envelopes の封筒 1 件。クライアントが受信側で検証する
- * レスポンススキーマ（平文 DEK は含まれない。wrappedDek/kdfSalt は base64 ORIGINAL）。
+ * GET /api/crypto/envelopes の封筒 1 件（kind で判別する discriminated union）。
+ * クライアントが受信側で検証するレスポンススキーマ（平文 DEK・PRF 出力は含まれない。
+ * wrappedDek/kdfSalt は base64 ORIGINAL）。
  * keyfile 封筒はサーバ端末ローカル専用のため wire には現れない。
  */
-export const CryptoEnvelopeSchema = v.object({
+export const KdfCryptoEnvelopeSchema = v.object({
   kind: v.picklist(["passphrase", "recovery"]),
   wrappedDek: v.string(),
   kdfSalt: v.string(),
@@ -52,11 +53,39 @@ export const CryptoEnvelopeSchema = v.object({
   kdfMem: v.pipe(v.number(), v.integer(), v.minValue(1)),
 });
 
+/**
+ * passkey 封筒（issue #103）。KEK は PRF 出力から決定的に導出される
+ * （`deriveKekFromPrf`）ため kdf メタを持たず、代わりにどのクレデンシャルで
+ * 開けるかの credentialId を運ぶ。
+ */
+export const PasskeyCryptoEnvelopeSchema = v.object({
+  kind: v.literal("passkey"),
+  wrappedDek: v.string(),
+  credentialId: v.string(),
+});
+
+export const CryptoEnvelopeSchema = v.variant("kind", [
+  KdfCryptoEnvelopeSchema,
+  PasskeyCryptoEnvelopeSchema,
+]);
+
 export const CryptoEnvelopesResponseSchema = v.object({
   envelopes: v.array(CryptoEnvelopeSchema),
 });
 
 export type CryptoEnvelope = v.InferOutput<typeof CryptoEnvelopeSchema>;
+export type KdfCryptoEnvelope = v.InferOutput<typeof KdfCryptoEnvelopeSchema>;
+export type PasskeyCryptoEnvelope = v.InferOutput<typeof PasskeyCryptoEnvelopeSchema>;
+
+/**
+ * POST /api/crypto/envelopes/passkey のボディ。クライアントで wrap 済みの封筒
+ * （wrappedDek: base64 ORIGINAL）と credentialId だけを受ける。
+ * **平文 DEK・PRF 出力は wire に流れない**（wrap はクライアントで行う, #28/#103）。
+ */
+export const PasskeyEnvelopePutSchema = v.object({
+  wrappedDek: v.pipe(v.string(), v.minLength(1)),
+  credentialId: v.pipe(v.string(), v.minLength(1)),
+});
 
 // --- 派生型（client の送信形はここから得る） ---
 // chunk 書込み系（#44 RxDB 移行）・変換系（#26 wasm 移設）の派生型は撤去済み。

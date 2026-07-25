@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { deriveKey, generateSalt } from "./kdf.ts";
-import { ready } from "./sodium.ts";
+import { deriveKekFromPrf, deriveKey, generateSalt } from "./kdf.ts";
+import { ready, sodium } from "./sodium.ts";
 
 beforeAll(async () => {
   await ready();
@@ -31,5 +31,35 @@ describe("KDF (Argon2id)", () => {
   test("パスフレーズが違えば鍵も異なる（同一ソルト）", () => {
     const salt = generateSalt();
     expect(deriveKey("pass-a", salt)).not.toEqual(deriveKey("pass-b", salt));
+  });
+});
+
+describe("deriveKekFromPrf (passkey PRF → KEK, issue #103)", () => {
+  test("決定的: 同じ PRF 出力 → 同じ 32 バイト KEK", () => {
+    const prf = sodium.randombytes_buf(32);
+    const k1 = deriveKekFromPrf(prf);
+    const k2 = deriveKekFromPrf(prf);
+    expect(k1.length).toBe(32);
+    expect(k1).toEqual(k2);
+  });
+
+  test("PRF 出力が違えば KEK も異なる", () => {
+    expect(deriveKekFromPrf(sodium.randombytes_buf(32))).not.toEqual(
+      deriveKekFromPrf(sodium.randombytes_buf(32)),
+    );
+  });
+
+  test("domain separation: KEK は PRF 出力そのもの・素の BLAKE2b と一致しない", () => {
+    const prf = sodium.randombytes_buf(32);
+    const kek = deriveKekFromPrf(prf);
+    expect(kek).not.toEqual(prf);
+    // 鍵なし（コンテキストなし）の generichash とは別値になる
+    expect(kek).not.toEqual(sodium.crypto_generichash(32, prf, null));
+  });
+
+  test("32 バイト以外の入力は throw する", () => {
+    expect(() => deriveKekFromPrf(new Uint8Array(31))).toThrow();
+    expect(() => deriveKekFromPrf(new Uint8Array(33))).toThrow();
+    expect(() => deriveKekFromPrf(new Uint8Array(0))).toThrow();
   });
 });

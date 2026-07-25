@@ -85,6 +85,13 @@
       "when": 1783440000000,
       "tag": "0011_repl_docs",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1784997666583,
+      "tag": "0012_passkey_envelope",
+      "breakpoints": true
     }
   ]
 }

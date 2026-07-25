@@ -1,9 +1,19 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { wrapDek } from "@zakki/core/crypto/dek.ts";
-import { defaultKdfParams, deriveKey, generateSalt } from "@zakki/core/crypto/kdf.ts";
+import {
+  defaultKdfParams,
+  deriveKekFromPrf,
+  deriveKey,
+  generateSalt,
+} from "@zakki/core/crypto/kdf.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
-import { fetchEnvelopes, openEnvelope, unlockWithPrompt } from "@zakki/web/client/db/unlock.ts";
-import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
+import {
+  fetchEnvelopes,
+  openEnvelope,
+  openPasskeyEnvelope,
+  unlockWithPrompt,
+} from "@zakki/web/client/db/unlock.ts";
+import type { KdfCryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
 
 /**
  * issue #43: クライアント側アンロック（暫定）。封筒はサーバから取得し、
@@ -11,7 +21,7 @@ import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
  * 得た DEK はメモリのみで保持し、永続ストレージへは書かない。
  */
 let dek: Uint8Array;
-let envelope: CryptoEnvelope;
+let envelope: KdfCryptoEnvelope;
 const PASSPHRASE = "正しいパスフレーズ";
 
 beforeAll(async () => {
@@ -33,6 +43,22 @@ describe("openEnvelope", () => {
   test("C1: 正しい secret → DEK 復元、誤り → throw（AEAD 認証失敗）", () => {
     expect(openEnvelope(envelope, PASSPHRASE)).toEqual(dek);
     expect(() => openEnvelope(envelope, "まちがい")).toThrow();
+  });
+});
+
+describe("openPasskeyEnvelope (#103)", () => {
+  test("C4: 正しい PRF 出力 → DEK 復元、誤り → throw（AEAD 認証失敗）", async () => {
+    const s = await ready();
+    const prf = s.randombytes_buf(32);
+    const passkeyEnvelope = {
+      kind: "passkey" as const,
+      wrappedDek: s.to_base64(wrapDek(dek, deriveKekFromPrf(prf)), s.base64_variants.ORIGINAL),
+      credentialId: "cred-client",
+    };
+    expect(openPasskeyEnvelope(passkeyEnvelope, prf)).toEqual(dek);
+    expect(() => openPasskeyEnvelope(passkeyEnvelope, s.randombytes_buf(32))).toThrow();
+    // 32 バイト以外の PRF 出力（PRF 未対応環境の値）は KEK 導出前に拒否される
+    expect(() => openPasskeyEnvelope(passkeyEnvelope, s.randombytes_buf(16))).toThrow();
   });
 });
 
