@@ -67,8 +67,29 @@ app.get("/anco/:file", (c) => {
 
 if (existsSync(join(distDir, "index.html"))) {
   const root = relative(process.cwd(), distDir);
-  app.get("/assets/*", serveStatic({ root }));
-  app.get("*", serveStatic({ root, path: "index.html" }));
+  // SPA キャッシュ戦略（issue #94）: vite の /assets/* はコンテンツハッシュ付き
+  // ファイル名なので不変キャッシュにする。index.html（SPA フォールバック含む）は
+  // no-cache で毎回再検証させ、再デプロイ後に旧バンドル・旧 ref バスティング起点
+  // （#89）が残らないようにする。
+  app.get(
+    "/assets/*",
+    serveStatic({
+      root,
+      onFound: (_path, c) => {
+        c.header("Cache-Control", "public, max-age=31536000, immutable");
+      },
+    }),
+  );
+  app.get(
+    "*",
+    serveStatic({
+      root,
+      path: "index.html",
+      onFound: (_path, c) => {
+        c.header("Cache-Control", "no-cache");
+      },
+    }),
+  );
 }
 
 const server = Bun.serve({ port: config.webPort, fetch: app.fetch });
