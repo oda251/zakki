@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { PasskeySettings } from "@zakki/web/client/layout/PasskeySettings.tsx";
 import { gotoChunk, setTagFilter, setUserTagFilter } from "@zakki/web/client/router/navigate.ts";
 import { useDrillId, useRoute } from "@zakki/web/client/router/use-route.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
@@ -82,6 +83,7 @@ export function LeftSidebar() {
           {dateChunks.length === 0 && <div className="empty-note">まだ記録がありません</div>}
         </div>
       )}
+      {!collapsed && <PasskeySettings />}
     </nav>
   );
 }
