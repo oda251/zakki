@@ -194,9 +194,7 @@ export class AncoEngine implements KanaKanjiEngine {
       if (this.proc !== proc) {
         return;
       }
-      this.failPending(new Error("anco session exited"));
-      this.proc = null;
-      this.ready = null;
+      this.teardown(new Error("anco session exited"));
     });
     void this.readLoop(proc);
     // 最初のバナー行 = 起動完了
@@ -275,15 +273,20 @@ export class AncoEngine implements KanaKanjiEngine {
   }
 
   /**
-   * 応答待ちタイムアウト発火時: pending を reject しつつ、応答不能になった現行プロセスを kill する。
-   * kill() は必ずしも exited を解決しない（実プロセスでも終了が非同期）ため、次の convert が
-   * クリーンに新プロセスを spawn できるよう、ここで明示的に proc / ready をリセットする。
+   * 応答待ちタイムアウト発火時: 応答不能になった現行プロセスを kill して破棄する。
+   * kill() は必ずしも exited を即時解決しない（実プロセスでも終了は非同期）ため、
+   * exited ハンドラ任せにせずここでリセットし、次の convert がクリーンに再起動できるようにする。
    */
   private handleTimeout(): void {
     this.proc?.kill();
+    this.teardown(new Error("anco response timeout"));
+  }
+
+  /** 現行プロセスを破棄して pending を reject する。次の convert は ensureStarted から再起動する */
+  private teardown(cause: Error): void {
     this.proc = null;
     this.ready = null;
-    this.failPending(new Error("anco response timeout"));
+    this.failPending(cause);
   }
 
   private failPending(cause: unknown): void {

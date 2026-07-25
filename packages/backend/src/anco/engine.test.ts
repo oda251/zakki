@@ -250,6 +250,18 @@ describe("AncoEngine の IPC バッチ送信（issue #34）", () => {
   });
 });
 
+/** 1 回目の convert を応答なしでタイムアウトさせ、Err で終わることを確認する（各テストの前段） */
+async function timeoutFirstConvert(
+  pool: ReturnType<typeof makeFakeAncoPool>,
+  engine: AncoEngine,
+): Promise<void> {
+  const first = engine.convert("いち");
+  await waitFor(() => pool.procs.length === 1);
+  pool.procs[0]?.push(BANNER); // 起動完了
+  await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
+  expect((await first).isErr()).toBe(true);
+}
+
 describe("AncoEngine の異常系リカバリ（issue #85）", () => {
   test("タイムアウト時に pending を reject し旧プロセスを kill する", async () => {
     const pool = makeFakeAncoPool();
@@ -274,11 +286,7 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
     const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
 
     // 1 回目: 応答なしでタイムアウトさせる
-    const first = engine.convert("いち");
-    await waitFor(() => pool.procs.length === 1);
-    pool.procs[0]?.push(BANNER);
-    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
-    expect((await first).isErr()).toBe(true);
+    await timeoutFirstConvert(pool, engine);
 
     // 2 回目: 新プロセスが spawn され、クリーンに応答できる
     const second = engine.convert("に");
@@ -298,11 +306,7 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
     const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
 
     // 1 回目: 応答なしでタイムアウトさせる（旧プロセスは kill 済みだが stdout は生きている想定）
-    const first = engine.convert("いち");
-    await waitFor(() => pool.procs.length === 1);
-    pool.procs[0]?.push(BANNER);
-    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
-    expect((await first).isErr()).toBe(true);
+    await timeoutFirstConvert(pool, engine);
 
     // 2 回目を開始し、新プロセスの起動バナーを返す
     const second = engine.convert("に");
@@ -354,11 +358,7 @@ describe("AncoEngine の異常系リカバリ（issue #85）", () => {
     const engine = new AncoEngine("/fake/anco", undefined, pool.spawn, 30);
 
     // 1 回目: タイムアウト → kill（exited はまだ解決しない）
-    const first = engine.convert("いち");
-    await waitFor(() => pool.procs.length === 1);
-    pool.procs[0]?.push(BANNER);
-    await waitFor(() => (pool.procs[0]?.writes.length ?? 0) >= 2);
-    expect((await first).isErr()).toBe(true);
+    await timeoutFirstConvert(pool, engine);
     expect(pool.procs[0]?.killed()).toBe(true);
 
     // 2 回目: 新プロセスが起動して応答待ちに入る
