@@ -105,6 +105,31 @@ describe("fetchEnvelopes", () => {
     expect(fetchEnvelopes(fetchFn)).rejects.toThrow();
   });
 
+  test("C5: passkey 封筒を含むレスポンスも wire 契約（v.parse）を通り、そのまま開ける（#103）", async () => {
+    const s = await ready();
+    const prf = s.randombytes_buf(32);
+    const passkeyEnvelope = {
+      kind: "passkey" as const,
+      wrappedDek: s.to_base64(wrapDek(dek, deriveKekFromPrf(prf)), s.base64_variants.ORIGINAL),
+      credentialId: "cred-wire-contract",
+    };
+    const fetchFn = () => Promise.resolve(jsonResponse({ envelopes: [envelope, passkeyEnvelope] }));
+    const received = await fetchEnvelopes(fetchFn);
+    expect(received).toEqual([envelope, passkeyEnvelope]);
+
+    const passkey = received.find((e) => e.kind === "passkey");
+    if (passkey === undefined) throw new Error("passkey 封筒が無い");
+    expect(passkey.credentialId).toBe("cred-wire-contract");
+    expect(openPasskeyEnvelope(passkey, prf)).toEqual(dek);
+
+    // credentialId 欠落の passkey 封筒は契約違反として throw する
+    const broken = () =>
+      Promise.resolve(
+        jsonResponse({ envelopes: [{ kind: "passkey", wrappedDek: passkeyEnvelope.wrappedDek }] }),
+      );
+    expect(fetchEnvelopes(broken)).rejects.toThrow();
+  });
+
   test("C3: 非 2xx は throw する", async () => {
     const fetchFn = () => Promise.resolve(new Response("ng", { status: 500 }));
     expect(fetchEnvelopes(fetchFn)).rejects.toThrow();

@@ -100,8 +100,10 @@ describe("POST /api/crypto/envelopes/passkey (#103)", () => {
       body: JSON.stringify(body),
     });
 
-  test("B5: wrap 済み封筒を保存し、配布・アンロックに現れる", async () => {
+  test("B5: 既存封筒ありの DB で wrap 済み封筒を保存し（200）、配布・アンロックに現れる", async () => {
     const dek = generateDek();
+    // 事前条件: DEK 確立済み（既存封筒が 1 つ以上ある）DB にのみ登録できる
+    await addPassphraseEnvelope(db, dek, "既存のパスフレーズ");
     const prf = sodium.randombytes_buf(32);
     const wrapped = wrapDek(dek, deriveKekFromPrf(prf));
 
@@ -122,5 +124,40 @@ describe("POST /api/crypto/envelopes/passkey (#103)", () => {
     expect((await post({ wrappedDek: "QUJD" })).status).toBe(400);
     expect((await post({ wrappedDek: "", credentialId: "c" })).status).toBe(400);
     expect((await post({ wrappedDek: "QUJD", credentialId: "" })).status).toBe(400);
+  });
+
+  test("B7: wrappedDek が 72 バイト（nonce 24 + DEK 32 + tag 16）以外は 400", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "既存のパスフレーズ");
+    const b64 = (n: number) =>
+      sodium.to_base64(sodium.randombytes_buf(n), sodium.base64_variants.ORIGINAL);
+    // 短い base64（"QUJD" = 3 バイト）・71/73 バイトは封筒としてあり得ない
+    expect((await post({ wrappedDek: "QUJD", credentialId: "c" })).status).toBe(400);
+    expect((await post({ wrappedDek: b64(71), credentialId: "c" })).status).toBe(400);
+    expect((await post({ wrappedDek: b64(73), credentialId: "c" })).status).toBe(400);
+    // ちょうど 72 バイトなら（中身がゴミでも形式上は）受理される
+    expect((await post({ wrappedDek: b64(72), credentialId: "c" })).status).toBe(200);
+  });
+
+  test("B8: 封筒ゼロ（暗号未プロビジョン DB）への登録は 409、既存封筒があれば 200", async () => {
+    const dek = generateDek();
+    const prf = sodium.randombytes_buf(32);
+    const wrapped = sodium.to_base64(
+      wrapDek(dek, deriveKekFromPrf(prf)),
+      sodium.base64_variants.ORIGINAL,
+    );
+
+    // 封筒ゼロ: passkey 封筒だけが入ると unlockOrSetup の初回判定
+    // （kinds.length === 0）が壊れ TUI/CLI から復旧不能になるため拒否
+    const denied = await post({ wrappedDek: wrapped, credentialId: "cred-409" });
+    expect(denied.status).toBe(409);
+    expect(await getPasskeyCredentialId(db)).toBeNull();
+
+    // 既存封筒（= DEK 確立済み）があれば受理
+    await addPassphraseEnvelope(db, dek, "既存のパスフレーズ");
+    const accepted = await post({ wrappedDek: wrapped, credentialId: "cred-409" });
+    expect(accepted.status).toBe(200);
+    expect(await getPasskeyCredentialId(db)).toBe("cred-409");
+    expect(await unlockWithPasskey(db, prf)).toEqual(dek);
   });
 });

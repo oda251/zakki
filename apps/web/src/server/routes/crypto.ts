@@ -1,6 +1,8 @@
 import { Hono } from "hono";
+import { errAsync } from "neverthrow";
+import { DEK_BYTES } from "@zakki/core/crypto/dek.ts";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
-import { putPasskeyEnvelope } from "@zakki/data/crypto/envelopes.ts";
+import { listEnvelopeKinds, putPasskeyEnvelope } from "@zakki/data/crypto/envelopes.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import type { KeyEnvelope } from "@zakki/data/db/schema.ts";
 import { keyEnvelopes } from "@zakki/data/db/schema.ts";
@@ -75,6 +77,20 @@ export function cryptoRoutes(deps: AppDeps): Hono {
     } catch {
       return c.json({ error: "invalid body" }, 400);
     }
+    // 封筒は `nonce || ciphertext`（aead.ts encrypt）で長さが一意に決まる:
+    // XChaCha20 nonce 24B + DEK 32B + Poly1305 tag 16B = 72B。それ以外は wrap 済み
+    // DEK 封筒ではあり得ないので保存前に拒否する（開けない封筒を作らせない）。
+    const wrappedDekBytes =
+      sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES +
+      DEK_BYTES +
+      sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES;
+    if (wrappedDek.length !== wrappedDekBytes) return c.json({ error: "invalid body" }, 400);
+    // 暗号未プロビジョン（封筒ゼロ）の DB へは登録させない（409）。passkey 封筒だけが
+    // 存在すると unlockOrSetup の初回判定（kinds.length === 0）が壊れ、PRF を評価できない
+    // TUI/CLI から復旧不能になる。既存封筒 1 つ以上（= DEK が確立済み）を事前条件にする。
+    const kinds = await tryDbAsync(() => listEnvelopeKinds(deps.db));
+    if (kinds.isErr()) return respond(c, errAsync(kinds.error));
+    if (kinds.value.length === 0) return c.json({ error: "crypto not provisioned" }, 409);
     return respond(
       c,
       tryDbAsync(() => putPasskeyEnvelope(deps.db, wrappedDek, body.credentialId)).map(() => ({
