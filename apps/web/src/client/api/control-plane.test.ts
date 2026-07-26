@@ -56,6 +56,11 @@ let userDbs: Map<string, Db>;
 let openedIdentities: Identity[];
 let handles: ClientDb[] = [];
 let nameSeq = 0;
+/**
+ * 中継サーバの時計（ms）。既定は実時刻で、セッション再検証（issue #117）の
+ * 経過を作るテストだけがこれを進める（実時間を待たない）。
+ */
+let relayNowMs = Date.now();
 
 beforeEach(async () => {
   await ready();
@@ -63,12 +68,14 @@ beforeEach(async () => {
   selfHostDb = await createDb(":memory:");
   userDbs = new Map();
   openedIdentities = [];
+  relayNowMs = Date.now();
   webApp = createApp({
     db: selfHostDb,
     controlPlaneUrl: cp.baseUrl,
     resolveDb: createRemoteDbResolver({
       controlPlaneUrl: cp.baseUrl,
       fetchFn: cp.fetchFn,
+      now: () => relayNowMs,
       openUserDb: async (identity) => {
         openedIdentities.push(identity);
         const url = identity.tursoUrl ?? "";
@@ -120,6 +127,19 @@ async function deleteAccount(token: string): Promise<Response> {
     method: "DELETE",
     headers: { authorization: `Bearer ${token}` },
   });
+}
+
+/** 全端末ログアウト（apps/api の `POST /auth/logout`, issue #117）。UI はまだ無い */
+async function logout(token: string): Promise<Response> {
+  return cp.fetchFn(`${cp.baseUrl}/auth/logout`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+/** 中継サーバの時計を進める（セッション再検証の間隔を跨がせる, issue #117） */
+function advanceRelayClock(seconds: number): void {
+  relayNowMs += seconds * 1000;
 }
 
 /** リモート構成でクライアント DB を起動する（storage / prompt は注入） */
@@ -194,9 +214,12 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     expect(cp.requests.length).toBeGreaterThan(0);
     for (const { body } of cp.requests) {
       for (const encoded of encodings) expect(body).not.toContain(encoded);
-      // 未署名の拡張結果はそもそも送らない（サーバも読まない）
-      expect(body).not.toContain("clientExtensionResults");
-      expect(body).not.toContain("prf");
+      // 未署名の拡張結果はそもそも送らない（サーバも読まない）。**JSON のキーの形**で
+      // 探す: 裸の "prf" だと base64url の中身（credentialId・attestationObject は
+      // 毎回ランダム）にたまたま 3 文字が並ぶだけで落ちるフレークになる。
+      // 引用符は base64url に現れないので、これで検出したい形だけを見られる
+      expect(body).not.toContain('"clientExtensionResults"');
+      expect(body).not.toContain('"prf"');
     }
   });
 
@@ -344,19 +367,81 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     expect(userDbs.size).toBe(0);
   });
 
-  test("R6g: 退会前に解決済みのセッションは DB トークンが切れるまで中継が通る（現状の挙動 / #117）", async () => {
+  test("R6g: 退会前に解決済みのセッションも再検証の間隔で中継が止まる（issue #116 / #117）", async () => {
     const { client } = await signUp();
     // 先に中継を通しておく（= 解決結果が中継サーバのキャッシュに載る）
     expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
     const token = client.session()?.token ?? "";
     expect((await deleteAccount(token)).status).toBe(204);
-
-    // キャッシュは DB トークンの失効（最大 60 分）まで残るため、この経路だけは
-    // 退会後も生き残る。コントロールプレーン側は既に 401 で、DB も消えている
-    const res = await client.authorizedFetch("/api/crypto/envelopes");
-    expect(res.status).toBe(200);
     expect((await cp.fetchFn(`${cp.baseUrl}/auth/me`, authorized(token))).status).toBe(401);
-    // 恒久的な失効（キャッシュも含めた即時無効化）は issue #117 の担当
+
+    // 再検証の間隔（60 秒）内はキャッシュがそのまま使われる。ここが失効の遅延そのもの
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+
+    // 間隔を跨ぐと `/auth/me` を叩き直し、401 を受けて中継が止まる
+    advanceRelayClock(61);
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(401);
+  });
+
+  test("R6h: ログアウトすると再検証の間隔内に中継が止まる（issue #117）", async () => {
+    const { client } = await signUp();
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+    const token = client.session()?.token ?? "";
+
+    expect((await logout(token)).status).toBe(204);
+    // コントロールプレーン側は即座に 401（epoch 不一致）
+    expect((await cp.fetchFn(`${cp.baseUrl}/auth/me`, authorized(token))).status).toBe(401);
+
+    advanceRelayClock(61);
+    const res = await client.authorizedFetch("/api/crypto/envelopes");
+    expect(res.status).toBe(401);
+    // 中継が止まってもユーザ DB は消えない（退会と違い、再ログインで戻れる）
+    expect(userDbs.size).toBe(1);
+  });
+
+  test("R6i: 再検証は間隔ごとに 1 往復だけ（ヒットのたびにコントロールプレーンを叩かない）", async () => {
+    const { client } = await signUp();
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+
+    // 同じ間隔の中は何度叩いても問い合わせゼロ
+    const afterResolve = cp.requests.length;
+    await client.authorizedFetch("/api/crypto/envelopes");
+    await client.authorizedFetch("/api/crypto/envelopes");
+    expect(cp.requests.length).toBe(afterResolve);
+
+    // 間隔を跨いだ最初の 1 本だけが `/auth/me` を叩く（`/me/db` は叩き直さない）
+    advanceRelayClock(61);
+    const results = await Promise.all([
+      client.authorizedFetch("/api/crypto/envelopes"),
+      client.authorizedFetch("/api/crypto/envelopes"),
+      client.authorizedFetch("/api/crypto/envelopes"),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(cp.requests.length - afterResolve).toBe(1);
+    // DB ハンドルは開き直さない（閉じる手段が無いので、再検証で増やしてはいけない）
+    expect(openedIdentities.length).toBe(1);
+    expect(userDbs.size).toBe(1);
+  });
+
+  test("R6j: ログアウト後に再ログインすれば新しいセッションで中継が通る", async () => {
+    const { client, authenticator } = await signUp();
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+    const oldToken = client.session()?.token ?? "";
+    expect((await logout(oldToken)).status).toBe(204);
+    advanceRelayClock(61);
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(401);
+
+    // 同じパスキーで入り直す（新しい世代のトークンが出る）
+    const reloaded = createControlPlaneClient({
+      baseUrl: cp.baseUrl,
+      credentials: authenticator,
+      fetchFn: routedFetch,
+    });
+    await reloaded.login();
+    expect(reloaded.session()?.token).not.toBe(oldToken);
+    expect((await reloaded.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+    // 戻り先は同じユーザ DB（ログアウトはデータに触らない）
+    expect(userDbs.size).toBe(1);
   });
 
   test("R7: アカウントごとに別の DB へ中継される", async () => {
