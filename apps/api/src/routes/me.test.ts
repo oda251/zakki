@@ -8,14 +8,14 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { createApp } from "@zakki/api/app.ts";
 import { createSoftAuthenticator } from "@zakki/api/auth/test-fixtures.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import { accountDatabases } from "@zakki/api/db/schema.ts";
+import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
 import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
 import { databaseNameForAccount } from "@zakki/api/turso/provision.ts";
 import { createFakePlatformApi } from "@zakki/api/turso/test-fixtures.ts";
 
 /**
- * ユーザごと Turso DB のプロビジョニング（issue #101）の統合検証。
+ * ユーザごと Turso DB のプロビジョニング（issue #101）と退会（issue #116）の統合検証。
  *
  * fetch ハンドラを直叩きし、コントロールプレーン DB は本物の libsql、認証は #100 の
  * ソフトウェア認証器で実際に登録してセッションを得る。ローカルで再現できないのは
@@ -59,15 +59,24 @@ function makeApp(platformBaseUrl: string): ReturnType<typeof createApp> {
 beforeEach(async () => {
   // libsql の :memory: はコネクション単位で独立するため一時ファイルを使う
   const path = join(mkdtempSync(join(tmpdir(), "zakki-medb-")), "control.sqlite");
-  db = drizzle(createClient({ url: `file:${path}` }), { schema }) as unknown as ControlDb;
+  const client = createClient({ url: `file:${path}` });
+  db = drizzle(client, { schema }) as unknown as ControlDb;
   await migrate(db, { migrationsFolder: MIGRATIONS });
+  // 本番と同じ条件で検証する: Turso は PRAGMA foreign_keys が既定 OFF で
+  // （https://docs.turso.tech/sql-reference/pragmas）、HTTP クライアントは接続ごとに
+  // ステートレスなので張り続けられない。ローカルの file: は既定 ON なので明示的に切る
+  // （切らないと cascade 頼みの削除が「テストでだけ通る」ことになる）。
+  // migrate はこの pragma を ON に戻すため、必ず migrate の後に実行する
+  await client.execute("PRAGMA foreign_keys = OFF");
 
   fake.state.databases.clear();
   fake.state.createRequests.length = 0;
   fake.state.tokenRequests.length = 0;
+  fake.state.deleteRequests.length = 0;
   fake.state.createStatus = null;
   fake.state.getStatus = null;
   fake.state.tokenStatus = null;
+  fake.state.deleteStatus = null;
   fake.state.malformedCreate = false;
 
   app = makeApp(baseUrl);
@@ -100,6 +109,25 @@ async function getDb(token?: string): Promise<Response> {
   return app.fetch(
     new Request("https://control.test/me/db", {
       headers: token === undefined ? {} : { Authorization: `Bearer ${token}` },
+    }),
+  );
+}
+
+/** 退会（#116）。対象はセッションの持ち主自身で、相手を指定する引数は無い */
+async function deleteMe(token?: string): Promise<Response> {
+  return app.fetch(
+    new Request("https://control.test/me", {
+      method: "DELETE",
+      headers: token === undefined ? {} : { Authorization: `Bearer ${token}` },
+    }),
+  );
+}
+
+/** `GET /auth/me`（中継サーバが「あなたは誰か」を解決するのに使う経路） */
+async function authMe(token: string): Promise<Response> {
+  return app.fetch(
+    new Request("https://control.test/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
     }),
   );
 }
@@ -304,5 +332,182 @@ describe("GET /me/db の異常系", () => {
     const res = await getDb(session.token);
     expect(res.status).toBe(502);
     expect(await db.select().from(accountDatabases)).toEqual([]);
+  });
+});
+
+describe("DELETE /me（退会, issue #116）", () => {
+  test("Turso の DB・台帳・アカウント・クレデンシャルがすべて消える", async () => {
+    const session = await login();
+    expect((await getDb(session.token)).status).toBe(200);
+    const name = await databaseNameForAccount(session.accountId);
+    // 消す前: DB も台帳もクレデンシャルも在る
+    expect(fake.state.databases.has(name)).toBe(true);
+    expect(await db.select().from(credentials)).toHaveLength(1);
+
+    const res = await deleteMe(session.token);
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+
+    // Turso 側は台帳が指していた DB をちょうど 1 度消しに行く
+    expect(fake.state.deleteRequests).toEqual([name]);
+    expect(fake.state.databases.size).toBe(0);
+    // コントロールプレーン側は cascade に頼らず明示的に消す（FK 強制は OFF）
+    expect(await db.select().from(accounts)).toEqual([]);
+    expect(await db.select().from(credentials)).toEqual([]);
+    expect(await db.select().from(accountDatabases)).toEqual([]);
+  });
+
+  test("`GET /me/db` を一度も叩いていなくても退会できる（台帳が空でも 204）", async () => {
+    const session = await login();
+    expect(await db.select().from(accountDatabases)).toEqual([]);
+
+    const res = await deleteMe(session.token);
+    expect(res.status).toBe(204);
+    // 実在しない DB の削除は 404 → 成功に畳む（冪等）
+    expect(fake.state.deleteRequests).toEqual([await databaseNameForAccount(session.accountId)]);
+    expect(await db.select().from(accounts)).toEqual([]);
+  });
+
+  test("台帳に載っていない孤児 DB（作成後・台帳書き込み前に落ちた残骸）も消す", async () => {
+    const session = await login();
+    const name = await databaseNameForAccount(session.accountId);
+    // プロビジョニングが「DB 作成 → 台帳書き込み」の間で落ちた状態
+    fake.state.databases.set(name, `${name}-${ORG}.turso.io`);
+    expect(await db.select().from(accountDatabases)).toEqual([]);
+
+    expect((await deleteMe(session.token)).status).toBe(204);
+    // 名前は accountId から決定的に導けるので、台帳が無くても消しに行ける
+    expect(fake.state.deleteRequests).toEqual([name]);
+    expect(fake.state.databases.size).toBe(0);
+  });
+});
+
+describe("DELETE /me の異常系（孤児 DB を作らない）", () => {
+  test("DB 削除が失敗したら 502。台帳は残り、再試行で完了できる", async () => {
+    const session = await login();
+    expect((await getDb(session.token)).status).toBe(200);
+    const name = await databaseNameForAccount(session.accountId);
+    fake.state.deleteStatus = 500;
+
+    const res = await deleteMe(session.token);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "アカウントを削除できませんでした" });
+    // 台帳を先に消していたら DB 名の出どころが消え、この DB は誰も消せなくなる
+    const ledger = await db.select().from(accountDatabases);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]?.dbName).toBe(name);
+    expect(await db.select().from(accounts)).toHaveLength(1);
+    expect(fake.state.databases.has(name)).toBe(true);
+
+    // 上流が復旧すれば同じリクエストの再送で退会が完了する
+    fake.state.deleteStatus = null;
+    expect((await deleteMe(session.token)).status).toBe(204);
+    expect(fake.state.deleteRequests).toEqual([name, name]);
+    expect(fake.state.databases.size).toBe(0);
+    expect(await db.select().from(accounts)).toEqual([]);
+    expect(await db.select().from(credentials)).toEqual([]);
+    expect(await db.select().from(accountDatabases)).toEqual([]);
+  });
+
+  test("Platform API へ到達できなければ 502（台帳・アカウントを残す）", async () => {
+    const session = await login();
+    expect((await getDb(session.token)).status).toBe(200);
+    app = makeApp("http://127.0.0.1:1");
+
+    expect((await deleteMe(session.token)).status).toBe(502);
+    expect(await db.select().from(accounts)).toHaveLength(1);
+    expect(await db.select().from(accountDatabases)).toHaveLength(1);
+  });
+
+  test("Authorization ヘッダが無ければ 401（Platform API を一切叩かない）", async () => {
+    const session = await login();
+    expect((await getDb(session.token)).status).toBe(200);
+
+    expect((await deleteMe()).status).toBe(401);
+    expect(fake.state.deleteRequests).toEqual([]);
+    expect(await db.select().from(accounts)).toHaveLength(1);
+  });
+
+  test("署名の壊れたセッションでは削除できない", async () => {
+    const session = await login();
+    expect((await deleteMe(`${session.token.slice(0, -2)}xy`)).status).toBe(401);
+    expect(fake.state.deleteRequests).toEqual([]);
+    expect(await db.select().from(accounts)).toHaveLength(1);
+  });
+
+  test("他アカウントを指定して消す経路が無い（対象は常にセッションの持ち主）", async () => {
+    const victim = await login();
+    const attacker = await login();
+    expect((await getDb(victim.token)).status).toBe(200);
+    expect((await getDb(attacker.token)).status).toBe(200);
+
+    // 相手を指定できそうなパスはどれもルートに存在しない
+    for (const path of [`/me/${victim.accountId}`, `/me/db/${victim.accountId}`, "/me/accounts"]) {
+      const res = await app.fetch(
+        new Request(`https://control.test${path}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${attacker.token}` },
+        }),
+      );
+      expect(res.status).toBe(404);
+    }
+    // 本文で相手を指定しても無視され、消えるのは攻撃者自身
+    const res = await app.fetch(
+      new Request("https://control.test/me", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${attacker.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ accountId: victim.accountId }),
+      }),
+    );
+    expect(res.status).toBe(204);
+
+    expect(fake.state.deleteRequests).toEqual([await databaseNameForAccount(attacker.accountId)]);
+    const remaining = await db.select().from(accounts);
+    expect(remaining.map((row) => row.id)).toEqual([victim.accountId]);
+    expect(fake.state.databases.has(await databaseNameForAccount(victim.accountId))).toBe(true);
+  });
+});
+
+describe("退会後の生き残りセッション（issue #116。恒久的な失効機構は #117）", () => {
+  test("同じ JWT で `GET /me/db` を叩いても 401。DB は再生成されない", async () => {
+    const session = await login();
+    expect((await getDb(session.token)).status).toBe(200);
+    expect((await deleteMe(session.token)).status).toBe(204);
+
+    const createsBefore = fake.state.createRequests.length;
+    const res = await getDb(session.token);
+    // 署名としては有効なままのトークン（ステートレス JWT）だが、accounts に
+    // 居ないので通さない。これが無いと ensureUserDatabase が DB を作り直す
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "セッションが無効です" });
+    expect(fake.state.createRequests).toHaveLength(createsBefore);
+    expect(fake.state.databases.size).toBe(0);
+    expect(await db.select().from(accountDatabases)).toEqual([]);
+  });
+
+  test("同じ JWT で `GET /auth/me` を叩いても 401（中継サーバの解決が失敗する）", async () => {
+    const session = await login();
+    expect((await authMe(session.token)).status).toBe(200);
+
+    expect((await deleteMe(session.token)).status).toBe(204);
+    expect((await authMe(session.token)).status).toBe(401);
+  });
+
+  test("二重の退会は 401（Platform API を二度叩かない）", async () => {
+    const session = await login();
+    expect((await deleteMe(session.token)).status).toBe(204);
+    expect(fake.state.deleteRequests).toHaveLength(1);
+
+    expect((await deleteMe(session.token)).status).toBe(401);
+    expect(fake.state.deleteRequests).toHaveLength(1);
+  });
+
+  test("退会済みアカウントのパスキーは残らない（クレデンシャルごと消えている）", async () => {
+    const session = await login();
+    expect((await deleteMe(session.token)).status).toBe(204);
+    expect(await db.select().from(credentials)).toEqual([]);
   });
 });

@@ -14,7 +14,10 @@ import {
   createControlPlaneClient,
   resolveRemoteSession,
 } from "@zakki/web/client/api/control-plane.ts";
-import type { TestAuthenticator, TestControlPlane } from "@zakki/web/client/api/test-control-plane.ts";
+import type {
+  TestAuthenticator,
+  TestControlPlane,
+} from "@zakki/web/client/api/test-control-plane.ts";
 import { createTestControlPlane } from "@zakki/web/client/api/test-control-plane.ts";
 import type { ClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
@@ -104,6 +107,19 @@ async function signUp(): Promise<{
   const { credentialId } = await client.register();
   const { prfOutput } = await client.login();
   return { client, authenticator, credentialId, prfOutput };
+}
+
+/** セッション JWT を載せた GET のリクエスト設定 */
+function authorized(token: string): RequestInit {
+  return { method: "GET", headers: { authorization: `Bearer ${token}` } };
+}
+
+/** 退会（apps/api の `DELETE /me`, issue #116）。UI はまだ無いので直接叩く */
+async function deleteAccount(token: string): Promise<Response> {
+  return cp.fetchFn(`${cp.baseUrl}/me`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${token}` },
+  });
 }
 
 /** リモート構成でクライアント DB を起動する（storage / prompt は注入） */
@@ -314,6 +330,33 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     // 2 回目はコントロールプレーンへ問い合わせない（DB ハンドルも作り直さない）
     expect(cp.requests.length).toBe(after);
     expect(openedIdentities.length).toBe(1);
+  });
+
+  test("R6f: 退会したアカウントのセッションは中継されない（issue #116）", async () => {
+    const { client } = await signUp();
+    const token = client.session()?.token ?? "";
+    expect((await deleteAccount(token)).status).toBe(204);
+
+    // 中継サーバは /auth/me で「あなたは誰か」を解決する。退会済みは 401 なので
+    // 解決不能になり、ユーザ DB は 1 つも開かれない
+    const res = await client.authorizedFetch("/api/crypto/envelopes", { method: "GET" });
+    expect(res.status).toBe(401);
+    expect(userDbs.size).toBe(0);
+  });
+
+  test("R6g: 退会前に解決済みのセッションは DB トークンが切れるまで中継が通る（現状の挙動 / #117）", async () => {
+    const { client } = await signUp();
+    // 先に中継を通しておく（= 解決結果が中継サーバのキャッシュに載る）
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+    const token = client.session()?.token ?? "";
+    expect((await deleteAccount(token)).status).toBe(204);
+
+    // キャッシュは DB トークンの失効（最大 60 分）まで残るため、この経路だけは
+    // 退会後も生き残る。コントロールプレーン側は既に 401 で、DB も消えている
+    const res = await client.authorizedFetch("/api/crypto/envelopes");
+    expect(res.status).toBe(200);
+    expect((await cp.fetchFn(`${cp.baseUrl}/auth/me`, authorized(token))).status).toBe(401);
+    // 恒久的な失効（キャッシュも含めた即時無効化）は issue #117 の担当
   });
 
   test("R7: アカウントごとに別の DB へ中継される", async () => {
