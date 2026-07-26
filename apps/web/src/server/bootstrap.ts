@@ -1,9 +1,10 @@
 import type { Hono } from "hono";
 import type { ZakkiConfig } from "@zakki/core/config/env.ts";
-import { defaultDbPath, openDb } from "@zakki/data/db/connect.ts";
+import { defaultDbPath, openDb, openRemoteDb } from "@zakki/data/db/connect.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
 import { createApp } from "./app.ts";
+import { createRemoteDbResolver } from "./identity/remote.ts";
 
 /**
  * API サーバの合成（issue #29）。検証済み config を受け取り、標準 Fetch ハンドラ
@@ -24,6 +25,12 @@ import { createApp } from "./app.ts";
  * - 解析（tagger / linker / sentiment / embedder）は平文前提のためサーバから
  *   撤去（クライアント移設は #28/#26 の別トラック。TUI ではローカル平文の
  *   世界としてそのまま動き続ける）。
+ *
+ * 構成は 2 つ（issue #105）:
+ * - **単一ユーザ self-host（既定）**: LocalIdentity で開いた 1 つの DB を中継する（従来どおり）。
+ * - **マルチユーザ**: `ZAKKI_CONTROL_PLANE_URL` があるとき。リクエストのセッションを
+ *   コントロールプレーンで解決し、そのアカウントの Turso DB を中継する。どちらの構成でも
+ *   サーバは暗号文しか触らない。
  */
 export async function bootstrapServer(config: ZakkiConfig): Promise<{ app: Hono }> {
   const dataHome = xdgDataHome(config.xdgDataHome);
@@ -37,5 +44,15 @@ export async function bootstrapServer(config: ZakkiConfig): Promise<{ app: Hono 
   // syncWithAnalysisReset）も不要になった。
   await sync();
 
-  return { app: createApp({ db }) };
+  const controlPlaneUrl = config.controlPlaneUrl;
+  if (controlPlaneUrl === undefined) {
+    return { app: createApp({ db }) };
+  }
+  return {
+    app: createApp({
+      db,
+      controlPlaneUrl,
+      resolveDb: createRemoteDbResolver({ controlPlaneUrl, openUserDb: openRemoteDb }),
+    }),
+  };
 }

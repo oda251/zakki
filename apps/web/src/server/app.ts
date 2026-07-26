@@ -6,6 +6,20 @@ import { cryptoRoutes } from "./routes/crypto.ts";
 import { replicationRoutes } from "./routes/replication.ts";
 
 /**
+ * CSP の connect-src。コントロールプレーンが別オリジンなら、そのオリジン
+ * （scheme + host + port。パスは CSP のソース式に含めない）だけを許可に足す。
+ * URL として解釈できない設定は無視する（起動を壊さず 'self' のまま）。
+ */
+export function connectSrc(controlPlaneUrl: string | undefined): string[] {
+  if (controlPlaneUrl === undefined) return ["'self'"];
+  try {
+    return ["'self'", new URL(controlPlaneUrl).origin];
+  } catch {
+    return ["'self'"];
+  }
+}
+
+/**
  * API アプリの合成（テスト可能な純関数）。依存は {@link AppDeps} で注入する。
  * 本番の合成点（DB を開く・暗号アンロック・エンジン選択）は index.ts。
  */
@@ -28,6 +42,10 @@ export function createApp(deps: AppDeps): Hono {
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         frameAncestors: ["'none'"],
+        // クライアントがコントロールプレーンへ直接 fetch する（#105）。別オリジンに
+        // 置く構成では default-src 'self' だと CORS 以前に CSP で塞がれるため、
+        // 設定されたオリジンだけを足す（未設定なら 'self' のまま）
+        connectSrc: connectSrc(deps.controlPlaneUrl),
       },
     }),
   );
@@ -38,6 +56,10 @@ export function createApp(deps: AppDeps): Hono {
   const api = new Hono();
 
   api.get("/health", (c) => c.json({ ok: true }));
+  // クライアントの構成選択（issue #105）: コントロールプレーンの URL が設定されて
+  // いればリモート構成（パスキーでログイン → 自分の DB）、無ければ従来の単一ユーザ
+  // 構成で起動する。返すのは公開エンドポイントの所在だけで、秘密は含まない
+  api.get("/config", (c) => c.json({ controlPlaneUrl: deps.controlPlaneUrl ?? null }));
   api.route("/replication", replicationRoutes(deps));
   api.route("/crypto", cryptoRoutes(deps));
 

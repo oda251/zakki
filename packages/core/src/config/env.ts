@@ -48,6 +48,7 @@ const EnvSchema = v.pipe(
     ZAKKI_NO_EMBEDDING: flag,
     ZAKKI_ENCRYPTION: flag,
     ZAKKI_WEB_PORT: v.optional(port),
+    ZAKKI_CONTROL_PLANE_URL: v.optional(v.string()),
     XDG_DATA_HOME: v.optional(v.string()),
     XDG_CONFIG_HOME: v.optional(v.string()),
   }),
@@ -74,6 +75,12 @@ const EnvSchema = v.pipe(
     encryption: env.ZAKKI_ENCRYPTION,
     /** ZAKKI_WEB_PORT（既定 3777） */
     webPort: env.ZAKKI_WEB_PORT ?? DEFAULT_WEB_PORT,
+    /**
+     * ZAKKI_CONTROL_PLANE_URL（コントロールプレーン apps/api の base URL, issue #105）。
+     * 設定するとマルチユーザ構成になり、web サーバは「そのリクエストのアカウントの DB」を
+     * 中継する。未設定なら従来どおり単一ユーザ self-host（LocalIdentity 経路）。
+     */
+    controlPlaneUrl: env.ZAKKI_CONTROL_PLANE_URL,
     /** XDG_DATA_HOME（未設定なら利用側が ~/.local/share へフォールバック） */
     xdgDataHome: env.XDG_DATA_HOME,
     /** XDG_CONFIG_HOME（未設定なら利用側が ~/.config へフォールバック） */

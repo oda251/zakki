@@ -120,6 +120,28 @@ export async function openDb(identity: Identity, dbPath: string): Promise<DbHand
 }
 
 /**
+ * リモートプライマリへ直接つないで開く（ローカルレプリカを作らない, issue #105）。
+ *
+ * マルチユーザ構成の中継サーバ（apps/web）用。中継はリクエストのたびに別ユーザの DB へ
+ * 向くため、端末ごとに 1 つの replica ファイルを持つ {@link openDb} の前提が成り立たない
+ * （ユーザ数だけローカル DB を抱えることになる）。中継サーバは暗号文を右から左へ
+ * 流すだけなので、ローカルコピーを持たない素の接続で足りる。
+ *
+ * マイグレーションはここで適用する: ユーザごとの DB はコントロールプレーンが実行時に
+ * 作る空 DB（IaC 管理外, RESEARCH.md §7）で、スキーマを入れる主体が他に居ない。適用は冪等。
+ * PRAGMA は張らない（リクエストごとに接続が切り替わる HTTP 越しでは接続単位の設定が効かない）。
+ */
+export async function openRemoteDb(identity: Identity): Promise<Db> {
+  if (identity.tursoUrl === undefined || identity.tursoToken === undefined) {
+    throw new Error("リモート DB の接続情報（url / token）がありません");
+  }
+  const client = createClient({ url: identity.tursoUrl, authToken: identity.tursoToken });
+  const db = drizzle(client, { schema });
+  await migrateDb(db);
+  return db;
+}
+
+/**
  * embedded replica の同期。エラーは DbError に写す（呼び出し側がベストエフォート判断する）。
  * pull 結果（Replicated.frames_synced）から「リモートのフレームを実際に適用したか」を
  * 返す（issue #55）。0 / undefined は no-op で、増分解析の基準は破れていない。

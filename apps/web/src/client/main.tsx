@@ -18,9 +18,19 @@ createRoot(root).render(<App />);
 // ディープリンク・リロード・戻る/進むもここから復元される）。
 // UI はローカルレプリカを liveQuery で読むため、初回同期を待たずに接続してよい。
 // RxDB + libsodium が重いため、GraphView と同じく初期チャンクから dynamic import で分離する。
-void import("@zakki/web/client/db/bootstrap.ts")
-  .then(async (m) => {
-    const { db, passkey } = await m.bootstrapClientDb();
+// 構成の選択は設定ベース（#105）: 中継サーバが控えるコントロールプレーン URL があれば
+// パスキーでログインして自分の DB（RemoteIdentity）へ、無ければ従来どおり単一ユーザ構成で
+// 起動する。ログインの get で PRF 出力も一緒に得ているので、そのまま封筒を開ける。
+void Promise.all([
+  import("@zakki/web/client/db/bootstrap.ts"),
+  import("@zakki/web/client/api/control-plane.ts").then(async (m) => m.resolveRemoteSession()),
+])
+  .then(async ([m, remote]) => {
+    const { db, passkey } = await m.bootstrapClientDb(
+      remote === null
+        ? {}
+        : { fetchFn: remote.fetchFn, prfOutput: remote.prfOutput, dbName: `zakki-${remote.identity.userId}` },
+    );
     useGraphStore.getState().connect(db);
     useBufferStore.getState().connect(db);
     // パスキー登録 UI（#104）。DEK は bootstrap のクロージャに閉じたまま渡らない

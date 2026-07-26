@@ -123,6 +123,16 @@ module.exports = {
       to: { path: "^packages/backend/src/anco/", reachable: true },
     },
     {
+      name: "web-no-api-runtime",
+      comment:
+        "apps/web から apps/api（コントロールプレーン）への実 import 禁止（issue #105）。" +
+        "両者は HTTP でしか繋がらない（別デプロイ・別ランタイム）。テスト・テスト用 fixture は" +
+        "実物の Hono アプリをプロセス内で動かすため越境してよい（バンドルには載らない）",
+      severity: "error",
+      from: { path: "^apps/web/src", pathNot: "\\.test\\.(ts|tsx)$|/test-[^/]+\\.ts$" },
+      to: { path: "^apps/api/src" },
+    },
+    {
       name: "web-client-no-data-runtime",
       comment:
         "client から @zakki/data の実 import 禁止（node 依存の混入防止。型は shared 経由で可）。" +
