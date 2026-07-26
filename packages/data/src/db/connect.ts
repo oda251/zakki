@@ -64,10 +64,14 @@ export async function openClient(
   // FK cascade に依存する（store.ts はチャンク削除で embeddings を連鎖削除する）
   await client.execute("PRAGMA foreign_keys = ON");
   if (sync === undefined) {
+    // busy_timeout は journal_mode より先に張る（issue #109）。journal_mode の切替は
+    // 一瞬とはいえ排他ロックを要求するため、busy_timeout が既定の 0 のままだと、同じ
+    // DB ファイルを開く別プロセス（CLI の subprocess 起動など）と競合した瞬間に待たずに
+    // SQLITE_BUSY で落ちる。順序を逆にすると WAL 化そのものがロック待ちできる。
+    await client.execute("PRAGMA busy_timeout = 5000");
     // 書き込み（保存・解析パス）中も読み（graph/related）をブロックしないよう WAL にする。
     // embedded replica は libsql 側が WAL 前提で管理するため触らない。
     await client.execute("PRAGMA journal_mode = WAL");
-    await client.execute("PRAGMA busy_timeout = 5000");
   }
   const db = drizzle(client, { schema });
   return { client, db };
