@@ -1,17 +1,21 @@
 import { Hono } from "hono";
 import type { SessionEnv } from "@zakki/api/context.ts";
-import { requireSession } from "@zakki/api/auth/session.ts";
+import { requireLiveAccount, requireSession } from "@zakki/api/auth/session.ts";
 import type { AppDeps } from "@zakki/api/deps.ts";
-import { databaseUrl, ensureUserDatabase } from "@zakki/api/turso/provision.ts";
+import { databaseUrl, deleteAccount, ensureUserDatabase } from "@zakki/api/turso/provision.ts";
 
 /**
- * ログイン済みアカウント向けのエンドポイント（issue #101）。
+ * ログイン済みアカウント向けのエンドポイント（issue #101 / #116）。
  *
  * `GET /me/db` は「自分のジャーナル DB をどこで、どう開くか」を返す。DB が無ければ
  * その場で Turso に作る（per-user DB は IaC 管理外・実行時生成, RESEARCH.md §7）。
  *
  * 返すのは DB の URL と**都度発行の短命トークン**だけで、E2E の鍵材料は含まない。
  * wrapped DEK はユーザ自身の DB の中にあり、サーバは復号できない立場を保つ。
+ *
+ * `DELETE /me` は退会（issue #116）。対象は常に**セッションの持ち主自身**で、
+ * 消す相手を指定する経路（パスパラメータ・本文）は用意しない——他人を消せる
+ * 引数が無ければ、権限判定を間違える余地も無い。
  */
 
 /**
@@ -28,10 +32,15 @@ export function meRoutes(deps: AppDeps): Hono<SessionEnv> {
   const app = new Hono<SessionEnv>();
   const { db, auth, turso } = deps;
 
-  // 認証必須。#100 の requireSession をそのまま再利用する。
+  // 認証必須。#100 の requireSession をそのまま再利用し、退会済みアカウントの
+  // 生き残りトークンを requireLiveAccount で弾く（#116。これが無いと退会後の
+  // `GET /me/db` が消したはずの DB を作り直す）。
   // 適用範囲は登録順ではなくパスで示す（`"*"` だと後からルートを足したときに
   // 保護漏れが読み取れない。#110 レビューで auth.ts に入れたのと同じ形）
-  app.use("/db", requireSession(auth.sessionSecret));
+  app.use("/db", requireSession(auth.sessionSecret), requireLiveAccount(db));
+  // `DELETE /me` 自身も同じ保護下に置く。二重の退会は 401 になるが、DB 削除に
+  // 失敗した中途半端な状態では accounts 行が残っている（= 再試行は通る）
+  app.use("/", requireSession(auth.sessionSecret), requireLiveAccount(db));
 
   app.get("/db", async (c) => {
     const accountId = c.get("accountId");
@@ -62,6 +71,18 @@ export function meRoutes(deps: AppDeps): Hono<SessionEnv> {
       // クライアントが失効を先回りして取り直すための情報（セッションと同じ epoch 秒）
       expiresAt: Math.floor(now / 1000) + TOKEN_TTL_MIN * 60,
     });
+  });
+
+  app.delete("/", async (c) => {
+    const removed = await deleteAccount(db, turso, c.get("accountId"));
+    if (removed.isErr()) {
+      // 台帳・accounts 行は消していないので、同じリクエストの再送で続きから完了できる。
+      // Platform API の内部メッセージは wire に出さずログへ（`GET /db` と同じ方針）
+      console.error("[me] account deletion failed:", removed.error);
+      return c.json({ error: "アカウントを削除できませんでした" }, 502);
+    }
+    // 返すものが無い。以降このセッションは requireLiveAccount で 401 になる
+    return c.body(null, 204);
   });
 
   return app;

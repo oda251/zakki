@@ -15,7 +15,7 @@ import { Hono } from "hono";
 import * as v from "valibot";
 import type { ApiEnv, SessionEnv } from "@zakki/api/context.ts";
 import { consumeChallenge, issueChallenge } from "@zakki/api/auth/challenges.ts";
-import { issueSession, requireSession } from "@zakki/api/auth/session.ts";
+import { issueSession, requireLiveAccount, requireSession } from "@zakki/api/auth/session.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { accounts, credentials } from "@zakki/api/db/schema.ts";
 import type { AppDeps, AuthConfig } from "@zakki/api/deps.ts";
@@ -397,8 +397,11 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
   // `use` のパスは保護対象と同じ `/me` に絞る: `"*"` だと同じインスタンスに後から
   // 未認証ルートを足したときに巻き込む（あるいは登録順に依存する）ため、
   // 「このパスだけが保護対象」を形で示す
+  // 退会済みアカウントの生き残りトークンも弾く（#116）。中継サーバ（apps/web）は
+  // この応答で「あなたは誰か」を解決するので、ここが 401 になることが中継の遮断に
+  // そのまま効く
   const session = new Hono<SessionEnv>();
-  session.use("/me", requireSession(auth.sessionSecret));
+  session.use("/me", requireSession(auth.sessionSecret), requireLiveAccount(db));
   session.get("/me", (c) => c.json({ accountId: c.get("accountId") }));
 
   // --- クレデンシャル管理（issue #115） -------------------------------------

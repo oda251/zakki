@@ -5,10 +5,12 @@ import * as v from "valibot";
  * Turso Platform API クライアント（issue #101, docs/RESEARCH.md §7）。
  *
  * ユーザごとの DB は数が可変なので IaC（Pulumi）では管理せず、会員登録後に
- * このクライアント経由で実行時生成する。使うのは 2 つだけ:
+ * このクライアント経由で実行時生成する。使うのは 3 つだけ:
  * - DB 作成 `POST /v1/organizations/{org}/databases`（group 指定）
  * - DB トークン発行 `POST /v1/organizations/{org}/databases/{db}/auth/tokens`
  *   （https://docs.turso.tech/api-reference/databases/create-token）
+ * - DB 削除 `DELETE /v1/organizations/{org}/databases/{db}`（退会, issue #116）
+ *   （https://docs.turso.tech/api-reference/databases/delete）
  *
  * Workers ランタイム制約により fetch と Web 標準 API のみで書く（node 組込み・Bun 固有 API は禁止、
  * scripts/check-arch-guards.sh Guard 5）。base URL を設定にしてあるのはテストが
@@ -78,6 +80,12 @@ export interface TursoPlatform {
   getDatabase(name: string): Promise<Result<TursoDatabase | null, PlatformFailure>>;
   /** DB スコープの短命トークンを発行する。戻り値は JWT 文字列 */
   issueToken(name: string, request: TokenRequest): Promise<Result<string, PlatformFailure>>;
+  /**
+   * DB を消す（退会, issue #116）。存在しなければ成功に畳む（404 はエラーではない）。
+   * 冪等なのは退会が「DB 削除 → 台帳削除」の 2 段で、間で落ちた再試行が必ず
+   * 「もう無い DB を消す」形になるため。
+   */
+  deleteDatabase(name: string): Promise<Result<void, PlatformFailure>>;
 }
 
 /** レスポンス本文の先頭だけをログ用に取る（巨大な HTML エラーページ対策） */
@@ -162,6 +170,20 @@ export function createTursoPlatform(config: TursoPlatformConfig): TursoPlatform 
         return err({ kind: "malformed", detail: "token レスポンスの形が想定と違います" });
       }
       return ok(parsed.output.jwt);
+    },
+
+    async deleteDatabase(name) {
+      const sent = await send(`${base}/${encodeURIComponent(name)}`, { method: "DELETE" });
+      if (sent.isErr()) return err(sent.error);
+      const res = sent.value;
+      // 404 = 既に無い。「消えている」は退会が望む終状態そのものなので成功に畳む
+      // （前回の退会が DB 削除後・台帳削除前に落ちた場合の再試行が必ずここを通る）。
+      // 応答本文（`{"database": "<name>"}`）は要求した名前の反復なので読まない
+      if (res.status === 404) return ok(undefined);
+      if (!res.ok) {
+        return err({ kind: "status", status: res.status, detail: await detailOf(res) });
+      }
+      return ok(undefined);
     },
   };
 }

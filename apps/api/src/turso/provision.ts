@@ -1,14 +1,15 @@
 import { eq } from "drizzle-orm";
 import { err, ok, type Result } from "neverthrow";
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import { accountDatabases } from "@zakki/api/db/schema.ts";
+import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
 import type { PlatformFailure, TursoDatabase, TursoPlatform } from "@zakki/api/turso/platform.ts";
 
 /**
- * アカウントごとの Turso DB プロビジョニング（issue #101）。
+ * アカウントごとの Turso DB プロビジョニング（issue #101）と、その逆操作である
+ * 退会（issue #116）。
  *
- * 「台帳を引く → 無ければ作る → 台帳へ書く」だけを担い、トークン発行は含めない
- * （トークンは都度発行・短命で、台帳にもここにも残さない）。
+ * プロビジョニングは「台帳を引く → 無ければ作る → 台帳へ書く」だけを担い、トークン
+ * 発行は含めない（トークンは都度発行・短命で、台帳にもここにも残さない）。
  *
  * 書き込むのは DB の所在（名前・ホスト名）のみ。E2E を破らないため、鍵・DEK・
  * 本文はコントロールプレーンのどこにも置かない（db/schema.ts の注記のとおり）。
@@ -105,4 +106,51 @@ export async function ensureUserDatabase(
     })
     .onConflictDoNothing();
   return ok(database);
+}
+
+/**
+ * アカウントを消す（退会, issue #116）。{@link ensureUserDatabase} の逆操作。
+ *
+ * **順序が肝**: 「Turso の DB を消す → 台帳（と accounts 行）を消す」の順にする。
+ * 逆順にすると台帳を消した時点で DB 名の出どころが失われ、誰も参照しない
+ * ——つまり誰も消せない——孤児 DB が Turso に残る。DB 削除に失敗したら台帳を
+ * 残したまま失敗を返す: この状態は「まだ退会していない」だけなので、同じ
+ * リクエストをもう一度投げれば続きから完了できる。
+ *
+ * 台帳に行が無くても DB 名を導出して削除を試みる。プロビジョニングは
+ * 「DB 作成 → 台帳書き込み」の順なので、その間で落ちた場合に台帳に載らない DB が
+ * 実在しうるため（{@link ensureUserDatabase} が 409 を畳んでいるのと同じ穴）。
+ * 名前は accountId から決定的に導かれる（= そのアカウント以外の DB を指し得ない）
+ * ので、余分に消してしまう危険は無い。実在しなければ 404 が成功に畳まれる。
+ *
+ * 子テーブル（credentials / account_databases）はスキーマの `onDelete: "cascade"` に
+ * 頼らず明示的に消す。理由は実装内のコメントを参照。
+ */
+export async function deleteAccount(
+  db: ControlDb,
+  platform: TursoPlatform,
+  accountId: string,
+): Promise<Result<void, PlatformFailure>> {
+  const rows = await db
+    .select()
+    .from(accountDatabases)
+    .where(eq(accountDatabases.accountId, accountId))
+    .limit(1);
+  const name = rows[0]?.dbName ?? (await databaseNameForAccount(accountId));
+
+  const deleted = await platform.deleteDatabase(name);
+  if (deleted.isErr()) return err(deleted.error);
+
+  // スキーマの onDelete: "cascade" には頼らない。SQLite / libSQL の外部キー強制は
+  // 接続ごとの PRAGMA foreign_keys で、Turso は既定 OFF（https://docs.turso.tech/sql-reference/pragmas）。
+  // 本番の ControlDb は HTTP（@libsql/client/web）でリクエストごとにステートレスなので
+  // pragma を張り続けられず、cascade が発火しない。batch はトランザクションで包まれ
+  // pragma がその中では効かないため、子から順に明示的に消す（登録側が accounts +
+  // credentials を 1 バッチで書くのと対称）。
+  await db.batch([
+    db.delete(accountDatabases).where(eq(accountDatabases.accountId, accountId)),
+    db.delete(credentials).where(eq(credentials.accountId, accountId)),
+    db.delete(accounts).where(eq(accounts.id, accountId)),
+  ]);
+  return ok(undefined);
 }

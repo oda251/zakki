@@ -7,7 +7,8 @@ import * as v from "valibot";
  * 本物の Turso はローカルで再現できない依存なので、~/.references/policy/testing.md
  * に従い**プロトコルレベル**で用意する: Hono で実際の API と同じ経路・同じ JSON 形
  * （https://docs.turso.tech/api-reference/databases/create,
- *  https://docs.turso.tech/api-reference/databases/create-token）を返すサーバを組み、
+ *  https://docs.turso.tech/api-reference/databases/create-token,
+ *  https://docs.turso.tech/api-reference/databases/delete）を返すサーバを組み、
  * テストはこれをローカルの serve に載せて base URL を向ける。クライアントのメソッドは
  * 一切 mock しない——URL・認証ヘッダ・クエリ・ステータスの解釈まで実体で通す。
  *
@@ -24,12 +25,16 @@ export interface FakePlatformState {
   readonly createRequests: { name: string; group: string }[];
   /** 受け取ったトークン発行リクエスト（expiration / authorization の検証に使う） */
   readonly tokenRequests: { name: string; expiration: string; authorization: string }[];
+  /** 受け取った DB 削除リクエストの DB 名（退会が実際に何を消しに行ったかの検証に使う） */
+  readonly deleteRequests: string[];
   /** 非 null の間、DB 作成をこのステータスで失敗させる（上流障害の再現） */
   createStatus: number | null;
   /** 非 null の間、DB 取得をこのステータスで失敗させる */
   getStatus: number | null;
   /** 非 null の間、トークン発行をこのステータスで失敗させる */
   tokenStatus: number | null;
+  /** 非 null の間、DB 削除をこのステータスで失敗させる（退会の中断を再現する） */
+  deleteStatus: number | null;
   /** true の間、作成レスポンスの形を壊す（スキーマ検証の確認用） */
   malformedCreate: boolean;
 }
@@ -65,9 +70,11 @@ export function createFakePlatformApi(options: {
     databases: new Map(),
     createRequests: [],
     tokenRequests: [],
+    deleteRequests: [],
     createStatus: null,
     getStatus: null,
     tokenStatus: null,
+    deleteStatus: null,
     malformedCreate: false,
   };
 
@@ -121,6 +128,22 @@ export function createFakePlatformApi(options: {
       return c.json({ error: "database not found" }, 404);
     }
     return c.json({ database: { DbId: `db-${name}`, Hostname: hostname, Name: name } });
+  });
+
+  app.delete(`${base}/:name`, (c) => {
+    // 故障注入より先に記録する: 「失敗したがちゃんと消しに行った」ことを
+    // テストが観測できるようにするため（退会の再試行の検証に要る）
+    state.deleteRequests.push(c.req.param("name"));
+    if (state.deleteStatus !== null) {
+      return fail(state.deleteStatus, "internal error");
+    }
+    const name = c.req.param("name");
+    if (!state.databases.delete(name)) {
+      // 実 API の 404 本文に合わせる（クライアントは成功に畳む）
+      return c.json({ error: `could not find database with name ${name}: record not found` }, 404);
+    }
+    // 実 API は削除した DB 名を文字列で返す（作成・取得のオブジェクト形とは違う）
+    return c.json({ database: name });
   });
 
   app.post(`${base}/:name/auth/tokens`, (c) => {
