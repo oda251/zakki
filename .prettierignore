@@ -1,0 +1,12 @@
+# oxfmt の除外（oxfmt は .gitignore と .prettierignore を参照する）。
+# 対象は .oxlintrc.json の ignorePatterns と揃える。
+
+# ベンダリングした第三者コードと計測用ハーネス
+wasm/
+
+# 独立した Pulumi プロジェクト（ルートの workspaces 対象外）
+infra/
+
+# ビルド成果物
+apps/web/dist/
+apps/api/dist/

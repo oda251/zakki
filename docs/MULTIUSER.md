@@ -35,25 +35,25 @@ flowchart LR
 
 ### どこに何が無いか（E2E の境界）
 
-| 場所                       | あるもの                                             | **無いもの**                     |
-| -------------------------- | ---------------------------------------------------- | -------------------------------- |
-| コントロールプレーン       | account / credential（公開鍵）・DB の所在            | DEK・PRF 出力・封筒・本文        |
-| 中継サーバ（apps/web）     | 暗号文 wire doc・封筒（KEK 無しでは開けない）        | DEK・PRF 出力・平文              |
-| ユーザごと Turso DB        | 暗号文・wrapped DEK（封筒）                          | 平文・KEK                        |
-| ブラウザ                   | DEK（メモリのみ）・セッション JWT（メモリのみ）      | 永続化された鍵・トークン         |
+| 場所                   | あるもの                                        | **無いもの**              |
+| ---------------------- | ----------------------------------------------- | ------------------------- |
+| コントロールプレーン   | account / credential（公開鍵）・DB の所在       | DEK・PRF 出力・封筒・本文 |
+| 中継サーバ（apps/web） | 暗号文 wire doc・封筒（KEK 無しでは開けない）   | DEK・PRF 出力・平文       |
+| ユーザごと Turso DB    | 暗号文・wrapped DEK（封筒）                     | 平文・KEK                 |
+| ブラウザ               | DEK（メモリのみ）・セッション JWT（メモリのみ） | 永続化された鍵・トークン  |
 
 - PRF 出力は **認証器 → ブラウザ**の中で閉じる。ログインの assertion に付く `clientExtensionResults` はそもそも送らないし、サーバも読まない（`apps/api/src/routes/auth.ts`）。
 - `GET /me/db` が返すトークンは「その DB を開ける権限」であって復号鍵ではない。全部の鍵を失えば復号不能になる（真の E2E のトレードオフ。リカバリコード封筒が必須）。
 
 ## 構成要素
 
-| 役割                | 実体                                                                              |
-| ------------------- | --------------------------------------------------------------------------------- |
-| Identity 抽象       | [`packages/core/src/identity/types.ts`](../packages/core/src/identity/types.ts)   |
-| LocalIdentity       | [`packages/data/src/identity/local.ts`](../packages/data/src/identity/local.ts)（env / `identity.json`） |
-| RemoteIdentity      | [`packages/core/src/identity/remote.ts`](../packages/core/src/identity/remote.ts)（`/me/db` の応答 → Identity） |
-| コントロールプレーンクライアント | [`apps/web/src/client/api/control-plane.ts`](../apps/web/src/client/api/control-plane.ts) |
-| 中継先の解決        | [`apps/web/src/server/identity/remote.ts`](../apps/web/src/server/identity/remote.ts) |
+| 役割                             | 実体                                                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Identity 抽象                    | [`packages/core/src/identity/types.ts`](../packages/core/src/identity/types.ts)                                 |
+| LocalIdentity                    | [`packages/data/src/identity/local.ts`](../packages/data/src/identity/local.ts)（env / `identity.json`）        |
+| RemoteIdentity                   | [`packages/core/src/identity/remote.ts`](../packages/core/src/identity/remote.ts)（`/me/db` の応答 → Identity） |
+| コントロールプレーンクライアント | [`apps/web/src/client/api/control-plane.ts`](../apps/web/src/client/api/control-plane.ts)                       |
+| 中継先の解決                     | [`apps/web/src/server/identity/remote.ts`](../apps/web/src/server/identity/remote.ts)                           |
 
 ### 構成の選択は設定ベース
 
@@ -65,12 +65,12 @@ flowchart LR
 
 登録経路（`POST /auth/register/options`）は毎回新しい accountId を採番するので、2 台目の端末でそれを使うと**別アカウントが生える**。既存アカウントに鍵を足すのは要セッションの別経路にした。
 
-| エンドポイント                            | 役割                                                          |
-| ----------------------------------------- | ------------------------------------------------------------- |
-| `POST /auth/credentials/options`           | 既存 accountId を `userID` にした登録 options（`excludeCredentials` 付き） |
-| `POST /auth/credentials/verify`            | attestation 検証 → `credentials` に 1 行追加（`accounts` は作らない）      |
-| `GET /auth/credentials`                    | 一覧（credentialId・表示名・作成日時。公開鍵は返さない）                  |
-| `DELETE /auth/credentials/:credentialId`   | 失効。**最後の 1 本は 409**（アカウントに入れなくなるため）                |
+| エンドポイント                           | 役割                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| `POST /auth/credentials/options`         | 既存 accountId を `userID` にした登録 options（`excludeCredentials` 付き） |
+| `POST /auth/credentials/verify`          | attestation 検証 → `credentials` に 1 行追加（`accounts` は作らない）      |
+| `GET /auth/credentials`                  | 一覧（credentialId・表示名・作成日時。公開鍵は返さない）                   |
+| `DELETE /auth/credentials/:credentialId` | 失効。**最後の 1 本は 409**（アカウントに入れなくなるため）                |
 
 - 新端末はまだログインできないので、**ログイン済み端末で ceremony を行い WebAuthn の cross-device authentication（hybrid transport）で新端末の認証器を使う**のが主導線。そのため `authenticatorSelection` に `authenticatorAttachment` を指定しない（指定すると platform / cross-platform のどちらかに絞られ hybrid が落ちる）。
 - challenge の `kind` は `"credential"` で、新規登録の `"registration"` と分けてある。同じにすると追加用 challenge を `register/verify` へ流し込めてしまう。
@@ -100,8 +100,8 @@ flowchart LR
 
 ## 設定
 
-| 環境変数                  | 効果                                                                   |
-| ------------------------- | ---------------------------------------------------------------------- |
+| 環境変数                  | 効果                                                                             |
+| ------------------------- | -------------------------------------------------------------------------------- |
 | `ZAKKI_CONTROL_PLANE_URL` | 中継サーバをマルチユーザ構成にする（apps/api の base URL）。未設定なら単一ユーザ |
 
 コントロールプレーン側（`apps/api`）の設定は [`apps/api/src/env.ts`](../apps/api/src/env.ts) を参照（RP ID / origin・セッション鍵・Turso Platform API のトークンと group）。

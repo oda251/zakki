@@ -29,7 +29,11 @@ void Promise.all([
     const { db, passkey } = await m.bootstrapClientDb(
       remote === null
         ? {}
-        : { fetchFn: remote.fetchFn, prfOutput: remote.prfOutput, dbName: `zakki-${remote.identity.userId}` },
+        : {
+            fetchFn: remote.fetchFn,
+            prfOutput: remote.prfOutput,
+            dbName: `zakki-${remote.identity.userId}`,
+          },
     );
     useGraphStore.getState().connect(db);
     useBufferStore.getState().connect(db);
