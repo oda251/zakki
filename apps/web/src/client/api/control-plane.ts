@@ -284,7 +284,10 @@ export function createControlPlaneClient(options: ControlPlaneOptions): ControlP
     const credential = await options.credentials.create({
       publicKey: {
         challenge: decodeBase64Url(ceremony.challenge),
-        rp: { ...(ceremony.rp.id === undefined ? {} : { id: ceremony.rp.id }), name: ceremony.rp.name },
+        rp: {
+          ...(ceremony.rp.id === undefined ? {} : { id: ceremony.rp.id }),
+          name: ceremony.rp.name,
+        },
         user: {
           id: decodeBase64Url(ceremony.user.id),
           name: ceremony.user.name,
@@ -428,7 +431,12 @@ export async function resolveRemoteSession(
   });
   try {
     const { prfOutput } = await client.login();
-    return { identity: await client.identity(), fetchFn: client.authorizedFetch, prfOutput, client };
+    return {
+      identity: await client.identity(),
+      fetchFn: client.authorizedFetch,
+      prfOutput,
+      client,
+    };
   } catch (err: unknown) {
     // 未登録・キャンセル・オフライン。秘密は載せずに種別だけ残す
     console.warn(
