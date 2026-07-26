@@ -9,7 +9,7 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { createApp } from "@zakki/api/app.ts";
 import { createSoftAuthenticator, type SoftAuthenticator } from "@zakki/api/auth/test-fixtures.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import { authChallenges, credentials } from "@zakki/api/db/schema.ts";
+import { accounts, authChallenges, credentials } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
 import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
 
@@ -96,6 +96,31 @@ async function loginChallenge(): Promise<string> {
   expect(res.status).toBe(200);
   const options = (await res.json()) as { challenge: string };
   return options.challenge;
+}
+
+/** 登録済みのパスキーで実際にログインし、新しいセッションを得る */
+async function login(
+  device: SoftAuthenticator = authenticator,
+  counter = 1,
+): Promise<{ accountId: string; token: string }> {
+  const assertion = await device.assert({
+    challenge: await loginChallenge(),
+    origin: RP_ORIGIN,
+    counter,
+  });
+  const res = await post("/auth/login/verify", assertion);
+  expect(res.status).toBe(200);
+  return (await res.json()) as { accountId: string; token: string };
+}
+
+/** 全端末ログアウト（issue #117） */
+async function logout(token?: string): Promise<Response> {
+  return app.fetch(
+    new Request("https://control.test/auth/logout", {
+      method: "POST",
+      headers: token === undefined ? {} : { Authorization: `Bearer ${token}` },
+    }),
+  );
 }
 
 describe("POST /auth/register/options", () => {
@@ -324,5 +349,88 @@ describe("GET /auth/me（requireSession）", () => {
     const { token } = await registerAccount();
     const tampered = `${token.slice(0, -2)}xy`;
     expect((await get("/auth/me", tampered)).status).toBe(401);
+  });
+});
+
+describe("POST /auth/logout（セッションの一斉失効, issue #117）", () => {
+  test("ログアウトすると同じ JWT では保護エンドポイントに到達できない", async () => {
+    const { token } = await registerAccount();
+    // 失効前は通る（この 3 つが requireActiveSession の適用先すべて）
+    expect((await get("/auth/me", token)).status).toBe(200);
+    expect((await get("/auth/credentials", token)).status).toBe(200);
+
+    expect((await logout(token)).status).toBe(204);
+
+    expect((await get("/auth/me", token)).status).toBe(401);
+    expect((await get("/auth/credentials", token)).status).toBe(401);
+    // 署名不正・期限切れと同じ文言に潰す（何が起きたかを呼び出し側に区別させない）
+    expect(await (await get("/auth/me", token)).json()).toEqual({ error: "セッションが無効です" });
+  });
+
+  test("台帳のセッション世代がちょうど 1 つ進む（トークン側は据え置き）", async () => {
+    const { accountId, token } = await registerAccount();
+    const before = await db.select().from(accounts).where(eq(accounts.id, accountId));
+    expect(before[0]?.sessionEpoch).toBe(0);
+
+    expect((await logout(token)).status).toBe(204);
+
+    const after = await db.select().from(accounts).where(eq(accounts.id, accountId));
+    expect(after[0]?.sessionEpoch).toBe(1);
+    // アカウント自体は残る（退会とは別物。パスキーもそのまま）
+    expect(await db.select().from(credentials)).toHaveLength(1);
+  });
+
+  test("ログアウト後に再ログインすると新しい世代のトークンで通常どおり使える", async () => {
+    const registered = await registerAccount();
+    expect((await logout(registered.token)).status).toBe(204);
+
+    const reloggedIn = await login();
+    expect(reloggedIn.accountId).toBe(registered.accountId);
+    expect(reloggedIn.token).not.toBe(registered.token);
+    expect((await get("/auth/me", reloggedIn.token)).status).toBe(200);
+    // 新しいトークンは通るのに、古いトークンは通らないまま
+    expect((await get("/auth/me", registered.token)).status).toBe(401);
+  });
+
+  test("同じアカウントの別端末のセッションも一緒に落ちる（全端末ログアウト）", async () => {
+    const first = await registerAccount();
+    // 同じパスキーでもう 1 セッション（= 2 台目でログインした状態）
+    const second = await login();
+    expect((await get("/auth/me", second.token)).status).toBe(200);
+
+    // 落とすのは片方のトークンからでよい
+    expect((await logout(first.token)).status).toBe(204);
+    expect((await get("/auth/me", first.token)).status).toBe(401);
+    expect((await get("/auth/me", second.token)).status).toBe(401);
+  });
+
+  test("他アカウントのセッションは巻き添えにしない", async () => {
+    const mine = await registerAccount();
+    const otherDevice = await createSoftAuthenticator(RP_ID);
+    authenticator = otherDevice;
+    const stranger = await registerAccount();
+    expect(stranger.accountId).not.toBe(mine.accountId);
+
+    expect((await logout(mine.token)).status).toBe(204);
+    expect((await get("/auth/me", mine.token)).status).toBe(401);
+    expect((await get("/auth/me", stranger.token)).status).toBe(200);
+  });
+
+  test("二度目のログアウトは 401（同じトークンはもう使えない）", async () => {
+    const { accountId, token } = await registerAccount();
+    expect((await logout(token)).status).toBe(204);
+    expect((await logout(token)).status).toBe(401);
+    // 弾かれた分は世代を進めない（無効なトークンで世代を動かせない）
+    const rows = await db.select().from(accounts).where(eq(accounts.id, accountId));
+    expect(rows[0]?.sessionEpoch).toBe(1);
+  });
+
+  test("未認証・偽造トークンではログアウトできない（他人のセッションを落とせない）", async () => {
+    const { accountId } = await registerAccount();
+    expect((await logout()).status).toBe(401);
+    expect((await logout("not-a-token")).status).toBe(401);
+
+    const rows = await db.select().from(accounts).where(eq(accounts.id, accountId));
+    expect(rows[0]?.sessionEpoch).toBe(0);
   });
 });

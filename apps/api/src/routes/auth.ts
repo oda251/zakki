@@ -15,7 +15,12 @@ import { Hono } from "hono";
 import * as v from "valibot";
 import type { ApiEnv, SessionEnv } from "@zakki/api/context.ts";
 import { consumeChallenge, issueChallenge } from "@zakki/api/auth/challenges.ts";
-import { issueSession, requireLiveAccount, requireSession } from "@zakki/api/auth/session.ts";
+import {
+  issueSession,
+  requireActiveSession,
+  requireSession,
+  revokeSessions,
+} from "@zakki/api/auth/session.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { accounts, credentials } from "@zakki/api/db/schema.ts";
 import type { AppDeps, AuthConfig } from "@zakki/api/deps.ts";
@@ -23,7 +28,8 @@ import { parseBody } from "@zakki/api/parse.ts";
 
 /**
  * パスキー（WebAuthn）による登録・ログインとセッション発行（issue #100）、および
- * 既存アカウントへのクレデンシャル追加・一覧・失効（issue #115）。
+ * 既存アカウントへのクレデンシャル追加・一覧・失効（issue #115）、
+ * 全端末ログアウト（issue #117）。
  *
  * サーバが扱うのは「この鍵ペアの持ち主か」だけで、E2E の鍵材料には触れない。
  * registration options で PRF extension を有効化するのは Phase 8（#103 / #104）の
@@ -40,6 +46,9 @@ const RP_NAME = "zakki";
  * 「表示上どのアカウントか」を分けるのに足り、UUID 全体を OS の UI に晒さずに済む。
  */
 const ACCOUNT_HANDLE_CHARS = 8;
+
+/** 新規アカウントのセッション世代（issue #117）。schema の default と同じ値 */
+const INITIAL_SESSION_EPOCH = 0;
 
 /**
  * PRF extension（WebAuthn L3）。TypeScript の DOM 型・@simplewebauthn の
@@ -217,10 +226,29 @@ async function buildRegistrationOptions(params: {
   return { options, displayName: identity.userDisplayName };
 }
 
-/** 検証済みのセッションを JSON で返す共通形（register / login で同じ） */
-async function sessionResponse(accountId: string, config: AuthConfig, now: number) {
-  const session = await issueSession(accountId, config.sessionSecret, now);
+/**
+ * 検証済みのセッションを JSON で返す共通形（register / login で同じ）。
+ * `sessionEpoch` は台帳の現在値をそのまま焼き込む（issue #117）——新規登録は
+ * 作りたての 0、ログインは accounts から読んだ値。
+ */
+async function sessionResponse(
+  accountId: string,
+  config: AuthConfig,
+  now: number,
+  sessionEpoch: number,
+) {
+  const session = await issueSession(accountId, config.sessionSecret, now, sessionEpoch);
   return { accountId, token: session.token, expiresAt: session.expiresAt };
+}
+
+/** ログイン時にトークンへ焼く世代を台帳から引く（アカウントが無ければ null） */
+async function currentSessionEpoch(db: ControlDb, accountId: string): Promise<number | null> {
+  const rows = await db
+    .select({ sessionEpoch: accounts.sessionEpoch })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .limit(1);
+  return rows[0]?.sessionEpoch ?? null;
 }
 
 export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
@@ -304,7 +332,7 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
     // accounts と credentials は「片方だけ在る」状態を作らない（孤児アカウント =
     // 二度とログインできない行）ため 1 バッチで書く
     await db.batch([
-      db.insert(accounts).values({ id: accountId, createdAt }),
+      db.insert(accounts).values({ id: accountId, sessionEpoch: INITIAL_SESSION_EPOCH, createdAt }),
       db.insert(credentials).values({
         credentialId: credential.id,
         accountId,
@@ -317,7 +345,8 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
         createdAt,
       }),
     ]);
-    return c.json(await sessionResponse(accountId, auth, now));
+    // 作りたてのアカウントなので世代は初期値。台帳へ書いた値と同じものを焼く
+    return c.json(await sessionResponse(accountId, auth, now, INITIAL_SESSION_EPOCH));
   });
 
   // --- ログイン -----------------------------------------------------------
@@ -381,6 +410,11 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
     }
     if (!verification.verified) return c.json({ error: "ログインを検証できませんでした" }, 401);
 
+    // 発行するトークンに焼く世代を台帳から読む（issue #117）。行が無い＝退会済み
+    // アカウントの取り残されたクレデンシャル。ログインさせない（未登録と同じ 401）
+    const sessionEpoch = await currentSessionEpoch(db, stored.accountId);
+    if (sessionEpoch === null) return c.json({ error: "未登録のクレデンシャルです" }, 401);
+
     // クローン検知のため counter を進める。0 のまま返す認証器（counter 非対応）も
     // あるので値の増加は強制せず、報告された値をそのまま保存する
     await db
@@ -388,7 +422,7 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
       .set({ counter: verification.authenticationInfo.newCounter })
       .where(eq(credentials.credentialId, stored.credentialId));
 
-    return c.json(await sessionResponse(stored.accountId, auth, now));
+    return c.json(await sessionResponse(stored.accountId, auth, now, sessionEpoch));
   });
 
   // --- セッション確認 -----------------------------------------------------
@@ -397,12 +431,31 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
   // `use` のパスは保護対象と同じ `/me` に絞る: `"*"` だと同じインスタンスに後から
   // 未認証ルートを足したときに巻き込む（あるいは登録順に依存する）ため、
   // 「このパスだけが保護対象」を形で示す
-  // 退会済みアカウントの生き残りトークンも弾く（#116）。中継サーバ（apps/web）は
-  // この応答で「あなたは誰か」を解決するので、ここが 401 になることが中継の遮断に
-  // そのまま効く
+  // 退会済みアカウント・ログアウト済み世代の生き残りトークンも弾く（#116 / #117）。
+  // 中継サーバ（apps/web）はこの応答で「あなたは誰か」を解決するので、ここが 401 に
+  // なることが中継の遮断にそのまま効く
   const session = new Hono<SessionEnv>();
-  session.use("/me", requireSession(auth.sessionSecret), requireLiveAccount(db));
+  session.use("/me", requireSession(auth.sessionSecret), requireActiveSession(db));
   session.get("/me", (c) => c.json({ accountId: c.get("accountId") }));
+
+  // --- ログアウト（issue #117） ---------------------------------------------
+  //
+  // セッション世代を +1 するだけ。そのアカウントが過去に発行した**全ての**トークンが
+  // 同時に無効になる（= 全端末ログアウト）。
+  //
+  // 「この端末だけ」を表現しないのは意図的: 端末ごとの失効を持つにはトークン 1 本ごとの
+  // 状態（発行済み一覧）が要り、それはステートレスなセッション設計そのものを覆す。
+  // 一方、実際に必要な「あの端末を切りたい」は**パスキー単位の失効**
+  // （`DELETE /auth/credentials/:credentialId`, #115）で表現できる——端末とパスキーは
+  // 1 対 1 に対応し、鍵を消せばその端末はもう二度とログインできない。
+  // 残るのは「消した瞬間に生きていたトークン」だけで、それはこのログアウト（全端末）を
+  // 併用すれば止まる。2 つの機能の合成で目的が満たせるので、端末単位の失効は持たない。
+  session.use("/logout", requireSession(auth.sessionSecret), requireActiveSession(db));
+  session.post("/logout", async (c) => {
+    await revokeSessions(db, c.get("accountId"));
+    // 返すものが無い。以降このトークンは requireActiveSession で 401 になる
+    return c.body(null, 204);
+  });
 
   // --- クレデンシャル管理（issue #115） -------------------------------------
   //
@@ -410,8 +463,8 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
   // ここは全て要セッション: 未認証で追加できたらパスキー認証の意味が無い。
   // `/credentials` 自身と配下を別々に宣言するのは、`"*"` を避けて
   // 「保護対象がどのパスか」を形で示す方針（`/me` と同じ）。
-  session.use("/credentials", requireSession(auth.sessionSecret), requireLiveAccount(db));
-  session.use("/credentials/*", requireSession(auth.sessionSecret), requireLiveAccount(db));
+  session.use("/credentials", requireSession(auth.sessionSecret), requireActiveSession(db));
+  session.use("/credentials/*", requireSession(auth.sessionSecret), requireActiveSession(db));
 
   session.post("/credentials/options", async (c) => {
     const body = await parseBody(c.req.raw, RegisterOptionsSchema);

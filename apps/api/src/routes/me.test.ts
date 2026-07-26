@@ -6,7 +6,7 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { createApp } from "@zakki/api/app.ts";
-import { createSoftAuthenticator } from "@zakki/api/auth/test-fixtures.ts";
+import { createSoftAuthenticator, type SoftAuthenticator } from "@zakki/api/auth/test-fixtures.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
@@ -83,7 +83,11 @@ beforeEach(async () => {
 });
 
 /** パスキーを登録してセッションを得る（#100 の経路をそのまま通す） */
-async function login(): Promise<{ accountId: string; token: string }> {
+async function login(): Promise<{
+  accountId: string;
+  token: string;
+  authenticator: SoftAuthenticator;
+}> {
   const authenticator = await createSoftAuthenticator(RP_ID);
   const optionsRes = await app.fetch(
     new Request("https://control.test/auth/register/options", {
@@ -99,6 +103,30 @@ async function login(): Promise<{ accountId: string; token: string }> {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
+    }),
+  );
+  expect(res.status).toBe(200);
+  return { ...((await res.json()) as { accountId: string; token: string }), authenticator };
+}
+
+/** 同じパスキーでログインし直す（ログアウト後の再ログイン検証, issue #117） */
+async function reLogin(
+  authenticator: SoftAuthenticator,
+): Promise<{ accountId: string; token: string }> {
+  const optionsRes = await app.fetch(
+    new Request("https://control.test/auth/login/options", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+  );
+  const { challenge } = (await optionsRes.json()) as { challenge: string };
+  const assertion = await authenticator.assert({ challenge, origin: RP_ORIGIN, counter: 1 });
+  const res = await app.fetch(
+    new Request("https://control.test/auth/login/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(assertion),
     }),
   );
   expect(res.status).toBe(200);
@@ -127,6 +155,16 @@ async function deleteMe(token?: string): Promise<Response> {
 async function authMe(token: string): Promise<Response> {
   return app.fetch(
     new Request("https://control.test/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  );
+}
+
+/** 全端末ログアウト（issue #117） */
+async function logout(token: string): Promise<Response> {
+  return app.fetch(
+    new Request("https://control.test/auth/logout", {
+      method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     }),
   );
@@ -509,5 +547,49 @@ describe("退会後の生き残りセッション（issue #116。恒久的な失
     const session = await login();
     expect((await deleteMe(session.token)).status).toBe(204);
     expect(await db.select().from(credentials)).toEqual([]);
+  });
+});
+
+describe("ログアウト後の生き残りセッション（issue #117）", () => {
+  test("同じ JWT で `GET /me/db` を叩いても 401。DB は増えも消えもしない", async () => {
+    const session = await login();
+    expect((await getDb(session.token)).status).toBe(200);
+    const name = await databaseNameForAccount(session.accountId);
+    const createsBefore = fake.state.createRequests.length;
+
+    expect((await logout(session.token)).status).toBe(204);
+
+    const res = await getDb(session.token);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "セッションが無効です" });
+    expect((await authMe(session.token)).status).toBe(401);
+    // 退会ではないので DB も台帳もそのまま（再ログインすれば同じ DB に戻れる）
+    expect(fake.state.createRequests).toHaveLength(createsBefore);
+    expect(fake.state.databases.has(name)).toBe(true);
+    expect(await db.select().from(accountDatabases)).toHaveLength(1);
+  });
+
+  test("再ログインすれば同じ DB に戻れる（データを失わない）", async () => {
+    const session = await login();
+    const first = (await (await getDb(session.token)).json()) as DbResponse;
+    expect((await logout(session.token)).status).toBe(204);
+
+    const again = await reLogin(session.authenticator);
+    expect(again.accountId).toBe(session.accountId);
+    const res = await getDb(again.token);
+    expect(res.status).toBe(200);
+    const second = (await res.json()) as DbResponse;
+    // 接続先は同じ DB。作成 API は初回の 1 度きりのまま
+    expect(second.dbUrl).toBe(first.dbUrl);
+    expect(fake.state.createRequests).toHaveLength(1);
+  });
+
+  test("ログアウトしたセッションでは退会もできない（無効なトークンは何もできない）", async () => {
+    const session = await login();
+    expect((await logout(session.token)).status).toBe(204);
+
+    expect((await deleteMe(session.token)).status).toBe(401);
+    expect(fake.state.deleteRequests).toEqual([]);
+    expect(await db.select().from(accounts)).toHaveLength(1);
   });
 });

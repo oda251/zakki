@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { SessionEnv } from "@zakki/api/context.ts";
-import { requireLiveAccount, requireSession } from "@zakki/api/auth/session.ts";
+import { requireActiveSession, requireSession } from "@zakki/api/auth/session.ts";
 import type { AppDeps } from "@zakki/api/deps.ts";
 import { databaseUrl, deleteAccount, ensureUserDatabase } from "@zakki/api/turso/provision.ts";
 
@@ -32,15 +32,15 @@ export function meRoutes(deps: AppDeps): Hono<SessionEnv> {
   const app = new Hono<SessionEnv>();
   const { db, auth, turso } = deps;
 
-  // 認証必須。#100 の requireSession をそのまま再利用し、退会済みアカウントの
-  // 生き残りトークンを requireLiveAccount で弾く（#116。これが無いと退会後の
-  // `GET /me/db` が消したはずの DB を作り直す）。
+  // 認証必須。#100 の requireSession をそのまま再利用し、退会済みアカウント（#116）と
+  // ログアウト済み世代（#117）の生き残りトークンを requireActiveSession で弾く
+  // （前者が無いと退会後の `GET /me/db` が消したはずの DB を作り直す）。
   // 適用範囲は登録順ではなくパスで示す（`"*"` だと後からルートを足したときに
   // 保護漏れが読み取れない。#110 レビューで auth.ts に入れたのと同じ形）
-  app.use("/db", requireSession(auth.sessionSecret), requireLiveAccount(db));
+  app.use("/db", requireSession(auth.sessionSecret), requireActiveSession(db));
   // `DELETE /me` 自身も同じ保護下に置く。二重の退会は 401 になるが、DB 削除に
   // 失敗した中途半端な状態では accounts 行が残っている（= 再試行は通る）
-  app.use("/", requireSession(auth.sessionSecret), requireLiveAccount(db));
+  app.use("/", requireSession(auth.sessionSecret), requireActiveSession(db));
 
   app.get("/db", async (c) => {
     const accountId = c.get("accountId");
@@ -81,7 +81,7 @@ export function meRoutes(deps: AppDeps): Hono<SessionEnv> {
       console.error("[me] account deletion failed:", removed.error);
       return c.json({ error: "アカウントを削除できませんでした" }, 502);
     }
-    // 返すものが無い。以降このセッションは requireLiveAccount で 401 になる
+    // 返すものが無い。以降このセッションは requireActiveSession で 401 になる
     return c.body(null, 204);
   });
 

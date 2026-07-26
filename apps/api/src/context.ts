@@ -14,7 +14,11 @@ export interface ApiEnv {
   Variables: { db: ControlDb };
 }
 
-/** `requireSession` を通したルート専用。accountId は検証済みセッションの subject */
+/**
+ * `requireSession` を通したルート専用。accountId は検証済みセッションの subject、
+ * sessionEpoch はトークンに焼かれたセッション世代（issue #117）で、
+ * `requireActiveSession` が台帳の現在値と突き合わせるために使う。
+ */
 export interface SessionEnv {
-  Variables: { db: ControlDb; accountId: string };
+  Variables: { db: ControlDb; accountId: string; sessionEpoch: number };
 }
