@@ -10,7 +10,7 @@ import type {
   AuthenticationResponseJSON,
   RegistrationResponseJSON,
 } from "@simplewebauthn/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import * as v from "valibot";
 import type { ApiEnv, SessionEnv } from "@zakki/api/context.ts";
@@ -410,8 +410,8 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
   // ここは全て要セッション: 未認証で追加できたらパスキー認証の意味が無い。
   // `/credentials` 自身と配下を別々に宣言するのは、`"*"` を避けて
   // 「保護対象がどのパスか」を形で示す方針（`/me` と同じ）。
-  session.use("/credentials", requireSession(auth.sessionSecret));
-  session.use("/credentials/*", requireSession(auth.sessionSecret));
+  session.use("/credentials", requireSession(auth.sessionSecret), requireLiveAccount(db));
+  session.use("/credentials/*", requireSession(auth.sessionSecret), requireLiveAccount(db));
 
   session.post("/credentials/options", async (c) => {
     const body = await parseBody(c.req.raw, RegisterOptionsSchema);
@@ -538,9 +538,23 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
       // 到達不能になる）。取り返しがつかないので API 側で拒否する
       return c.json({ error: "最後のパスキーは失効できません" }, 409);
     }
-    await db
+    // 件数の判定を DELETE 自体の条件に埋める。上の read で判定して削除すると、
+    // 2 本のアカウントで別々の鍵への DELETE が同時に走ったとき両方が「2 本ある」を
+    // 見て通過し 0 本になる（= アカウントに二度と入れない。#119 未実装のため復旧不能）。
+    // SQLite は 1 文を原子的に実行するので、同時実行の 2 本目はここで 0 行になる
+    const deleted = await db
       .delete(credentials)
-      .where(and(eq(credentials.credentialId, credentialId), eq(credentials.accountId, accountId)));
+      .where(
+        and(
+          eq(credentials.credentialId, credentialId),
+          eq(credentials.accountId, accountId),
+          sql`(select count(*) from ${credentials} where ${credentials.accountId} = ${accountId}) > 1`,
+        ),
+      )
+      .returning({ credentialId: credentials.credentialId });
+    if (deleted.length === 0) {
+      return c.json({ error: "最後のパスキーは失効できません" }, 409);
+    }
     return c.json({ ok: true });
   });
 

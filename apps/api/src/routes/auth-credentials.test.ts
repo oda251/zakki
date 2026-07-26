@@ -320,6 +320,25 @@ describe("DELETE /auth/credentials/:credentialId（失効）", () => {
     expect(await db.select().from(credentials)).toHaveLength(1);
   });
 
+  test("2 本を同時に失効させても 0 本にはならない", async () => {
+    const account = await registerAccount();
+    const second = await addCredential(account.token);
+    expect(await db.select().from(credentials)).toHaveLength(2);
+
+    // 不変条件（最後の 1 本は必ず残る）を並行実行で押さえる。
+    // 注意: このテストはレース自体を決定的に再現するものではない（in-process の
+    // libsql では read-then-write 実装でも通ってしまう）。実際の防御は DELETE 文に
+    // 埋めた件数条件で、SQLite が 1 文を原子的に実行することに依っている
+    const [a, b] = await Promise.all([
+      del(`/auth/credentials/${authenticator.credentialId}`, account.token),
+      del(`/auth/credentials/${second.created.credentialId}`, account.token),
+    ]);
+
+    const statuses = [a.status, b.status].toSorted((x, y) => x - y);
+    expect(statuses).toEqual([200, 409]);
+    expect(await db.select().from(credentials)).toHaveLength(1);
+  });
+
   test("他アカウントのクレデンシャルは失効できない（404 で在否も教えない）", async () => {
     const victim = await registerAccount();
     const victimCredentialId = authenticator.credentialId;
