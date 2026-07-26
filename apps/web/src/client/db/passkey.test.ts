@@ -275,6 +275,19 @@ describe("複数パスキー（issue #120）", () => {
     };
     expect(await unlockWithPasskey(envelopes, rogue)).toBeNull();
   });
+
+  test("P12b: 解釈できない credentialId が 1 本混ざっても、他のパスキーは巻き添えにならない", async () => {
+    const api = fakeAuthenticator();
+    await enroll(api);
+    const envelopes = await fetchEnvelopes(fetchFn);
+    // 何らかの経路で壊れた id が入った状態を再現する。候補の組み立てで throw すると
+    // 封筒が N 本ある状況では「全部のパスキーが使えない」に化ける（#120 レビュー所見）
+    const broken = [
+      { kind: "passkey" as const, wrappedDek: "AAAA", credentialId: "not/base64url" },
+      ...envelopes,
+    ];
+    expect(await unlockWithPasskey(broken, api)).toEqual(dek);
+  });
 });
 
 describe("healPasskeyEnvelope（自己修復, issue #120）", () => {

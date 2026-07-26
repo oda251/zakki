@@ -124,6 +124,10 @@ describe("POST /api/crypto/envelopes/passkey (#103)", () => {
     expect((await post({ wrappedDek: "QUJD" })).status).toBe(400);
     expect((await post({ wrappedDek: "", credentialId: "c" })).status).toBe(400);
     expect((await post({ wrappedDek: "QUJD", credentialId: "" })).status).toBe(400);
+    // base64url 以外は保存させない。解釈できない id が 1 本混ざると、封筒が複数ある
+    // 状況で allowCredentials の組み立てが巻き添えになる（#120）
+    expect((await post({ wrappedDek: "QUJD", credentialId: "not/base64url" })).status).toBe(400);
+    expect((await post({ wrappedDek: "QUJD", credentialId: "cred=padding" })).status).toBe(400);
   });
 
   test("B7: wrappedDek が 72 バイト（nonce 24 + DEK 32 + tag 16）以外は 400", async () => {

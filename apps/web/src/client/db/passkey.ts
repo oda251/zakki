@@ -211,10 +211,16 @@ export async function evaluatePrf(
   api: CredentialsApi,
   credentialIds: readonly string[] = [],
 ): Promise<PrfEvaluation> {
-  const allowCredentials = credentialIds.map((id) => ({
-    type: "public-key" as const,
-    id: credentialIdToBytes(id),
-  }));
+  // 壊れた id が 1 本混ざっても、他のパスキーを巻き添えにしない。map の中で throw すると
+  // 候補全体が失われ、封筒が N 本ある状況では「全部のパスキーが使えなくなる」に化ける
+  const allowCredentials = credentialIds.flatMap((id) => {
+    try {
+      return [{ type: "public-key" as const, id: credentialIdToBytes(id) }];
+    } catch {
+      console.warn("zakki-passkey: 資格情報 id を解釈できないため候補から外します");
+      return [];
+    }
+  });
   const credential = await api.get({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(CHALLENGE_BYTES)),

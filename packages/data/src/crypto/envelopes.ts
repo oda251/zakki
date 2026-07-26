@@ -193,8 +193,10 @@ export async function addPasskeyEnvelope(
  * 片方だけ成功しても致命的ではない: クレデンシャルを失効させればログインも PRF 評価も
  * できないので、残った封筒を開く経路が無い。
  *
- * 最後の封筒が消えて「封筒ゼロ」になることは無い: passkey 封筒は既存封筒がある DB にしか
- * 作れない（{@link putPasskeyEnvelopeIfProvisioned}）ので、必ず他の kind が残っている。
+ * passkey 封筒を消して「封筒ゼロ」になることは、現状の経路では起きない: passkey 封筒は
+ * 既存封筒がある DB にしか作れず（{@link putPasskeyEnvelopeIfProvisioned}）、他の kind を
+ * 消す経路も無いため。ただしそれを保証しているのは経路の組み合わせであって、この関数や
+ * スキーマの制約ではない（他 kind の削除を足すなら、ここも見直す）。
  *
  * @returns 実際に消えたら true
  */
