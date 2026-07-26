@@ -91,19 +91,14 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
   const now = options.now ?? Date.now;
   const base = options.controlPlaneUrl.replace(/\/+$/, "");
   const cache = new Map<string, CacheEntry>();
+  // 解決中の Promise。ブラウザ起動直後は封筒取得と各 collection の replication が
+  // 同時に来るので、これが無いと同じセッションで解決が並列に走り、往復・DB 作成・
+  // migrate が多重になる（初回ログイン時は DB が空で、migration の CREATE TABLE は
+  // IF NOT EXISTS を持たないため実 Turso では衝突しうる）。開いたハンドルの取り違え
+  // （後勝ちで孤児になる）もこれで消える
+  const inFlight = new Map<string, Promise<Db | null>>();
 
-  return async (req) => {
-    const token = bearer(req);
-    if (token === null) return null;
-    const nowSec = Math.floor(now() / 1000);
-
-    // 失効した項目は都度掃除する（セッションは短命なので、これで際限なく増えない）
-    for (const [key, entry] of cache) {
-      if (entry.expiresAt <= nowSec) cache.delete(key);
-    }
-    const cached = cache.get(token);
-    if (cached !== undefined) return cached.db;
-
+  const resolve = async (token: string, nowSec: number): Promise<Db | null> => {
     // 信頼できる出どころ（コントロールプレーン）に「あなたは誰で、どの DB か」を訊く。
     // 未ログイン・失効セッションはここで 401 になり、解決不能（null）になる
     const account = await getJson(fetchFn, `${base}/auth/me`, token, AccountSchema);
@@ -117,5 +112,25 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
     const db = await options.openUserDb(remoteIdentity(connection));
     cache.set(token, { db, expiresAt: connection.expiresAt });
     return db;
+  };
+
+  return async (req) => {
+    const token = bearer(req);
+    if (token === null) return null;
+    const nowSec = Math.floor(now() / 1000);
+
+    // 失効した項目は都度掃除する（セッションは短命なので、これで際限なく増えない）
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt <= nowSec) cache.delete(key);
+    }
+    const cached = cache.get(token);
+    if (cached !== undefined) return cached.db;
+
+    const pending = inFlight.get(token);
+    if (pending !== undefined) return pending;
+
+    const task = resolve(token, nowSec).finally(() => inFlight.delete(token));
+    inFlight.set(token, task);
+    return task;
   };
 }

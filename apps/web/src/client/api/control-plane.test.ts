@@ -7,6 +7,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import { replDocs } from "@zakki/data/db/schema.ts";
 import type { Hono } from "hono";
+import { sign } from "hono/jwt";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import type { ControlPlaneClient } from "@zakki/web/client/api/control-plane.ts";
 import {
@@ -36,6 +37,9 @@ import { createRemoteDbResolver } from "@zakki/web/server/identity/remote.ts";
  */
 
 const PASSPHRASE = "リモート構成テスト用パスフレーズ";
+
+/** JWT の exp / iat 用（秒） */
+const nowSec = (): number => Math.floor(Date.now() / 1000);
 
 let cp: TestControlPlane;
 /** 単一ユーザ self-host 用の DB（マルチユーザ構成では一切使われないことを検証する） */
@@ -250,6 +254,55 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     });
     expect(res.status).toBe(401);
     expect(userDbs.size).toBe(0);
+  });
+
+  test("R6d: 別の鍵で署名した Bearer は中継層で弾く（この PR が作った認可境界の直接検証）", async () => {
+    const { client } = await signUp();
+    // 正規セッションで一度通し、DB が開かれた状態を作る
+    const ok = await client.authorizedFetch("/api/crypto/envelopes", { method: "GET" });
+    expect(ok.status).toBe(200);
+    const opened = userDbs.size;
+
+    // 形は正しいが署名鍵が違う JWT（＝偽造セッション）
+    const forged = await sign({ sub: "他人の accountId", exp: nowSec() + 3600 }, "wrong-secret");
+    const res = await webFetch("/api/crypto/envelopes", {
+      method: "GET",
+      headers: { authorization: `Bearer ${forged}` },
+    });
+    expect(res.status).toBe(401);
+    // 解決に失敗するので DB は増えない（他人の DB を開かせられない）
+    expect(userDbs.size).toBe(opened);
+  });
+
+  test("R6d2: 期限切れの Bearer も中継層で弾く", async () => {
+    const expired = await sign(
+      { sub: "期限切れセッション", exp: nowSec() - 60 },
+      "test-session-secret",
+    );
+    const res = await webFetch("/api/crypto/envelopes", {
+      method: "GET",
+      headers: { authorization: `Bearer ${expired}` },
+    });
+    expect(res.status).toBe(401);
+    expect(userDbs.size).toBe(0);
+  });
+
+  test("R6e: 起動直後に解決が並行しても DB は 1 つしか開かない（migrate 多重を防ぐ）", async () => {
+    const { client } = await signUp();
+    const before = cp.requests.length;
+
+    // ブラウザ起動直後の実際の形: 封筒取得と各 collection の replication が同時に走る
+    const results = await Promise.all([
+      client.authorizedFetch("/api/crypto/envelopes", { method: "GET" }),
+      client.authorizedFetch("/api/crypto/envelopes", { method: "GET" }),
+      client.authorizedFetch("/api/crypto/envelopes", { method: "GET" }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
+
+    // 解決は 1 回だけ = openUserDb も /auth/me + /me/db も 1 セットで済む
+    expect(openedIdentities.length).toBe(1);
+    expect(userDbs.size).toBe(1);
+    expect(cp.requests.length - before).toBe(2);
   });
 
   test("R6c: 同じセッションの 2 回目は解決をやり直さない（DB は 1 つだけ開く）", async () => {
