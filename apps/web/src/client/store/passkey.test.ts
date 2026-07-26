@@ -13,8 +13,10 @@ import { usePasskeyStore } from "@zakki/web/client/store/passkey.ts";
 const base: PasskeyControls = {
   available: true,
   enrolled: false,
+  credentialIds: [],
   createCredential: () => Promise.resolve("cred-1"),
   saveEnvelope: () => Promise.resolve(),
+  revokeEnvelope: null,
   unlock: null,
 };
 
@@ -35,6 +37,23 @@ describe("usePasskeyStore.enroll", () => {
     expect(state.status).toBe("done");
     expect(state.controls?.enrolled).toBe(true);
     expect(state.pendingCredentialId).toBeNull();
+    expect(state.controls?.credentialIds).toEqual(["cred-1"]);
+  });
+
+  test("S1b: 2 本目の登録は一覧に足す（封筒はクレデンシャルごと, #120）", async () => {
+    let nextId = "cred-1";
+    usePasskeyStore.getState().connect({
+      ...base,
+      createCredential: () => Promise.resolve(nextId),
+    });
+    await usePasskeyStore.getState().enroll();
+    nextId = "cred-2";
+    await usePasskeyStore.getState().enroll();
+    expect(usePasskeyStore.getState().controls?.credentialIds).toEqual(["cred-1", "cred-2"]);
+
+    // 同じパスキーの再登録（封筒の上書き）は重複させない
+    await usePasskeyStore.getState().enroll();
+    expect(usePasskeyStore.getState().controls?.credentialIds).toEqual(["cred-1", "cred-2"]);
   });
 
   test("S2: 2 段目（PRF 評価）が弾かれたら credentialId を保留し、retrySave で完了する", async () => {

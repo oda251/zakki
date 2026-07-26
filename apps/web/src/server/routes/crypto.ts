@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { errAsync } from "neverthrow";
 import { DEK_BYTES } from "@zakki/core/crypto/dek.ts";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
-import { listEnvelopeKinds, putPasskeyEnvelope } from "@zakki/data/crypto/envelopes.ts";
+import {
+  deletePasskeyEnvelope,
+  putPasskeyEnvelopeIfProvisioned,
+} from "@zakki/data/crypto/envelopes.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import type { KeyEnvelope } from "@zakki/data/db/schema.ts";
 import { keyEnvelopes } from "@zakki/data/db/schema.ts";
@@ -14,7 +17,11 @@ import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
 import { PasskeyEnvelopePutSchema } from "@zakki/web/shared/api-schemas.ts";
 
 /**
- * クライアントアンロック用の封筒配布（issue #43）と passkey 封筒の登録（issue #103）。
+ * クライアントアンロック用の封筒配布（issue #43）と passkey 封筒の登録・失効
+ * （issue #103 / #120）。
+ *
+ * 配布（GET）の wire 形は #120 でも変わらない: 既に「封筒の配列 + kind の
+ * discriminated union」なので、passkey 封筒が複数入るだけで済む。
  *
  * 封筒（wrapped DEK / salt / KDF パラメータ / credentialId）は KEK 無しには開けない
  * 公開可能情報で、この経路に平文 DEK・PRF 出力・復号は一切置かない（#28。
@@ -31,7 +38,11 @@ function b64(buf: Buffer): string {
   );
 }
 
-/** keyfile 封筒・メタ欠落行（KDF パラメータ / credentialId）は配布対象外（null） */
+/**
+ * keyfile 封筒・メタ欠落行（KDF パラメータ / credentialId）は配布対象外（null）。
+ * passkey の credentialId 欠落は schema の CHECK 制約で入り得ないが、開けない封筒を
+ * クライアントへ配らないための最後の砦として残す。
+ */
 function toWireEnvelope(row: KeyEnvelope): CryptoEnvelope | null {
   if (row.kind === "keyfile") return null;
   if (row.kind === "passkey") {
@@ -69,8 +80,9 @@ export function cryptoRoutes(deps: AppDeps): Hono {
     );
   });
 
-  // passkey 封筒の登録（issue #103）。クライアントで wrap 済みの封筒を保存するだけで、
-  // 平文 DEK・PRF 出力はこの経路に現れない。kind 主キーにより再登録は上書き（1 封筒）。
+  // passkey 封筒の登録（issue #103 / #120）。クライアントで wrap 済みの封筒を保存する
+  // だけで、平文 DEK・PRF 出力はこの経路に現れない。封筒は **credentialId 単位** で、
+  // 同じ credentialId の再登録だけが上書きになる（別のパスキーは別の封筒として増える）。
   app.post("/envelopes/passkey", async (c) => {
     const body = await parseBody(c.req.raw, PasskeyEnvelopePutSchema);
     if (body === null) return c.json({ error: "invalid body" }, 400);
@@ -94,13 +106,32 @@ export function cryptoRoutes(deps: AppDeps): Hono {
     // 暗号未プロビジョン（封筒ゼロ）の DB へは登録させない（409）。passkey 封筒だけが
     // 存在すると unlockOrSetup の初回判定（kinds.length === 0）が壊れ、PRF を評価できない
     // TUI/CLI から復旧不能になる。既存封筒 1 つ以上（= DEK が確立済み）を事前条件にする。
-    const kinds = await tryDbAsync(() => listEnvelopeKinds(db));
-    if (kinds.isErr()) return respond(c, errAsync(kinds.error));
-    if (kinds.value.length === 0) return c.json({ error: "crypto not provisioned" }, 409);
+    // 件数を読んでから書くと read-then-write の競合になるため、事前条件は SQL 側の
+    // 条件（INSERT ... WHERE EXISTS）で表現する（#120）。
+    const stored = await tryDbAsync(() =>
+      putPasskeyEnvelopeIfProvisioned(db, wrappedDek, body.credentialId),
+    );
+    if (stored.isErr()) return respond(c, errAsync(stored.error));
+    if (!stored.value) return c.json({ error: "crypto not provisioned" }, 409);
+    return c.json({ ok: true });
+  });
+
+  // passkey 封筒の失効（issue #120）。パスキー自体（公開鍵）はコントロールプレーン DB に
+  // あり、ここでは触れない: 失効は「クレデンシャル（apps/api の DELETE /auth/credentials/:id,
+  // #115）」と「封筒（この経路）」の **2 つの DB に跨る** ため、両方を消すのはクライアントの
+  // 責務になる。片方だけ成功しても致命的ではない（クレデンシャルを失効させれば PRF を
+  // 評価できないので、残った封筒を開く経路が無い）。
+  // 存在しない credentialId でも 200（冪等。2 段階削除の再実行を失敗させない）。
+  app.delete("/envelopes/passkey/:credentialId", async (c) => {
+    const credentialId = c.req.param("credentialId");
+    if (credentialId === "") return c.json({ error: "invalid credentialId" }, 400);
+    const db = await dbForRequest(deps, c.req.raw);
+    if (db === null) return c.json({ error: "認証が必要です" }, 401);
     return respond(
       c,
-      tryDbAsync(() => putPasskeyEnvelope(db, wrappedDek, body.credentialId)).map(() => ({
+      tryDbAsync(() => deletePasskeyEnvelope(db, credentialId)).map((deleted) => ({
         ok: true,
+        deleted,
       })),
     );
   });

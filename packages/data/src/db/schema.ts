@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import {
   blob,
+  check,
   index,
   integer,
   primaryKey,
@@ -164,25 +165,48 @@ export const cryptoMeta = sqliteTable("crypto_meta", {
  * パスフレーズ変更は `passphrase` 行の再 wrap（新ソルト）だけで完結し、データ行の
  * 再暗号化は一切しない（DEK は不変）。
  *
- * `kind` 主キー＝1 kind につき封筒 1 つは passkey でも維持する（issue #103 の判断）。
- * 複数デバイスは Apple/Google の同期パスキーで同一クレデンシャル（同一 PRF 出力）が
- * 行き渡る前提で 1 封筒あれば足りる。デバイス固有キー等で複数 passkey 封筒が必要に
- * なったら別 issue で主キーごと再設計する。
+ * **単数の kind と複数の passkey**（issue #120。#103 の「kind 主キー＝1 封筒」を改めた）:
+ * WebAuthn の PRF 出力は **クレデンシャル（鍵ペア）ごとに異なる** ため、パスキーを
+ * 追加してもその鍵で開ける封筒が無ければ記録は読めない。そこで主キーを代理キー（id）に
+ * 置き換え、「3 種は単数・passkey は鍵ごとに 1 本」を 2 本の部分ユニークインデックスで
+ * schema 自体に表す:
+ * - `UNIQUE (kind) WHERE kind <> 'passkey'`
+ * - `UNIQUE (credential_id) WHERE kind = 'passkey'`
+ *
+ * SQLite の UNIQUE は NULL 同士を別値として扱う（複数行が NULL を持てる）ので、
+ * 後者だけでは `credential_id IS NULL` の passkey 行が無限に増えうる。CHECK 制約で
+ * 「passkey ⇔ credential_id あり」を強制し、部分インデックスを実効化する。
  */
-export const keyEnvelopes = sqliteTable("key_envelopes", {
-  kind: text("kind", { enum: ["keyfile", "passphrase", "recovery", "passkey"] }).primaryKey(),
-  /** KEK で AEAD した DEK 封筒（`nonce || ciphertext`） */
-  wrappedDek: blob("wrapped_dek", { mode: "buffer" }).notNull(),
-  /** Argon2id ソルト（keyfile / passkey は null） */
-  kdfSalt: blob("kdf_salt", { mode: "buffer" }),
-  /** Argon2id opsLimit（keyfile / passkey は null） */
-  kdfOps: integer("kdf_ops"),
-  /** Argon2id memLimit（バイト, keyfile / passkey は null） */
-  kdfMem: integer("kdf_mem"),
-  /** WebAuthn credential id（base64url 等の文字列。passkey 封筒のみ、他は null） */
-  credentialId: text("credential_id"),
-  createdAt: text("created_at").notNull(),
-});
+export const keyEnvelopes = sqliteTable(
+  "key_envelopes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kind: text("kind", { enum: ["keyfile", "passphrase", "recovery", "passkey"] }).notNull(),
+    /** KEK で AEAD した DEK 封筒（`nonce || ciphertext`） */
+    wrappedDek: blob("wrapped_dek", { mode: "buffer" }).notNull(),
+    /** Argon2id ソルト（keyfile / passkey は null） */
+    kdfSalt: blob("kdf_salt", { mode: "buffer" }),
+    /** Argon2id opsLimit（keyfile / passkey は null） */
+    kdfOps: integer("kdf_ops"),
+    /** Argon2id memLimit（バイト, keyfile / passkey は null） */
+    kdfMem: integer("kdf_mem"),
+    /** WebAuthn credential id（base64url 等の文字列。passkey 封筒のみ、他は null） */
+    credentialId: text("credential_id"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("key_envelopes_kind_unique")
+      .on(t.kind)
+      .where(sql`"kind" <> 'passkey'`),
+    uniqueIndex("key_envelopes_passkey_credential_unique")
+      .on(t.credentialId)
+      .where(sql`"kind" = 'passkey'`),
+    check(
+      "key_envelopes_credential_id_only_passkey",
+      sql`("kind" = 'passkey') = ("credential_id" IS NOT NULL)`,
+    ),
+  ],
+);
 
 export const chunkTags = sqliteTable(
   "chunk_tags",

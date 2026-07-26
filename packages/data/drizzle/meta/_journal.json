@@ -92,6 +92,13 @@
       "when": 1784997666583,
       "tag": "0012_passkey_envelope",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1785101242767,
+      "tag": "0013_multi_passkey_envelopes",
+      "breakpoints": true
     }
   ]
 }

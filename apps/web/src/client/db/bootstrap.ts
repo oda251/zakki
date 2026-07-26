@@ -2,7 +2,8 @@
  * クライアント DB の起動シーケンス（issue #43 の合成点）。
  *
  * sodium ready → RxDB（本番は Dexie storage）→ unlock（封筒 → passkey PRF、
- * 失敗時はパスフレーズ → DEK, #104）→ replication 開始、の順で組み立てる。DEK は
+ * 失敗時はパスフレーズ → DEK, #104）→ 封筒の自己修復（#120）→ replication 開始、
+ * の順で組み立てる。パスキーは複数登録できる（封筒はクレデンシャルごと, #120）。DEK は
  * FieldCrypto と passkey 登録クロージャのみが保持し、永続ストレージ
  * （localStorage / sessionStorage / IndexedDB 等）へは書かない。
  *
@@ -22,13 +23,15 @@ import type {
 import { startReplication } from "@zakki/web/client/db/replication.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
-import type { CredentialsApi } from "@zakki/web/client/db/passkey.ts";
+import type { CredentialsApi, PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
 import {
   browserCredentials,
   createPasskeyCredential,
+  healPasskeyEnvelope,
+  revokePasskeyEnvelope,
   savePasskeyEnvelope,
+  unlockWithEvaluatedPrf,
   unlockWithPasskey,
-  unlockWithPrfOutput,
 } from "@zakki/web/client/db/passkey.ts";
 import { fetchEnvelopes, unlockWithPrompt } from "@zakki/web/client/db/unlock.ts";
 
@@ -45,12 +48,20 @@ import { fetchEnvelopes, unlockWithPrompt } from "@zakki/web/client/db/unlock.ts
 export interface PasskeyControls {
   /** この環境で WebAuthn（PRF）を試せるか。false ならパスフレーズのみ */
   available: boolean;
-  /** サーバに passkey 封筒が既にあるか */
+  /** サーバに passkey 封筒が既にあるか（1 本以上） */
   enrolled: boolean;
+  /** 封筒がある credentialId の一覧（複数パスキー, #120。失効 UI の材料） */
+  credentialIds: readonly string[];
   /** アンロック済み + WebAuthn 利用可のときだけ非 null。パスキーを作成し credentialId を返す */
   createCredential: (() => Promise<string>) | null;
   /** 作成済み credential の PRF を評価して封筒を保存する（Safari では別クリックで呼び直せる） */
   saveEnvelope: ((credentialId: string) => Promise<void>) | null;
+  /**
+   * そのパスキーの封筒を消す（#120）。**クレデンシャル本体はコントロールプレーン DB に
+   * あり、ここでは消えない**: 失効はクレデンシャル（`DELETE /auth/credentials/:id`, #115）
+   * → 封筒（これ）の 2 段階で、両方を呼ぶのは UI 側の責務。
+   */
+  revokeEnvelope: ((credentialId: string) => Promise<void>) | null;
   /**
    * 未アンロック + passkey 封筒あり + WebAuthn 利用可のときだけ非 null。
    * ユーザジェスチャ起点で passkey アンロックを再試行する。成功すれば（DB は同じ
@@ -76,10 +87,11 @@ export interface BootstrapOptions {
   /** WebAuthn adapter。既定は {@link browserCredentials}（未対応環境では null） */
   credentialsApi?: CredentialsApi | null;
   /**
-   * コントロールプレーンへのログイン時に **同じ get で** 得た PRF 出力（issue #105）。
+   * コントロールプレーンへのログイン時に **同じ get で** 得た PRF 評価結果（issue #105）。
    * 渡すと生体認証を再度求めずに passkey 封筒を開く。単一ユーザ構成では未指定。
+   * credentialId を伴うのは、封筒がクレデンシャルごとにあるため（#120）。
    */
-  prfOutput?: Uint8Array | null;
+  prf?: PrfEvaluation | null;
   replicationOptions?: Pick<StartReplicationOptions, "live" | "resyncIntervalMs" | "retryTime">;
 }
 
@@ -111,7 +123,7 @@ export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise
       return null;
     }),
   ]);
-  // 0) ログイン時の get で PRF 出力を既に得ているなら、それで開く（#105。生体認証は 1 回で済む）
+  // 0) ログイン時の get で PRF を既に評価しているなら、それで開く（#105。生体認証は 1 回で済む）
   // → 1) passkey 封筒があれば PRF で無言アンロック（#104） → 2) 失敗・キャンセル・未対応なら
   // 従来のパスフレーズプロンプト。順序はユーザ操作の軽い順（追加操作なし → 生体認証 → 入力）。
   const credentialsApi =
@@ -119,10 +131,21 @@ export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise
   const dek =
     envelopes === null
       ? null
-      : (unlockWithPrfOutput(envelopes, options.prfOutput) ??
+      : (unlockWithEvaluatedPrf(envelopes, options.prf) ??
         (await unlockWithPasskey(envelopes, credentialsApi)) ??
         (await unlockWithPrompt(envelopes, options.promptFn ?? defaultPrompt)));
-  return composeClientDb(db, envelopes, credentialsApi, options, dek);
+  // 自己修復（#120）: DEK が手に入ったのに「いま使っているパスキーの封筒」が無ければ、
+  // その場で作る。#115 で追加したパスキーの封筒を作り損ねた・登録の 2 段目だけ失敗した、
+  // といった取りこぼしが次回ログインで自動的に埋まる（PRF は評価済みなので追加操作なし）。
+  // 起動を止めないよう、失敗は healPasskeyEnvelope 側で警告に畳む。
+  const healed =
+    dek === null || envelopes === null
+      ? false
+      : await healPasskeyEnvelope(dek, options.prf, envelopes, { fetchFn: options.fetchFn });
+  // 修復した封筒は UI の状態（enrolled / credentialIds）にも反映したいので取り直す。
+  // 走るのは取りこぼしがあった起動だけで、失敗しても元の一覧のまま続行する。
+  const current = healed ? await fetchEnvelopes(options.fetchFn).catch(() => envelopes) : envelopes;
+  return composeClientDb(db, current, credentialsApi, options, dek);
 }
 
 /**
@@ -136,10 +159,14 @@ function composeClientDb(
   options: BootstrapOptions,
   dek: Uint8Array | null,
 ): ClientDb {
-  const hasPasskeyEnvelope = (envelopes ?? []).some((e) => e.kind === "passkey");
+  const credentialIds = (envelopes ?? [])
+    .filter((e) => e.kind === "passkey")
+    .map((e) => e.credentialId);
+  const hasPasskeyEnvelope = credentialIds.length > 0;
   const passkey: PasskeyControls = {
     available: credentialsApi !== null,
     enrolled: hasPasskeyEnvelope,
+    credentialIds,
     createCredential:
       dek === null || credentialsApi === null
         ? null
@@ -149,6 +176,10 @@ function composeClientDb(
         ? null
         : (credentialId) =>
             savePasskeyEnvelope(dek, credentialsApi, credentialId, { fetchFn: options.fetchFn }),
+    // 失効はアンロック済みでなくても意味がある（DEK に触れない操作）ので dek で絞らない
+    revokeEnvelope: !hasPasskeyEnvelope
+      ? null
+      : (credentialId) => revokePasskeyEnvelope(credentialId, { fetchFn: options.fetchFn }),
     unlock:
       dek !== null || credentialsApi === null || envelopes === null || !hasPasskeyEnvelope
         ? null

@@ -31,7 +31,7 @@ void Promise.all([
         ? {}
         : {
             fetchFn: remote.fetchFn,
-            prfOutput: remote.prfOutput,
+            prf: remote.prf,
             dbName: `zakki-${remote.identity.userId}`,
           },
     );

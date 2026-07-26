@@ -6,7 +6,7 @@ import {
   addKeyfileEnvelope,
   addPasskeyEnvelope,
   addPassphraseEnvelope,
-  getPasskeyCredentialId,
+  listPasskeyCredentialIds,
   unlockWithPasskey,
 } from "@zakki/data/crypto/envelopes.ts";
 import type { Db } from "@zakki/data/db/client.ts";
@@ -114,8 +114,8 @@ describe("POST /api/crypto/envelopes/passkey (#103)", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
 
-    expect(await getPasskeyCredentialId(db)).toBe("cred-post");
-    expect(await unlockWithPasskey(db, prf)).toEqual(dek);
+    expect(await listPasskeyCredentialIds(db)).toEqual(["cred-post"]);
+    expect(await unlockWithPasskey(db, prf, "cred-post")).toEqual(dek);
   });
 
   test("B6: 不正 base64・欠落フィールド・空文字は 400", async () => {
@@ -151,13 +151,78 @@ describe("POST /api/crypto/envelopes/passkey (#103)", () => {
     // （kinds.length === 0）が壊れ TUI/CLI から復旧不能になるため拒否
     const denied = await post({ wrappedDek: wrapped, credentialId: "cred-409" });
     expect(denied.status).toBe(409);
-    expect(await getPasskeyCredentialId(db)).toBeNull();
+    expect(await listPasskeyCredentialIds(db)).toEqual([]);
 
     // 既存封筒（= DEK 確立済み）があれば受理
     await addPassphraseEnvelope(db, dek, "既存のパスフレーズ");
     const accepted = await post({ wrappedDek: wrapped, credentialId: "cred-409" });
     expect(accepted.status).toBe(200);
-    expect(await getPasskeyCredentialId(db)).toBe("cred-409");
-    expect(await unlockWithPasskey(db, prf)).toEqual(dek);
+    expect(await listPasskeyCredentialIds(db)).toEqual(["cred-409"]);
+    expect(await unlockWithPasskey(db, prf, "cred-409")).toEqual(dek);
+  });
+
+  test("B9: 2 本目のパスキーは上書きではなく別の封筒として増える（#120）", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "既存のパスフレーズ");
+    const phonePrf = sodium.randombytes_buf(32);
+    const laptopPrf = sodium.randombytes_buf(32);
+    const wrapped = (prf: Uint8Array) =>
+      sodium.to_base64(wrapDek(dek, deriveKekFromPrf(prf)), sodium.base64_variants.ORIGINAL);
+
+    expect((await post({ wrappedDek: wrapped(phonePrf), credentialId: "cred-phone" })).status).toBe(
+      200,
+    );
+    expect(
+      (await post({ wrappedDek: wrapped(laptopPrf), credentialId: "cred-laptop" })).status,
+    ).toBe(200);
+
+    // 配布はどちらの封筒も含み、それぞれの PRF 出力だけで開ける
+    const { envelopes } = await getEnvelopes();
+    const passkeys = envelopes.filter((e) => e.kind === "passkey");
+    expect(passkeys.map((e) => e.credentialId).toSorted()).toEqual(["cred-laptop", "cred-phone"]);
+    for (const [credentialId, prf] of [
+      ["cred-phone", phonePrf],
+      ["cred-laptop", laptopPrf],
+    ] as const) {
+      const env = passkeys.find((e) => e.credentialId === credentialId);
+      if (env === undefined) throw new Error(`${credentialId} の封筒が無い`);
+      expect(openPasskeyEnvelope(env, prf)).toEqual(dek);
+    }
+  });
+});
+
+describe("DELETE /api/crypto/envelopes/passkey/:credentialId (#120)", () => {
+  const del = (credentialId: string) =>
+    app.request(`/api/crypto/envelopes/passkey/${encodeURIComponent(credentialId)}`, {
+      method: "DELETE",
+    });
+
+  test("B10: 1 本を失効させても、もう 1 本の封筒は残り開ける", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "既存のパスフレーズ");
+    const laptopPrf = sodium.randombytes_buf(32);
+    await addPasskeyEnvelope(db, dek, sodium.randombytes_buf(32), "cred-phone");
+    await addPasskeyEnvelope(db, dek, laptopPrf, "cred-laptop");
+
+    const res = await del("cred-phone");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, deleted: true });
+
+    const { envelopes } = await getEnvelopes();
+    const passkeys = envelopes.filter((e) => e.kind === "passkey");
+    expect(passkeys.map((e) => e.credentialId)).toEqual(["cred-laptop"]);
+    const env = passkeys[0];
+    if (env === undefined) throw new Error("残った封筒が無い");
+    expect(openPasskeyEnvelope(env, laptopPrf)).toEqual(dek);
+    // パスフレーズ封筒（他の kind）は巻き込まれない
+    expect(envelopes.some((e) => e.kind === "passphrase")).toBe(true);
+  });
+
+  test("B11: 未知の credentialId でも 200（冪等。2 段階削除の再実行が失敗しない）", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "既存のパスフレーズ");
+    const res = await del("cred-unknown");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, deleted: false });
   });
 });

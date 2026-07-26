@@ -21,6 +21,7 @@ import type {
 import { createTestControlPlane } from "@zakki/web/client/api/test-control-plane.ts";
 import type { ClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
+import type { PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
 import { PRF_SALT } from "@zakki/web/client/db/passkey.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { createApp } from "@zakki/web/server/app.ts";
@@ -79,7 +80,9 @@ beforeEach(async () => {
       controlPlaneUrl: cp.baseUrl,
       // 上流の一時障害を差し込めるようにする（既定は素通し）
       fetchFn: (input, init) =>
-        controlPlaneDown ? Promise.resolve(new Response("down", { status: 503 })) : cp.fetchFn(input, init),
+        controlPlaneDown
+          ? Promise.resolve(new Response("down", { status: 503 }))
+          : cp.fetchFn(input, init),
       now: () => relayNowMs,
       openUserDb: async (identity) => {
         openedIdentities.push(identity);
@@ -108,7 +111,7 @@ async function signUp(): Promise<{
   client: ControlPlaneClient;
   authenticator: TestAuthenticator;
   credentialId: string;
-  prfOutput: Uint8Array | null;
+  prf: PrfEvaluation | null;
 }> {
   const authenticator = await cp.authenticator();
   const client = createControlPlaneClient({
@@ -117,8 +120,8 @@ async function signUp(): Promise<{
     fetchFn: routedFetch,
   });
   const { credentialId } = await client.register();
-  const { prfOutput } = await client.login();
-  return { client, authenticator, credentialId, prfOutput };
+  const { prf } = await client.login();
+  return { client, authenticator, credentialId, prf };
 }
 
 /** セッション JWT を載せた GET のリクエスト設定 */
@@ -151,7 +154,7 @@ function advanceRelayClock(seconds: number): void {
 async function boot(options: {
   client: ControlPlaneClient;
   authenticator: TestAuthenticator;
-  prfOutput?: Uint8Array | null;
+  prf?: PrfEvaluation | null;
   promptFn?: (attempt: number) => Promise<string | null>;
 }): Promise<ClientDb> {
   nameSeq += 1;
@@ -161,7 +164,7 @@ async function boot(options: {
     fetchFn: options.client.authorizedFetch,
     credentialsApi: options.authenticator,
     promptFn: options.promptFn ?? (() => Promise.resolve(null)),
-    ...(options.prfOutput === undefined ? {} : { prfOutput: options.prfOutput }),
+    ...(options.prf === undefined ? {} : { prf: options.prf }),
     replicationOptions: { live: false },
   });
   handles.push(handle);
@@ -199,13 +202,15 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
       fetchFn: routedFetch,
     });
     await client.register();
-    const { session, prfOutput } = await client.login();
+    const { session, prf } = await client.login();
 
     expect(gets).toBe(1);
     expect(session.accountId).not.toBe("");
-    // 同じ get の clientExtensionResults から取り出した PRF 出力（32 バイト）
-    expect(prfOutput).not.toBeNull();
-    expect([...(prfOutput ?? [])]).toEqual([...authenticator.prfFor(PRF_SALT)]);
+    // 同じ get の clientExtensionResults から取り出した PRF 出力（32 バイト）と、
+    // それを **どのクレデンシャルで評価したか**（封筒はクレデンシャルごと, #120）
+    expect(prf).not.toBeNull();
+    expect([...(prf?.prfOutput ?? [])]).toEqual([...authenticator.prfFor(PRF_SALT)]);
+    expect(prf?.credentialId).not.toBe("");
   });
 
   test("R3: PRF 出力・DEK はコントロールプレーンへの wire に現れない", async () => {
@@ -556,11 +561,11 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
       credentials: counted,
       fetchFn: routedFetch,
     });
-    const { prfOutput } = await reloaded.login();
+    const { prf } = await reloaded.login();
     const second = await boot({
       client: reloaded,
       authenticator,
-      prfOutput,
+      prf,
       promptFn: () => Promise.reject(new Error("パスフレーズを聞いてはいけない")),
     });
     expect(second.replication).not.toBeNull();
@@ -599,7 +604,7 @@ describe("resolveRemoteSession（設定ベースの構成選択）", () => {
 
     expect(session).not.toBeNull();
     expect(session?.identity.tursoUrl).toMatch(/^libsql:\/\//);
-    expect(session?.prfOutput).not.toBeNull();
+    expect(session?.prf).not.toBeNull();
   });
 
   test("R12: ログインできない（未登録）ときは null に畳んでローカルのみで起動する", async () => {

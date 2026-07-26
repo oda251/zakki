@@ -55,7 +55,12 @@ export function PasskeySettings() {
           disabled={running}
           onClick={() => void enroll()}
         >
-          {running ? "登録中…" : controls.enrolled ? "🔑 パスキーを再登録" : "🔑 パスキーを追加"}
+          {/* 封筒はクレデンシャルごとなので、登録済みでも「別の端末のパスキーを足す」操作（#120） */}
+          {running
+            ? "登録中…"
+            : controls.enrolled
+              ? `🔑 パスキーを追加（登録済み ${controls.credentialIds.length} 本）`
+              : "🔑 パスキーを追加"}
         </button>
       )}
       {controls.unlock === null && controls.createCredential === null && (

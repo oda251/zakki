@@ -56,12 +56,21 @@ export interface FakeAuthenticator extends CredentialsApi {
    * 自動試行は NotAllowedError、クリック起点なら成功）を再現するために使う。
    */
   setFailGet: (fail: boolean) => void;
+  /**
+   * 複数パスキーがあるとき、ユーザがどれを選ぶかを固定する（issue #120）。
+   * 実機では allowCredentials に複数載っていると認証器/OS の UI がユーザに選ばせる。
+   * null に戻すと「allowCredentials の先頭にある手持ちのパスキー」を選ぶ既定に戻る。
+   */
+  setSelectedCredential: (credentialId: string | null) => void;
+  /** そのクレデンシャルを認証器から取り除く（端末紛失・パスキー削除の再現） */
+  forgetCredential: (credentialId: string) => void;
 }
 
 /** PublicKeyCredential 形状を返す fake を組み立てる */
 export function fakeAuthenticator(options: FakeAuthenticatorOptions = {}): FakeAuthenticator {
   let prfSupported = options.prfSupported ?? true;
   let failGet = options.failGet ?? false;
+  let selected: string | null = null;
   const seeds = new Map<string, Uint8Array>();
 
   return {
@@ -74,6 +83,13 @@ export function fakeAuthenticator(options: FakeAuthenticatorOptions = {}): FakeA
     },
     setFailGet: (fail) => {
       failGet = fail;
+    },
+    setSelectedCredential: (credentialId) => {
+      selected = credentialId;
+    },
+    forgetCredential: (credentialId) => {
+      seeds.delete(credentialId);
+      if (selected === credentialId) selected = null;
     },
 
     create: (credentialOptions) => {
@@ -92,7 +108,16 @@ export function fakeAuthenticator(options: FakeAuthenticatorOptions = {}): FakeA
       const publicKey = credentialOptions.publicKey;
       if (publicKey === undefined) throw new Error("publicKey が無い");
       const allowed = (publicKey.allowCredentials ?? []).map((c) => base64url(toBytes(c.id)));
-      const id = allowed.find((candidate) => seeds.has(candidate)) ?? [...seeds.keys()][0];
+      // 実機の挙動: allowCredentials に載っていて手元にあるパスキーの中から
+      // ユーザが 1 つ選ぶ（複数パスキー, #120）。テストは setSelectedCredential で固定する。
+      const usable = allowed.filter((candidate) => seeds.has(candidate));
+      const id =
+        allowed.length === 0
+          ? // allowCredentials 無し = discoverable credential に任せる
+            [...seeds.keys()][0]
+          : selected !== null && usable.includes(selected)
+            ? selected
+            : usable[0];
       const seed = id === undefined ? undefined : seeds.get(id);
       if (id === undefined || seed === undefined) {
         return Promise.reject(new Error("該当するパスキーがありません"));

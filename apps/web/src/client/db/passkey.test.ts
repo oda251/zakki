@@ -10,7 +10,9 @@ import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import {
   createPasskeyCredential,
   evaluatePrf,
+  healPasskeyEnvelope,
   PRF_SALT,
+  revokePasskeyEnvelope,
   savePasskeyEnvelope,
   unlockWithPasskey,
 } from "@zakki/web/client/db/passkey.ts";
@@ -77,8 +79,22 @@ describe("createPasskeyCredential / evaluatePrf", () => {
 
     const first = await evaluatePrf(api, [credentialId]);
     const second = await evaluatePrf(api, [credentialId]);
-    expect(first.length).toBe(PRF_OUTPUT_BYTES);
+    expect(first.prfOutput.length).toBe(PRF_OUTPUT_BYTES);
+    expect(first.credentialId).toBe(credentialId);
     expect(first).toEqual(second);
+  });
+
+  test("P1b: クレデンシャルごとに PRF 出力は別（封筒を鍵ごとに持つ理由, #120）", async () => {
+    const api = fakeAuthenticator();
+    const first = await createPasskeyCredential(api);
+    const second = await createPasskeyCredential(api);
+    expect(first).not.toBe(second);
+
+    const forFirst = await evaluatePrf(api, [first]);
+    const forSecond = await evaluatePrf(api, [second]);
+    expect(forFirst.credentialId).toBe(first);
+    expect(forSecond.credentialId).toBe(second);
+    expect(forFirst.prfOutput).not.toEqual(forSecond.prfOutput);
   });
 
   test("P2: PRF 未対応の認証器は登録段階で拒否する（開けない封筒を作らない）", async () => {
@@ -106,7 +122,7 @@ describe("createPasskeyCredential → savePasskeyEnvelope（登録の 2 段）",
     expect(passkey.credentialId).toBe(credentialId);
 
     // 封筒は PRF 由来 KEK でのみ開ける（= サーバは開けない）
-    const prfOutput = await evaluatePrf(api, [credentialId]);
+    const { prfOutput } = await evaluatePrf(api, [credentialId]);
     const wrapped = sodium.from_base64(passkey.wrappedDek, sodium.base64_variants.ORIGINAL);
     expect(unwrapDek(wrapped, deriveKekFromPrf(prfOutput))).toEqual(dek);
 
@@ -184,5 +200,128 @@ describe("unlockWithPasskey", () => {
     await enroll(api);
     const envelopes = await fetchEnvelopes(fetchFn);
     expect(await unlockWithPasskey(envelopes, null)).toBeNull();
+  });
+});
+
+/**
+ * issue #120: パスキーを 2 本登録した状態。PRF 出力は鍵ごとに違うので封筒も 2 本になり、
+ * **どちらか一方だけでも** アンロックできる（機種変更・デバイス追加の実体）。
+ */
+describe("複数パスキー（issue #120）", () => {
+  test("P9: 2 本登録 → どちらのパスキー単独でも同じ DEK が開く", async () => {
+    // 別々の認証器 = スマホとノート PC（seed も credentialId も独立）
+    const phone = fakeAuthenticator();
+    const laptop = fakeAuthenticator();
+    const phoneId = await enroll(phone);
+    const laptopId = await enroll(laptop);
+    expect(phoneId).not.toBe(laptopId);
+
+    const envelopes = await fetchEnvelopes(fetchFn);
+    const passkeys = envelopes.filter((e) => e.kind === "passkey");
+    expect(passkeys.map((e) => e.credentialId).toSorted()).toEqual([phoneId, laptopId].toSorted());
+
+    // それぞれの端末には自分のパスキーしかない。相手の封筒は開けなくても構わない
+    expect(await unlockWithPasskey(envelopes, phone)).toEqual(dek);
+    expect(await unlockWithPasskey(envelopes, laptop)).toEqual(dek);
+  });
+
+  test("P10: 同じ認証器に 2 本ある場合、ユーザが選んだ方の封筒が開く", async () => {
+    const api = fakeAuthenticator();
+    const first = await enroll(api);
+    const second = await enroll(api);
+    const envelopes = await fetchEnvelopes(fetchFn);
+
+    api.setSelectedCredential(second);
+    expect(await unlockWithPasskey(envelopes, api)).toEqual(dek);
+    api.setSelectedCredential(first);
+    expect(await unlockWithPasskey(envelopes, api)).toEqual(dek);
+  });
+
+  test("P11: 1 本を失効（封筒削除）してももう 1 本で開ける", async () => {
+    const phone = fakeAuthenticator();
+    const laptop = fakeAuthenticator();
+    const phoneId = await enroll(phone);
+    await enroll(laptop);
+
+    // 失効の 2 段階目（クレデンシャル本体はコントロールプレーン DB 側の責務）
+    await revokePasskeyEnvelope(phoneId, { fetchFn });
+
+    const envelopes = await fetchEnvelopes(fetchFn);
+    expect(envelopes.filter((e) => e.kind === "passkey")).toHaveLength(1);
+    // 失効した端末では封筒が無いので開けない（パスフレーズへ落ちる）
+    expect(await unlockWithPasskey(envelopes, phone)).toBeNull();
+    // 残した端末は今までどおり開ける
+    expect(await unlockWithPasskey(envelopes, laptop)).toEqual(dek);
+
+    // 冪等: 消えたあとの再実行も失敗しない（2 段階削除のやり直し）
+    await revokePasskeyEnvelope(phoneId, { fetchFn });
+  });
+
+  test("P12: allowCredentials を無視した認証器の応答は開かず null（総当たりしない）", async () => {
+    const api = fakeAuthenticator();
+    await enroll(api);
+    const envelopes = await fetchEnvelopes(fetchFn);
+    // 封筒に無い credential id で応答する認証器（プロトコル違反の再現）
+    const rogue = {
+      create: () => Promise.reject(new Error("使わない")),
+      get: () =>
+        Promise.resolve({
+          id: "cred-unknown",
+          type: "public-key",
+          getClientExtensionResults: () => ({
+            prf: { results: { first: new Uint8Array(PRF_OUTPUT_BYTES) } },
+          }),
+        }),
+    };
+    expect(await unlockWithPasskey(envelopes, rogue)).toBeNull();
+  });
+});
+
+describe("healPasskeyEnvelope（自己修復, issue #120）", () => {
+  test("P13: 封筒が無いクレデンシャルの PRF を渡すと封筒を作る（生体認証は追加で求めない）", async () => {
+    const api = fakeAuthenticator();
+    // 登録の 2 段目（封筒 POST）だけ失敗した状態＝クレデンシャルはあるが封筒が無い
+    const credentialId = await createPasskeyCredential(api);
+    const envelopes = await fetchEnvelopes(fetchFn);
+    expect(envelopes.some((e) => e.kind === "passkey")).toBe(false);
+
+    // ログイン時に評価済みの PRF（#105）をそのまま使う: get は呼ばれない
+    const prf = await evaluatePrf(api, [credentialId]);
+    let gets = 0;
+    const counted = {
+      ...api,
+      get: (options: CredentialRequestOptions) => {
+        gets += 1;
+        return api.get(options);
+      },
+    };
+    expect(await healPasskeyEnvelope(dek, prf, envelopes, { fetchFn })).toBe(true);
+    expect(gets).toBe(0);
+
+    // 修復した封筒はそのパスキーで開ける
+    const healed = await fetchEnvelopes(fetchFn);
+    expect(await unlockWithPasskey(healed, counted)).toEqual(dek);
+    expect(gets).toBe(1);
+  });
+
+  test("P14: 既に封筒があるクレデンシャル・PRF 未評価（null）なら何もしない", async () => {
+    const api = fakeAuthenticator();
+    const credentialId = await enroll(api);
+    const envelopes = await fetchEnvelopes(fetchFn);
+    const prf = await evaluatePrf(api, [credentialId]);
+
+    expect(await healPasskeyEnvelope(dek, prf, envelopes, { fetchFn })).toBe(false);
+    expect(await healPasskeyEnvelope(dek, null, envelopes, { fetchFn })).toBe(false);
+    expect((await fetchEnvelopes(fetchFn)).filter((e) => e.kind === "passkey")).toHaveLength(1);
+  });
+
+  test("P15: 保存に失敗しても例外にしない（起動を止めない）", async () => {
+    const api = fakeAuthenticator();
+    const credentialId = await createPasskeyCredential(api);
+    const prf = await evaluatePrf(api, [credentialId]);
+    // 暗号未プロビジョン（封筒ゼロ）の DB は 409 を返す
+    const emptyApp = createApp({ db: await createDb(":memory:") });
+    const emptyFetch: FetchLike = async (input, init) => emptyApp.request(input, init);
+    expect(await healPasskeyEnvelope(dek, prf, [], { fetchFn: emptyFetch })).toBe(false);
   });
 });

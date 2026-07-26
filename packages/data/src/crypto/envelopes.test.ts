@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { generateDek, wrapDek } from "@zakki/core/crypto/dek.ts";
 import { deriveKekFromPrf } from "@zakki/core/crypto/kdf.ts";
 import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
@@ -12,11 +12,13 @@ import {
   addPassphraseEnvelope,
   addRecoveryEnvelope,
   changePassphrase,
+  deletePasskeyEnvelope,
   generateRecoveryCode,
-  getPasskeyCredentialId,
   hasEnvelope,
   listEnvelopeKinds,
+  listPasskeyCredentialIds,
   putPasskeyEnvelope,
+  putPasskeyEnvelopeIfProvisioned,
   unlockWithKeyfile,
   unlockWithPasskey,
   unlockWithPassphrase,
@@ -62,43 +64,43 @@ describe("envelopes ラウンドトリップ", () => {
     const dek = generateDek();
     const prf = sodium.randombytes_buf(32);
     await addPasskeyEnvelope(db, dek, prf, "cred-abc");
-    expect(sameBytes(await unlockWithPasskey(db, prf), dek)).toBe(true);
-    expect(await getPasskeyCredentialId(db)).toBe("cred-abc");
+    expect(sameBytes(await unlockWithPasskey(db, prf, "cred-abc"), dek)).toBe(true);
+    expect(await listPasskeyCredentialIds(db)).toEqual(["cred-abc"]);
 
     let threw = false;
     try {
-      await unlockWithPasskey(db, sodium.randombytes_buf(32));
+      await unlockWithPasskey(db, sodium.randombytes_buf(32), "cred-abc");
     } catch {
       threw = true;
     }
     expect(threw).toBe(true);
   });
 
-  test("passkey: putPasskeyEnvelope（wrap 済み）でも unlock できる・再登録は上書き（1 封筒）", async () => {
+  test("passkey: putPasskeyEnvelope（wrap 済み）でも unlock できる・同じ credential は上書き", async () => {
     const dek = generateDek();
     const prf = sodium.randombytes_buf(32);
     await putPasskeyEnvelope(db, wrapDek(dek, deriveKekFromPrf(prf)), "cred-1");
-    expect(sameBytes(await unlockWithPasskey(db, prf), dek)).toBe(true);
+    expect(sameBytes(await unlockWithPasskey(db, prf, "cred-1"), dek)).toBe(true);
 
-    // kind 主キーにより上書き: 旧 PRF は失効し、新 PRF と新 credentialId が有効
-    const prf2 = sodium.randombytes_buf(32);
-    await addPasskeyEnvelope(db, dek, prf2, "cred-2");
-    expect(await getPasskeyCredentialId(db)).toBe("cred-2");
-    expect(sameBytes(await unlockWithPasskey(db, prf2), dek)).toBe(true);
+    // 同じ credentialId での再登録は再 wrap の上書き（旧 PRF は失効し封筒は 1 本のまま）
+    const rewrapped = sodium.randombytes_buf(32);
+    await addPasskeyEnvelope(db, dek, rewrapped, "cred-1");
+    expect(await listPasskeyCredentialIds(db)).toEqual(["cred-1"]);
+    expect(sameBytes(await unlockWithPasskey(db, rewrapped, "cred-1"), dek)).toBe(true);
     let oldThrew = false;
     try {
-      await unlockWithPasskey(db, prf);
+      await unlockWithPasskey(db, prf, "cred-1");
     } catch {
       oldThrew = true;
     }
     expect(oldThrew).toBe(true);
   });
 
-  test("passkey: 封筒なしの unlock / credentialId は not found / null", async () => {
-    expect(await getPasskeyCredentialId(db)).toBeNull();
+  test("passkey: 封筒なしの unlock / credentialId 一覧は not found / 空配列", async () => {
+    expect(await listPasskeyCredentialIds(db)).toEqual([]);
     let threw = false;
     try {
-      await unlockWithPasskey(db, sodium.randombytes_buf(32));
+      await unlockWithPasskey(db, sodium.randombytes_buf(32), "cred-none");
     } catch {
       threw = true;
     }
@@ -121,6 +123,131 @@ describe("envelopes ラウンドトリップ", () => {
   });
 });
 
+/**
+ * issue #120: パスキーはクレデンシャル（鍵ペア）ごとに PRF 出力が違うので、封筒も
+ * クレデンシャルごとに持つ。schema の部分ユニークインデックス
+ * （`UNIQUE (credential_id) WHERE kind='passkey'` / `UNIQUE (kind) WHERE kind<>'passkey'`）
+ * が「passkey は複数・他は単数」を保証していることまで含めて確かめる。
+ */
+describe("複数 passkey 封筒（issue #120）", () => {
+  test("2 本登録 → どちらの PRF 単独でも同じ DEK が開く", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "pass");
+    const phone = sodium.randombytes_buf(32);
+    const laptop = sodium.randombytes_buf(32);
+    await addPasskeyEnvelope(db, dek, phone, "cred-phone");
+    await addPasskeyEnvelope(db, dek, laptop, "cred-laptop");
+
+    expect((await listPasskeyCredentialIds(db)).toSorted()).toEqual(["cred-laptop", "cred-phone"]);
+    expect(sameBytes(await unlockWithPasskey(db, phone, "cred-phone"), dek)).toBe(true);
+    expect(sameBytes(await unlockWithPasskey(db, laptop, "cred-laptop"), dek)).toBe(true);
+    // 封筒の取り違え（別クレデンシャルの PRF）は AEAD 認証で失敗する
+    let crossThrew = false;
+    try {
+      await unlockWithPasskey(db, phone, "cred-laptop");
+    } catch {
+      crossThrew = true;
+    }
+    expect(crossThrew).toBe(true);
+  });
+
+  test("1 本を失効（封筒削除）してももう 1 本で開ける・削除は冪等", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "pass");
+    const phone = sodium.randombytes_buf(32);
+    const laptop = sodium.randombytes_buf(32);
+    await addPasskeyEnvelope(db, dek, phone, "cred-phone");
+    await addPasskeyEnvelope(db, dek, laptop, "cred-laptop");
+
+    expect(await deletePasskeyEnvelope(db, "cred-phone")).toBe(true);
+    expect(await listPasskeyCredentialIds(db)).toEqual(["cred-laptop"]);
+    expect(sameBytes(await unlockWithPasskey(db, laptop, "cred-laptop"), dek)).toBe(true);
+    // 失効した側は封筒ごと消えているので開く経路が無い
+    let revokedThrew = false;
+    try {
+      await unlockWithPasskey(db, phone, "cred-phone");
+    } catch {
+      revokedThrew = true;
+    }
+    expect(revokedThrew).toBe(true);
+    // 2 度目の削除（コントロールプレーン側だけ先に消えていた等）は false で例外なし
+    expect(await deletePasskeyEnvelope(db, "cred-phone")).toBe(false);
+    // 単数 kind の封筒は passkey の失効に巻き込まれない
+    expect(sameBytes(await unlockWithPassphrase(db, "pass"), dek)).toBe(true);
+  });
+
+  test("passkey 以外は kind ごとに 1 本のまま（部分ユニークインデックス）", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "old");
+    await addPassphraseEnvelope(db, dek, "new");
+    await addPasskeyEnvelope(db, dek, sodium.randombytes_buf(32), "cred-a");
+    await addPasskeyEnvelope(db, dek, sodium.randombytes_buf(32), "cred-b");
+
+    const rows = await db.select().from(keyEnvelopes);
+    expect(rows.filter((r) => r.kind === "passphrase")).toHaveLength(1);
+    expect(rows.filter((r) => r.kind === "passkey")).toHaveLength(2);
+    // 重複 kind は畳んで返す（呼び出し側は「手段があるか」だけを見る）
+    expect((await listEnvelopeKinds(db)).toSorted()).toEqual(["passkey", "passphrase"]);
+    expect(sameBytes(await unlockWithPassphrase(db, "new"), dek)).toBe(true);
+  });
+
+  test("CHECK 制約: credential_id は passkey 封筒だけが持つ（部分インデックスの実効化）", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(db, dek, "pass");
+    const wrapped = Buffer.from(wrapDek(dek, deriveKekFromPrf(sodium.randombytes_buf(32))));
+    const rejected = async (kind: string, credentialId: string | null): Promise<boolean> => {
+      try {
+        await db.run(sql`
+          INSERT INTO key_envelopes ("kind", "wrapped_dek", "credential_id", "created_at")
+          VALUES (${kind}, ${wrapped}, ${credentialId}, '2026-07-27T00:00:00.000Z')
+        `);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    // credential_id 無しの passkey 封筒（SQLite の UNIQUE は NULL を別値扱いするので
+    // これを許すと開けない封筒が無限に積める）
+    expect(await rejected("passkey", null)).toBe(true);
+    // passkey 以外が credential_id を持つのも不整合
+    expect(await rejected("keyfile", "cred-keyfile")).toBe(true);
+    expect(await listPasskeyCredentialIds(db)).toEqual([]);
+  });
+
+  test("putPasskeyEnvelopeIfProvisioned: 封筒ゼロは拒否、既存封筒があれば upsert（#103 の 409）", async () => {
+    const dek = generateDek();
+    const prf = sodium.randombytes_buf(32);
+    const wrapped = wrapDek(dek, deriveKekFromPrf(prf));
+
+    // 暗号未プロビジョン（封筒ゼロ）の DB には入れない
+    expect(await putPasskeyEnvelopeIfProvisioned(db, wrapped, "cred-x")).toBe(false);
+    expect(await listPasskeyCredentialIds(db)).toEqual([]);
+
+    // 既存封筒（= DEK 確立済み）があれば入る。2 本目も入る
+    await addPassphraseEnvelope(db, dek, "pass");
+    expect(await putPasskeyEnvelopeIfProvisioned(db, wrapped, "cred-x")).toBe(true);
+    const second = sodium.randombytes_buf(32);
+    expect(
+      await putPasskeyEnvelopeIfProvisioned(db, wrapDek(dek, deriveKekFromPrf(second)), "cred-y"),
+    ).toBe(true);
+    expect((await listPasskeyCredentialIds(db)).toSorted()).toEqual(["cred-x", "cred-y"]);
+    expect(sameBytes(await unlockWithPasskey(db, prf, "cred-x"), dek)).toBe(true);
+    expect(sameBytes(await unlockWithPasskey(db, second, "cred-y"), dek)).toBe(true);
+
+    // 同じ credentialId は上書き（行は増えない）
+    const rewrapped = sodium.randombytes_buf(32);
+    expect(
+      await putPasskeyEnvelopeIfProvisioned(
+        db,
+        wrapDek(dek, deriveKekFromPrf(rewrapped)),
+        "cred-x",
+      ),
+    ).toBe(true);
+    expect((await listPasskeyCredentialIds(db)).toSorted()).toEqual(["cred-x", "cred-y"]);
+    expect(sameBytes(await unlockWithPasskey(db, rewrapped, "cred-x"), dek)).toBe(true);
+  });
+});
+
 describe("multi-envelope", () => {
   test("keyfile/passphrase/recovery/passkey が同一 DEK を開く", async () => {
     const dek = generateDek();
@@ -135,7 +262,7 @@ describe("multi-envelope", () => {
     const fromKeyfile = await unlockWithKeyfile(db, kek);
     const fromPass = await unlockWithPassphrase(db, "pass");
     const fromRecovery = await unlockWithRecovery(db, code);
-    const fromPasskey = await unlockWithPasskey(db, prf);
+    const fromPasskey = await unlockWithPasskey(db, prf, "cred-multi");
     expect(sameBytes(fromKeyfile, dek)).toBe(true);
     expect(sameBytes(fromPass, dek)).toBe(true);
     expect(sameBytes(fromRecovery, dek)).toBe(true);
