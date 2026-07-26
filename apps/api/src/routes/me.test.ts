@@ -59,8 +59,15 @@ function makeApp(platformBaseUrl: string): ReturnType<typeof createApp> {
 beforeEach(async () => {
   // libsql の :memory: はコネクション単位で独立するため一時ファイルを使う
   const path = join(mkdtempSync(join(tmpdir(), "zakki-medb-")), "control.sqlite");
-  db = drizzle(createClient({ url: `file:${path}` }), { schema }) as unknown as ControlDb;
+  const client = createClient({ url: `file:${path}` });
+  db = drizzle(client, { schema }) as unknown as ControlDb;
   await migrate(db, { migrationsFolder: MIGRATIONS });
+  // 本番と同じ条件で検証する: Turso は PRAGMA foreign_keys が既定 OFF で
+  // （https://docs.turso.tech/sql-reference/pragmas）、HTTP クライアントは接続ごとに
+  // ステートレスなので張り続けられない。ローカルの file: は既定 ON なので明示的に切る
+  // （切らないと cascade 頼みの削除が「テストでだけ通る」ことになる）。
+  // migrate はこの pragma を ON に戻すため、必ず migrate の後に実行する
+  await client.execute("PRAGMA foreign_keys = OFF");
 
   fake.state.databases.clear();
   fake.state.createRequests.length = 0;
@@ -344,7 +351,7 @@ describe("DELETE /me（退会, issue #116）", () => {
     // Turso 側は台帳が指していた DB をちょうど 1 度消しに行く
     expect(fake.state.deleteRequests).toEqual([name]);
     expect(fake.state.databases.size).toBe(0);
-    // コントロールプレーン側は accounts の削除だけで cascade する（db/schema.ts）
+    // コントロールプレーン側は cascade に頼らず明示的に消す（FK 強制は OFF）
     expect(await db.select().from(accounts)).toEqual([]);
     expect(await db.select().from(credentials)).toEqual([]);
     expect(await db.select().from(accountDatabases)).toEqual([]);

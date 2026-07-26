@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { err, ok, type Result } from "neverthrow";
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import { accountDatabases, accounts } from "@zakki/api/db/schema.ts";
+import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
 import type { PlatformFailure, TursoDatabase, TursoPlatform } from "@zakki/api/turso/platform.ts";
 
 /**
@@ -123,8 +123,8 @@ export async function ensureUserDatabase(
  * 名前は accountId から決定的に導かれる（= そのアカウント以外の DB を指し得ない）
  * ので、余分に消してしまう危険は無い。実在しなければ 404 が成功に畳まれる。
  *
- * accounts 行の削除だけで credentials / account_databases も消える
- * （db/schema.ts の `onDelete: "cascade"`）。
+ * 子テーブル（credentials / account_databases）はスキーマの `onDelete: "cascade"` に
+ * 頼らず明示的に消す。理由は実装内のコメントを参照。
  */
 export async function deleteAccount(
   db: ControlDb,
@@ -141,6 +141,16 @@ export async function deleteAccount(
   const deleted = await platform.deleteDatabase(name);
   if (deleted.isErr()) return err(deleted.error);
 
-  await db.delete(accounts).where(eq(accounts.id, accountId));
+  // スキーマの onDelete: "cascade" には頼らない。SQLite / libSQL の外部キー強制は
+  // 接続ごとの PRAGMA foreign_keys で、Turso は既定 OFF（https://docs.turso.tech/sql-reference/pragmas）。
+  // 本番の ControlDb は HTTP（@libsql/client/web）でリクエストごとにステートレスなので
+  // pragma を張り続けられず、cascade が発火しない。batch はトランザクションで包まれ
+  // pragma がその中では効かないため、子から順に明示的に消す（登録側が accounts +
+  // credentials を 1 バッチで書くのと対称）。
+  await db.batch([
+    db.delete(accountDatabases).where(eq(accountDatabases.accountId, accountId)),
+    db.delete(credentials).where(eq(credentials.accountId, accountId)),
+    db.delete(accounts).where(eq(accounts.id, accountId)),
+  ]);
   return ok(undefined);
 }
