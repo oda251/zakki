@@ -155,6 +155,28 @@ export async function createPasskeyCredential(
 }
 
 /**
+ * `credentials.get` の戻り値から PRF 出力（32 バイト）を取り出す。
+ *
+ * 取り出しだけを切り出してあるのは、PRF 評価が **必ずしも専用の get** とは限らないため:
+ * コントロールプレーンへのログイン（issue #105）は同じ 1 回の get で assertion と
+ * PRF 出力の両方を受け取り、この関数で後者だけを読む。
+ *
+ * @throws {PasskeyError} キャンセル・PRF 未対応・出力長が不正な場合
+ */
+export function readPrfOutput(credential: Credential | null): Uint8Array {
+  assertPrfCapable(credential);
+  const first = credential.getClientExtensionResults().prf?.results?.first;
+  if (first === undefined) {
+    throw new PasskeyError("認証器から PRF 出力が得られませんでした（PRF 未対応）");
+  }
+  const output = toBytes(first);
+  if (output.length !== PRF_OUTPUT_BYTES) {
+    throw new PasskeyError(`PRF 出力の長さが不正です（${output.length} バイト）`);
+  }
+  return output;
+}
+
+/**
  * 既存のパスキーで PRF を評価し、32 バイトのシークレットを得る。
  *
  * @param credentialIds allowCredentials に載せる資格情報 id（空なら discoverable credential に任せる）
@@ -176,16 +198,30 @@ export async function evaluatePrf(
       extensions: { prf: { eval: { first: PRF_SALT } } },
     },
   });
-  assertPrfCapable(credential);
-  const first = credential.getClientExtensionResults().prf?.results?.first;
-  if (first === undefined) {
-    throw new PasskeyError("認証器から PRF 出力が得られませんでした（PRF 未対応）");
+  return readPrfOutput(credential);
+}
+
+/**
+ * **評価済みの** PRF 出力で passkey 封筒を開く（issue #105）。
+ *
+ * コントロールプレーンへのログインは assertion と PRF 出力を 1 回の `get()` で得るので、
+ * その出力をここへ渡せば **生体認証をもう一度求めずに**アンロックできる。封筒が無い・
+ * PRF 出力が無い・開けない（別の認証器）場合は null で、呼び出し側は従来の経路へ落ちる。
+ */
+export function unlockWithPrfOutput(
+  envelopes: readonly CryptoEnvelope[],
+  prfOutput: Uint8Array | null | undefined,
+): Uint8Array | null {
+  if (prfOutput === null || prfOutput === undefined) return null;
+  const envelope = envelopes.find((e): e is PasskeyCryptoEnvelope => e.kind === "passkey");
+  if (envelope === undefined) return null;
+  try {
+    return openPasskeyEnvelope(envelope, prfOutput);
+  } catch {
+    // 認証器差し替え等で AEAD 認証に失敗。秘密は出さない
+    console.warn("zakki-passkey: ログイン時の PRF 出力では封筒を開けませんでした");
+    return null;
   }
-  const output = toBytes(first);
-  if (output.length !== PRF_OUTPUT_BYTES) {
-    throw new PasskeyError(`PRF 出力の長さが不正です（${output.length} バイト）`);
-  }
-  return output;
 }
 
 /**

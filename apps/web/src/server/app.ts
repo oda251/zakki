@@ -38,6 +38,10 @@ export function createApp(deps: AppDeps): Hono {
   const api = new Hono();
 
   api.get("/health", (c) => c.json({ ok: true }));
+  // クライアントの構成選択（issue #105）: コントロールプレーンの URL が設定されて
+  // いればリモート構成（パスキーでログイン → 自分の DB）、無ければ従来の単一ユーザ
+  // 構成で起動する。返すのは公開エンドポイントの所在だけで、秘密は含まない
+  api.get("/config", (c) => c.json({ controlPlaneUrl: deps.controlPlaneUrl ?? null }));
   api.route("/replication", replicationRoutes(deps));
   api.route("/crypto", cryptoRoutes(deps));
 

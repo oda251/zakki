@@ -28,6 +28,7 @@ import {
   createPasskeyCredential,
   savePasskeyEnvelope,
   unlockWithPasskey,
+  unlockWithPrfOutput,
 } from "@zakki/web/client/db/passkey.ts";
 import { fetchEnvelopes, unlockWithPrompt } from "@zakki/web/client/db/unlock.ts";
 
@@ -74,6 +75,11 @@ export interface BootstrapOptions {
   promptFn?: (attempt: number) => Promise<string | null>;
   /** WebAuthn adapter。既定は {@link browserCredentials}（未対応環境では null） */
   credentialsApi?: CredentialsApi | null;
+  /**
+   * コントロールプレーンへのログイン時に **同じ get で** 得た PRF 出力（issue #105）。
+   * 渡すと生体認証を再度求めずに passkey 封筒を開く。単一ユーザ構成では未指定。
+   */
+  prfOutput?: Uint8Array | null;
   replicationOptions?: Pick<StartReplicationOptions, "live" | "resyncIntervalMs" | "retryTime">;
 }
 
@@ -105,14 +111,16 @@ export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise
       return null;
     }),
   ]);
-  // 1) passkey 封筒があれば PRF で無言アンロック（#104） → 2) 失敗・キャンセル・未対応なら
-  // 従来のパスフレーズプロンプト。順序はユーザ操作の軽い順（生体認証 → 入力）。
+  // 0) ログイン時の get で PRF 出力を既に得ているなら、それで開く（#105。生体認証は 1 回で済む）
+  // → 1) passkey 封筒があれば PRF で無言アンロック（#104） → 2) 失敗・キャンセル・未対応なら
+  // 従来のパスフレーズプロンプト。順序はユーザ操作の軽い順（追加操作なし → 生体認証 → 入力）。
   const credentialsApi =
     options.credentialsApi === undefined ? browserCredentials() : options.credentialsApi;
   const dek =
     envelopes === null
       ? null
-      : ((await unlockWithPasskey(envelopes, credentialsApi)) ??
+      : (unlockWithPrfOutput(envelopes, options.prfOutput) ??
+        (await unlockWithPasskey(envelopes, credentialsApi)) ??
         (await unlockWithPrompt(envelopes, options.promptFn ?? defaultPrompt)));
   return composeClientDb(db, envelopes, credentialsApi, options, dek);
 }

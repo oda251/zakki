@@ -7,6 +7,7 @@ import { tryDbAsync } from "@zakki/data/db/error.ts";
 import type { KeyEnvelope } from "@zakki/data/db/schema.ts";
 import { keyEnvelopes } from "@zakki/data/db/schema.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
+import { dbForRequest } from "@zakki/web/server/deps.ts";
 import { parseBody } from "@zakki/web/server/parse.ts";
 import { respond } from "@zakki/web/server/respond.ts";
 import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
@@ -57,9 +58,12 @@ export function cryptoRoutes(deps: AppDeps): Hono {
   app.get("/envelopes", async (c) => {
     // base64 変換に sodium を使うため wasm 初期化を待つ（多重呼び出しは安全・即時解決）
     await ready();
+    // 封筒はユーザ自身の DB の中にある（#105 のマルチユーザ構成では中継先ごとに別）
+    const db = await dbForRequest(deps, c.req.raw);
+    if (db === null) return c.json({ error: "認証が必要です" }, 401);
     return respond(
       c,
-      tryDbAsync(() => deps.db.select().from(keyEnvelopes)).map((rows) => ({
+      tryDbAsync(() => db.select().from(keyEnvelopes)).map((rows) => ({
         envelopes: rows.map(toWireEnvelope).filter((e) => e !== null),
       })),
     );
@@ -71,6 +75,8 @@ export function cryptoRoutes(deps: AppDeps): Hono {
     const body = await parseBody(c.req.raw, PasskeyEnvelopePutSchema);
     if (body === null) return c.json({ error: "invalid body" }, 400);
     await ready();
+    const db = await dbForRequest(deps, c.req.raw);
+    if (db === null) return c.json({ error: "認証が必要です" }, 401);
     let wrappedDek: Uint8Array;
     try {
       wrappedDek = sodium.from_base64(body.wrappedDek, sodium.base64_variants.ORIGINAL);
@@ -88,12 +94,12 @@ export function cryptoRoutes(deps: AppDeps): Hono {
     // 暗号未プロビジョン（封筒ゼロ）の DB へは登録させない（409）。passkey 封筒だけが
     // 存在すると unlockOrSetup の初回判定（kinds.length === 0）が壊れ、PRF を評価できない
     // TUI/CLI から復旧不能になる。既存封筒 1 つ以上（= DEK が確立済み）を事前条件にする。
-    const kinds = await tryDbAsync(() => listEnvelopeKinds(deps.db));
+    const kinds = await tryDbAsync(() => listEnvelopeKinds(db));
     if (kinds.isErr()) return respond(c, errAsync(kinds.error));
     if (kinds.value.length === 0) return c.json({ error: "crypto not provisioned" }, 409);
     return respond(
       c,
-      tryDbAsync(() => putPasskeyEnvelope(deps.db, wrappedDek, body.credentialId)).map(() => ({
+      tryDbAsync(() => putPasskeyEnvelope(db, wrappedDek, body.credentialId)).map(() => ({
         ok: true,
       })),
     );

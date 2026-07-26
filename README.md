@@ -44,6 +44,7 @@ docker compose up --build
 
 - **TUI と Web サーバの同時起動は非推奨**（同一 SQLite への複数ライターとなり、解析パスが競合しうる）。どちらか一方を使う。
 - Web サーバは DEK を持たず復号しない（暗号文の中継・封筒配布・静的配信のみ）。E2E 暗号のアンロックはブラウザ側、初回セットアップ・パスフレーズ操作は TUI（`just tui` / `just passphrase`）で行う。
+- `ZAKKI_CONTROL_PLANE_URL` を設定すると、パスキーで会員登録・ログインして**ユーザごとの Turso DB**へ E2E 同期するマルチユーザ構成になる（未設定なら上記の単一ユーザ self-host のまま）。全体図と未デプロイでの検証手順は [docs/MULTIUSER.md](docs/MULTIUSER.md)。
 
 TUI・Web とも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.cpp server 等）が起動していれば要約・類義判定が強化される。未指定時は LM Studio → Ollama の順に自動検出し、`ZAKKI_LLM_BASE_URL` / `ZAKKI_LLM_MODEL` で明示指定もできる。無ければ決定的な処理のみで動く。
 
