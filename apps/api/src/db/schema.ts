@@ -31,6 +31,12 @@ export const credentials = sqliteTable(
     /** WebAuthn signature counter（クローン検知）。認証成功ごとに更新する */
     counter: integer("counter").notNull(),
     transports: text("transports"),
+    /**
+     * 認証器に渡した userDisplayName（issue #118）。「どの端末のパスキーか」を
+     * クレデンシャル一覧で出すための人間向けラベルで、認可には一切使わない。
+     * この列より前に登録されたクレデンシャルのために nullable。
+     */
+    displayName: text("display_name"),
     createdAt: text("created_at").notNull(),
   },
   (t) => [index("credentials_account").on(t.accountId)],
@@ -44,8 +50,9 @@ export const credentials = sqliteTable(
  * 主キーにして「発行済みか」を DB で引き、verify 時に必ず消す（単回使用）。
  * expiresAt を過ぎた行は無効扱いにし、発行のたびに掃除する。
  *
- * accountId は registration のときだけ入る（options 時点で採番した account の
- * 予約。verify が通って初めて accounts へ INSERT するので FK は張れない）。
+ * accountId は registration / credential のときだけ入る（前者は options 時点で
+ * 採番した account の予約、後者はセッションのアカウント。verify が通って初めて
+ * accounts へ INSERT する registration では FK を張れないので credential 側も揃える）。
  * authentication では NULL で、アカウントは提示されたクレデンシャルから引く。
  */
 export const authChallenges = sqliteTable(
@@ -53,10 +60,19 @@ export const authChallenges = sqliteTable(
   {
     /** base64url の challenge そのもの。単回使用なので主キーで足りる */
     challenge: text("challenge").primaryKey(),
-    /** "registration" | "authentication"。取り違え（登録用を認証に流用）を防ぐ */
+    /**
+     * "registration" | "authentication" | "credential"。
+     * 取り違え（登録用を認証に流用・追加用を新規アカウント作成に流用）を防ぐ
+     */
     kind: text("kind").notNull(),
-    /** registration で予約した account id。authentication では NULL */
+    /** registration / credential で紐づく account id。authentication では NULL */
     accountId: text("account_id"),
+    /**
+     * options 発行時に決めた userDisplayName（issue #118）。verify が通ったときに
+     * credentials.display_name へ写す。認証器に渡した文字列そのものを持つことで
+     * 「OS の選択 UI に出る名前」と「一覧 API が返す名前」を一致させる。
+     */
+    displayName: text("display_name"),
     /** 失効時刻（epoch ミリ秒）。過ぎた行は無効・掃除対象 */
     expiresAt: integer("expires_at").notNull(),
   },

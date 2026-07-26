@@ -61,6 +61,25 @@ flowchart LR
 2. `null` なら従来経路（LocalIdentity 相当。認証なしで自分の 1 つの DB を読む）。
 3. 値があればパスキーでログインし、`GET /me/db` の応答を `RemoteIdentity` に写す。ログインできない（未登録・キャンセル・WebAuthn 非対応）ときは `null` に畳んでローカルのみで起動する。
 
+### パスキーの追加・失効（機種変更, issue #115）
+
+登録経路（`POST /auth/register/options`）は毎回新しい accountId を採番するので、2 台目の端末でそれを使うと**別アカウントが生える**。既存アカウントに鍵を足すのは要セッションの別経路にした。
+
+| エンドポイント                            | 役割                                                          |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `POST /auth/credentials/options`           | 既存 accountId を `userID` にした登録 options（`excludeCredentials` 付き） |
+| `POST /auth/credentials/verify`            | attestation 検証 → `credentials` に 1 行追加（`accounts` は作らない）      |
+| `GET /auth/credentials`                    | 一覧（credentialId・表示名・作成日時。公開鍵は返さない）                  |
+| `DELETE /auth/credentials/:credentialId`   | 失効。**最後の 1 本は 409**（アカウントに入れなくなるため）                |
+
+- 新端末はまだログインできないので、**ログイン済み端末で ceremony を行い WebAuthn の cross-device authentication（hybrid transport）で新端末の認証器を使う**のが主導線。そのため `authenticatorSelection` に `authenticatorAttachment` を指定しない（指定すると platform / cross-platform のどちらかに絞られ hybrid が落ちる）。
+- challenge の `kind` は `"credential"` で、新規登録の `"registration"` と分けてある。同じにすると追加用 challenge を `register/verify` へ流し込めてしまう。
+- **PRF 出力はクレデンシャルごとに異なる**ため、追加したパスキーは現状 DEK 封筒を開けない（封筒は `kind` 主キーで 1 本, #103）。ログインはできるがアンロックはパスフレーズ等になる。封筒の複数対応は #120。
+
+### パスキーの表示名（issue #118）
+
+`user.name` は「どのアカウントか」を見分ける識別子（`<accountId 先頭 8 文字>@<RP ID>`。同じアカウントのクレデンシャルでは常に一致する）、`user.displayName` は人間向けの名札（`label` 未指定なら `zakki (YYYY-MM-DD)`）。同じ値を入れない。options 発行時に決めた `displayName` は challenge 行に持ち、verify が通ったら `credentials.display_name` へ写す（OS の選択 UI に出る名前と一覧 API が返す名前を一致させるため）。
+
 ### 接続先の切替は「中継の維持」を選んだ
 
 ブラウザから Turso HTTP を直叩きする案もあるが、replication のプロトコル（`POST /api/replication/:collection/pull|push`）・封筒配布・conflict 処理をすべて libSQL 直叩きに書き換えることになる。**変更が小さいのは現行の中継を残す方**なので、ブラウザ → apps/web → ユーザ DB の形を維持し、切り替わるのは中継先だけにした（direct 接続は将来 issue）。

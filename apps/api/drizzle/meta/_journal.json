@@ -15,6 +15,13 @@
       "when": 1785002657357,
       "tag": "0001_strong_proemial_gods",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785094215244,
+      "tag": "0002_lame_tiger_shark",
+      "breakpoints": true
     }
   ]
 }

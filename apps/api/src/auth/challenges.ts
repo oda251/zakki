@@ -13,12 +13,24 @@ import { authChallenges } from "@zakki/api/db/schema.ts";
 /** challenge の寿命。WebAuthn の既定タイムアウト（60s）にユーザ操作の余裕を足した幅 */
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
-/** challenge の用途。登録用の challenge を認証に流用させない */
-export type ChallengeKind = "registration" | "authentication";
+/**
+ * challenge の用途。登録用の challenge を認証に流用させない。
+ *
+ * "credential"（issue #115）は「ログイン済みアカウントへのパスキー追加」で、
+ * "registration"（新規アカウント作成）と分けてあるのが要点: 同じ kind にすると
+ * 追加用の challenge を `/auth/register/verify` へ流し込めてしまい、既存 accountId で
+ * accounts を作り直す経路が生える。
+ */
+export type ChallengeKind = "registration" | "authentication" | "credential";
 
 /** consume の結果。失敗理由を分けるのは呼び出し側がメッセージを変えるため */
 export type ConsumeResult =
-  | { readonly ok: true; readonly accountId: string | null }
+  | {
+      readonly ok: true;
+      readonly accountId: string | null;
+      /** options 発行時に決めた表示名（issue #118）。未設定なら null */
+      readonly displayName: string | null;
+    }
   | { readonly ok: false; readonly reason: "unknown" | "expired" };
 
 /**
@@ -27,13 +39,21 @@ export type ConsumeResult =
  */
 export async function issueChallenge(
   db: ControlDb,
-  params: { challenge: string; kind: ChallengeKind; accountId?: string; now: number },
+  params: {
+    challenge: string;
+    kind: ChallengeKind;
+    accountId?: string;
+    /** 認証器に渡した userDisplayName。verify で credentials へ写す（issue #118） */
+    displayName?: string;
+    now: number;
+  },
 ): Promise<void> {
   await db.delete(authChallenges).where(lte(authChallenges.expiresAt, params.now));
   await db.insert(authChallenges).values({
     challenge: params.challenge,
     kind: params.kind,
     accountId: params.accountId ?? null,
+    displayName: params.displayName ?? null,
     expiresAt: params.now + CHALLENGE_TTL_MS,
   });
 }
@@ -61,5 +81,5 @@ export async function consumeChallenge(
   if (row.expiresAt <= params.now) {
     return { ok: false, reason: "expired" };
   }
-  return { ok: true, accountId: row.accountId };
+  return { ok: true, accountId: row.accountId, displayName: row.displayName };
 }

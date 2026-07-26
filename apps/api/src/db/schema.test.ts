@@ -57,6 +57,8 @@ describe("コントロールプレーン DB スキーマ", () => {
         publicKey: "pQECAyY",
         counter: 0,
         transports: JSON.stringify(["internal"]),
+        // 表示名（issue #118）は nullable。未設定でも行は成立する
+        displayName: null,
         createdAt: NOW,
       },
     ]);
