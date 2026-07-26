@@ -61,6 +61,8 @@ let nameSeq = 0;
  * 経過を作るテストだけがこれを進める（実時間を待たない）。
  */
 let relayNowMs = Date.now();
+/** true の間、中継サーバからコントロールプレーンへの問い合わせを 503 にする */
+let controlPlaneDown = false;
 
 beforeEach(async () => {
   await ready();
@@ -69,12 +71,15 @@ beforeEach(async () => {
   userDbs = new Map();
   openedIdentities = [];
   relayNowMs = Date.now();
+  controlPlaneDown = false;
   webApp = createApp({
     db: selfHostDb,
     controlPlaneUrl: cp.baseUrl,
     resolveDb: createRemoteDbResolver({
       controlPlaneUrl: cp.baseUrl,
-      fetchFn: cp.fetchFn,
+      // 上流の一時障害を差し込めるようにする（既定は素通し）
+      fetchFn: (input, init) =>
+        controlPlaneDown ? Promise.resolve(new Response("down", { status: 503 })) : cp.fetchFn(input, init),
       now: () => relayNowMs,
       openUserDb: async (identity) => {
         openedIdentities.push(identity);
@@ -442,6 +447,31 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     expect((await reloaded.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
     // 戻り先は同じユーザ DB（ログアウトはデータに触らない）
     expect(userDbs.size).toBe(1);
+  });
+
+  test("R6k: 上流の一時障害では失効扱いにせず、復旧後に再検証をやり直す", async () => {
+    const { client } = await signUp();
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+    const opened = openedIdentities.length;
+
+    // 再検証の頃合いにコントロールプレーンが 5xx を返す。ここでキャッシュを捨てると
+    // その場が 401 に見えるうえ、復旧後の再解決で閉じられない DB ハンドルが増える
+    advanceRelayClock(61);
+    controlPlaneDown = true;
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+    expect(openedIdentities.length).toBe(opened);
+
+    // 復旧後は再検証をやり直す（verifiedAt を進めていないので次の 1 本で問い合わせる）
+    controlPlaneDown = false;
+    const before = cp.requests.length;
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
+    expect(cp.requests.length).toBeGreaterThan(before);
+
+    // 障害中に失効していたなら、復旧後の再検証で 401 になる
+    const token = client.session()?.token ?? "";
+    expect((await logout(token)).status).toBe(204);
+    advanceRelayClock(61);
+    expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(401);
   });
 
   test("R7: アカウントごとに別の DB へ中継される", async () => {

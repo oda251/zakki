@@ -149,11 +149,22 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
     entry: CacheEntry,
     nowSec: number,
   ): Promise<Db | null> => {
-    const account = await getJson(fetchFn, `${base}/auth/me`, token, AccountSchema);
-    if (account === null) {
+    const res = await fetchFn(`${base}/auth/me`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    });
+    // 失効とみなすのは「このセッションは無効だ」と明示された場合だけ（401 / 403）。
+    // 上流の一時障害（5xx・応答不正）で捨てると、その場が 401 に見えるうえ、復旧後の
+    // 再解決で閉じられない DB ハンドルが 1 つ増える。fetch が例外を投げるネットワーク断と
+    // 挙動を揃える意味でも、失効以外は verifiedAt を進めずにエントリを残し、
+    // 次のリクエストで再試行する（entry.expiresAt が上限として効く）
+    if (res.status === 401 || res.status === 403) {
       cache.delete(token);
       return null;
     }
+    if (!res.ok) return entry.db;
+    const body: unknown = await res.json().catch(() => null);
+    if (!v.safeParse(AccountSchema, body).success) return entry.db;
     entry.verifiedAt = nowSec;
     return entry.db;
   };
