@@ -12,6 +12,19 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 /** アカウント。id はサーバ生成の不透明 ID（crypto.randomUUID 想定） */
 export const accounts = sqliteTable("accounts", {
   id: text("id").primaryKey(),
+  /**
+   * セッションの世代（issue #117）。発行したセッショントークンにこの値を焼き込み、
+   * 検証時に現在値と突き合わせる。ログアウトでこの値を +1 すれば、そのアカウントの
+   * 発行済みトークンが一斉に「古い世代」になり無効化される。
+   *
+   * セッションテーブル（発行済みトークンの一覧）を持たないのは、コントロール
+   * プレーンがリクエストごとに使い捨てられる実行環境で動くため——トークン 1 本ごとの
+   * 行を書くと毎回のログインが書き込みになり、掃除も要る。世代番号ならアカウント
+   * 1 行の整数で「全部無効」を表現でき、検証は既存のアカウント存在確認と同じ 1 クエリで済む。
+   *
+   * 既存行のために既定 0。認可の判定材料であって鍵材料ではない（E2E の境界は動かない）。
+   */
+  sessionEpoch: integer("session_epoch").notNull().default(0),
   createdAt: text("created_at").notNull(),
 });
 
