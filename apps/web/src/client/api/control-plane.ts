@@ -21,8 +21,8 @@ import { isConnectionExpiring, remoteIdentity } from "@zakki/core/identity/remot
 import type { Identity } from "@zakki/core/identity/types.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { ApiRequestError, request } from "@zakki/web/client/api/client.ts";
-import type { CredentialsApi } from "@zakki/web/client/db/passkey.ts";
-import { browserCredentials, PRF_SALT, readPrfOutput } from "@zakki/web/client/db/passkey.ts";
+import type { CredentialsApi, PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
+import { browserCredentials, PRF_SALT, readPrfEvaluation } from "@zakki/web/client/db/passkey.ts";
 
 // --- base64url（WebAuthn の wire 表現） -------------------------------------
 //
@@ -123,11 +123,13 @@ export interface ControlPlaneClient {
   }>;
   /**
    * パスキーでログインする。**同じ 1 回の `get()`** で assertion と PRF 出力の
-   * 両方を得る（PRF 非対応の認証器では prfOutput が null になるだけでログインは成功）。
+   * 両方を得る（PRF 非対応の認証器では prf が null になるだけでログインは成功）。
+   * PRF 出力は「どのクレデンシャルで評価したか」と対で返す（封筒はクレデンシャル
+   * ごとにあるため, #120）。
    */
   readonly login: () => Promise<{
     session: ControlPlaneSession;
-    prfOutput: Uint8Array | null;
+    prf: PrfEvaluation | null;
   }>;
   /** `GET /me/db`。失効が近いときだけ取り直す（それ以外はキャッシュを返す） */
   readonly connect: () => Promise<RemoteDbConnection>;
@@ -345,13 +347,13 @@ export function createControlPlaneClient(options: ControlPlaneOptions): ControlP
     });
     connection = null;
     // PRF 未対応の認証器でもログイン自体は成立させる（封筒はパスフレーズで開く）
-    let prfOutput: Uint8Array | null;
+    let prf: PrfEvaluation | null;
     try {
-      prfOutput = readPrfOutput(credential);
+      prf = readPrfEvaluation(credential);
     } catch {
-      prfOutput = null;
+      prf = null;
     }
-    return { session, prfOutput };
+    return { session, prf };
   };
 
   const connect = async (): Promise<RemoteDbConnection> => {
@@ -395,8 +397,8 @@ const ClientConfigSchema = v.object({ controlPlaneUrl: v.nullable(v.string()) })
 export interface RemoteSession {
   readonly identity: Identity;
   readonly fetchFn: FetchLike;
-  /** ログインの get で一緒に得た PRF 出力（PRF 非対応なら null） */
-  readonly prfOutput: Uint8Array | null;
+  /** ログインの get で一緒に得た PRF 評価（credentialId 付き。PRF 非対応なら null） */
+  readonly prf: PrfEvaluation | null;
   readonly client: ControlPlaneClient;
 }
 
@@ -430,11 +432,11 @@ export async function resolveRemoteSession(
     ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
   });
   try {
-    const { prfOutput } = await client.login();
+    const { prf } = await client.login();
     return {
       identity: await client.identity(),
       fetchFn: client.authorizedFetch,
-      prfOutput,
+      prf,
       client,
     };
   } catch (err: unknown) {

@@ -74,7 +74,22 @@ flowchart LR
 
 - 新端末はまだログインできないので、**ログイン済み端末で ceremony を行い WebAuthn の cross-device authentication（hybrid transport）で新端末の認証器を使う**のが主導線。そのため `authenticatorSelection` に `authenticatorAttachment` を指定しない（指定すると platform / cross-platform のどちらかに絞られ hybrid が落ちる）。
 - challenge の `kind` は `"credential"` で、新規登録の `"registration"` と分けてある。同じにすると追加用 challenge を `register/verify` へ流し込めてしまう。
-- **PRF 出力はクレデンシャルごとに異なる**ため、追加したパスキーは現状 DEK 封筒を開けない（封筒は `kind` 主キーで 1 本, #103）。ログインはできるがアンロックはパスフレーズ等になる。封筒の複数対応は #120。
+- **PRF 出力はクレデンシャルごとに異なる**ため、DEK 封筒もクレデンシャルごとに 1 本持つ（issue #120。`key_envelopes` は代理キー + 部分ユニークインデックスで「3 種は単数・passkey は鍵ごと」を表す）。追加したパスキーで封筒を作れば、そのパスキー単独でログインもアンロックもできる。
+
+#### 失効はクライアントが 2 段階で行う（issue #120）
+
+**クレデンシャルと封筒は別の DB にある。** クレデンシャル（公開鍵）はコントロールプレーン DB、封筒はユーザ自身のジャーナル DB で、サーバは互いの DB を触らない。したがって失効は 1 つの API では完結せず、クライアントが順に呼ぶ。
+
+| 順  | 呼ぶもの                                                         | 消えるもの                     |
+| --- | ---------------------------------------------------------------- | ------------------------------ |
+| 1   | `DELETE /auth/credentials/:credentialId`（コントロールプレーン） | パスキー（ログイン・PRF 評価） |
+| 2   | `DELETE /api/crypto/envelopes/passkey/:credentialId`（中継）     | そのパスキーの DEK 封筒        |
+
+順序はこの通り（先に封筒だけ消すとアンロック手段を失う）。片方だけ成功しても致命的ではない: クレデンシャルを失効させれば PRF を評価できないので、残った封筒を開く経路が無い。2 段目は冪等（未知の credentialId でも 200）なので、やり直しは安全。
+
+逆向きの取りこぼし（クレデンシャルはあるが封筒が無い）は、クライアントが**自己修復**する: ログインの `get()` で評価済みの PRF があり、その credentialId の封筒が無ければ、パスフレーズ等で DEK が得られた直後に封筒を作る（`apps/web/src/client/db/bootstrap.ts`）。
+
+なお **コントロールプレーンを使わない単一ユーザ self-host 構成でも複数パスキーは効く**。パスキーは DEK アンロック専用になり、封筒の登録（`POST /api/crypto/envelopes/passkey`）だけで「スマホとノート PC の両方で開ける」が成立する。
 
 ### パスキーの表示名（issue #118）
 

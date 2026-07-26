@@ -79,7 +79,15 @@ export const usePasskeyStore = create<PasskeyState>((set, get) => ({
     try {
       await controls.saveEnvelope(pendingCredentialId);
       set({
-        controls: { ...controls, enrolled: true },
+        // 封筒はクレデンシャルごと（#120）なので、登録済み一覧にも足す（同じ id の
+        // 再登録は上書きなので重複させない）
+        controls: {
+          ...controls,
+          enrolled: true,
+          credentialIds: controls.credentialIds.includes(pendingCredentialId)
+            ? controls.credentialIds
+            : [...controls.credentialIds, pendingCredentialId],
+        },
         status: "done",
         message: "パスキーを登録しました。次回からは生体認証だけで開けます",
         pendingCredentialId: null,

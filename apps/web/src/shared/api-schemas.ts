@@ -84,7 +84,10 @@ export type PasskeyCryptoEnvelope = v.InferOutput<typeof PasskeyCryptoEnvelopeSc
  */
 export const PasskeyEnvelopePutSchema = v.object({
   wrappedDek: v.pipe(v.string(), v.minLength(1)),
-  credentialId: v.pipe(v.string(), v.minLength(1)),
+  // WebAuthn の credential id は base64url（no padding）。ここで形を縛るのは、
+  // 解釈できない id が 1 本でも保存されると allowCredentials の組み立てで巻き添えになり、
+  // 封筒が複数ある状況では「全部のパスキーが使えない」に化けるため（#120）
+  credentialId: v.pipe(v.string(), v.minLength(1), v.regex(/^[A-Za-z0-9_-]+$/)),
 });
 
 // --- 派生型（client の送信形はここから得る） ---

@@ -10,8 +10,10 @@ import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { chunkPush } from "@zakki/web/client/db/modifiers.ts";
-import type { CredentialsApi } from "@zakki/web/client/db/passkey.ts";
+import type { CredentialsApi, PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
+import { createPasskeyCredential, evaluatePrf } from "@zakki/web/client/db/passkey.ts";
 import { fakeAuthenticator } from "@zakki/web/client/db/test-passkey.ts";
+import { fetchEnvelopes } from "@zakki/web/client/db/unlock.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 
@@ -42,6 +44,7 @@ afterEach(async () => {
 async function boot(
   promptFn: (attempt: number) => Promise<string | null>,
   credentialsApi: CredentialsApi | null = null,
+  prf: PrfEvaluation | null = null,
 ): Promise<ClientDb> {
   nameSeq += 1;
   const handle = await bootstrapClientDb({
@@ -51,6 +54,7 @@ async function boot(
     promptFn,
     // 既定（browserCredentials）は jsdom 無しの bun では常に null。明示注入で分岐を固定する
     credentialsApi,
+    prf,
     replicationOptions: { live: false },
   });
   handles.push(handle);
@@ -70,13 +74,25 @@ async function waitForChunk(handle: ClientDb, id: string): Promise<string | unde
   return undefined;
 }
 
+/**
+ * 使い終わったクライアント DB を閉じる。RxDB 無償版は **同時に開けるコレクション数が
+ * 13 まで**（COL23）なので、1 テスト内で 3 回以上起動する場合は都度閉じる。
+ */
+async function close(handle: ClientDb): Promise<void> {
+  handles = handles.filter((h) => h !== handle);
+  await handle.db.remove();
+}
+
 /** パスフレーズでアンロックした状態から、パスキー登録（作成 → 保存）を済ませる */
-async function enrollVia(api: CredentialsApi): Promise<void> {
+async function enrollVia(api: CredentialsApi): Promise<string> {
   const handle = await boot(() => Promise.resolve(PASSPHRASE), api);
   if (handle.passkey.createCredential === null || handle.passkey.saveEnvelope === null) {
     throw new Error("アンロック済みなら登録できるはず");
   }
-  await handle.passkey.saveEnvelope(await handle.passkey.createCredential());
+  const credentialId = await handle.passkey.createCredential();
+  await handle.passkey.saveEnvelope(credentialId);
+  await close(handle);
+  return credentialId;
 }
 
 /** サーバへ暗号文 wire を直接シードする（別デバイスが push 済みの状態） */
@@ -284,5 +300,122 @@ describe("bootstrapClientDb + passkey (#104)", () => {
     expect(handle.passkey.saveEnvelope).toBeNull();
     expect(handle.passkey.unlock).toBeNull();
     expect(handle.passkey.enrolled).toBe(false);
+    expect(handle.passkey.credentialIds).toEqual([]);
+    expect(handle.passkey.revokeEnvelope).toBeNull();
+  });
+});
+
+/**
+ * issue #120: パスキーを複数登録した構成。この describe は **コントロールプレーン無しの
+ * 単一ユーザ self-host 構成**（apps/web + ローカル DB のみ）で通しており、#115 に依存せず
+ * 「スマホとノート PC の両方で開ける」が成立することを示す。
+ */
+describe("bootstrapClientDb + 複数パスキー (#120)", () => {
+  test("M1: 2 本登録 → どちらの端末からも無言アンロックして記録が読める", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
+    await seedEncryptedChunk(dek, "m1", "どちらのパスキーでも読める記録");
+    const phone = fakeAuthenticator();
+    const laptop = fakeAuthenticator();
+    const phoneId = await enrollVia(phone);
+    const laptopId = await enrollVia(laptop);
+
+    for (const api of [phone, laptop]) {
+      let asked = 0;
+      const handle = await boot(() => {
+        asked += 1;
+        return Promise.resolve(PASSPHRASE);
+      }, api);
+      expect(asked).toBe(0); // パスフレーズは聞かれない
+      expect(handle.passkey.enrolled).toBe(true);
+      expect([...handle.passkey.credentialIds].toSorted()).toEqual([phoneId, laptopId].toSorted());
+      expect(handle.replication).not.toBeNull();
+      await Promise.all(
+        Object.values(handle.replication ?? {}).map((state) => state.awaitInitialReplication()),
+      );
+      expect((await handle.db.chunks.findOne("m1").exec())?.content).toBe(
+        "どちらのパスキーでも読める記録",
+      );
+      await close(handle);
+    }
+  });
+
+  test("M2: 1 本を失効させても、もう 1 本でアンロックできる", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
+    await seedEncryptedChunk(dek, "m2", "失効後も残る記録");
+    const phone = fakeAuthenticator();
+    const laptop = fakeAuthenticator();
+    const phoneId = await enrollVia(phone);
+    await enrollVia(laptop);
+
+    // 紛失した端末のパスキーを失効させる。クレデンシャル本体（コントロールプレーン DB）は
+    // #115 の DELETE /auth/credentials/:id が消し、封筒はこちらが消す（2 段階）
+    const before = await boot(() => Promise.resolve(PASSPHRASE), laptop);
+    if (before.passkey.revokeEnvelope === null) throw new Error("失効の入口が必要");
+    await before.passkey.revokeEnvelope(phoneId);
+    await close(before);
+
+    // 残した端末: 今までどおり無言アンロック
+    let asked = 0;
+    const kept = await boot(() => {
+      asked += 1;
+      return Promise.resolve(PASSPHRASE);
+    }, laptop);
+    expect(asked).toBe(0);
+    expect(kept.passkey.credentialIds).not.toContain(phoneId);
+    expect(kept.replication).not.toBeNull();
+    await Promise.all(
+      Object.values(kept.replication ?? {}).map((state) => state.awaitInitialReplication()),
+    );
+    expect((await kept.db.chunks.findOne("m2").exec())?.content).toBe("失効後も残る記録");
+    await close(kept);
+
+    // 失効した端末: 封筒が無いのでパスキーでは開かず、パスフレーズへ落ちる
+    let lostAsked = 0;
+    const lost = await boot(() => {
+      lostAsked += 1;
+      return Promise.resolve(PASSPHRASE);
+    }, phone);
+    expect(lostAsked).toBe(1);
+    expect(lost.replication).not.toBeNull();
+  });
+
+  test("M3: 自己修復 — パスフレーズで開いた直後、現在のクレデンシャルの封筒が無ければ作る", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
+    const api = fakeAuthenticator();
+    // 登録の 2 段目（封筒 POST）を取りこぼした状態＝クレデンシャルはあるが封筒が無い
+    const credentialId = await createPasskeyCredential(api);
+    const prf = await evaluatePrf(api, [credentialId]);
+    expect((await fetchEnvelopes(fetchFn)).some((e) => e.kind === "passkey")).toBe(false);
+
+    // ログインで PRF は評価済み（#105）→ 封筒は開けないのでパスフレーズで開く → その場で修復
+    const healed = await boot(() => Promise.resolve(PASSPHRASE), api, prf);
+    expect(healed.replication).not.toBeNull();
+    expect(healed.passkey.enrolled).toBe(true);
+    expect(healed.passkey.credentialIds).toEqual([credentialId]);
+    await close(healed);
+
+    // 次の起動はパスフレーズ無しで開く（取りこぼしが埋まっている）
+    let asked = 0;
+    const next = await boot(() => {
+      asked += 1;
+      return Promise.resolve(PASSPHRASE);
+    }, api);
+    expect(asked).toBe(0);
+    expect(next.replication).not.toBeNull();
+  });
+
+  test("M4: 封筒が既にあれば自己修復は走らない（封筒は増えない）", async () => {
+    const dek = generateDek();
+    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
+    const api = fakeAuthenticator();
+    const credentialId = await enrollVia(api);
+    const prf = await evaluatePrf(api, [credentialId]);
+
+    const handle = await boot(() => Promise.resolve(PASSPHRASE), api, prf);
+    expect(handle.passkey.credentialIds).toEqual([credentialId]);
+    expect((await fetchEnvelopes(fetchFn)).filter((e) => e.kind === "passkey")).toHaveLength(1);
   });
 });
