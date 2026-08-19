@@ -50,7 +50,7 @@ pulumi up
 | `groupName` | | Turso group 名（既定 `zakki`） |
 | `dbName` | | 単一ユーザ DB 名（既定 `zakki-<stack>`） |
 | `controlDbName` | | コントロールプレーン DB 名（既定 `zakki-control-<stack>`） |
-| `primaryLocation` / `locations` | | Turso ロケーション（既定 `nrt`） |
+| `primaryLocation` / `locations` | | Turso ロケーション（既定 `aws-ap-northeast-1` = 東京）。旧 3 文字コード（`nrt` 等）は現行 API では無効 |
 | `deployWorker` | | `true` で Cloudflare Worker を配備（**既定 `false`**。下記参照） |
 
 `deployWorker=true` のとき追加で必要:
@@ -85,7 +85,8 @@ set_secret cloudflare:apiToken  "$CLOUDFLARE_API_TOKEN"
 
 ## 管理対象
 
-- `turso.Group`（`zakki`）— DB を束ねるレプリカ群。primary ロケーション既定 `nrt`（東京）。
+- `turso.Group`（`zakki`）— DB を束ねるレプリカ群。primary ロケーション既定 `aws-ap-northeast-1`（東京）。
+  有効な値は `GET https://api.turso.tech/v1/locations`、最寄りは `curl https://region.turso.io` で確認できる。
 - `turso.Database`（既定 `zakki-<stack>`）— 単一ユーザ用 DB。Phase 4 の embedded replica の同期先。
 - `turso.Database`（既定 `zakki-control-<stack>`）— **コントロールプレーン DB**（Phase 7）。
   `apps/api` が accounts / credentials / account_databases 台帳を置く。
@@ -156,16 +157,41 @@ turso db tokens create <databaseName>
 - **ユーザごとの Turso DB** — マルチユーザ化後は実行時に `apps/api` が Turso Platform API で
   生成する（Phase 7 バックエンド）。数が可変なので IaC state には載せない。
 
-## 検証状況（2026-07-26 時点）
+## 既知の問題: Database の作成がプロバイダ側で必ず失敗する
 
-- **検証済み**: `pulumi install`（SDK 生成）→ `tsc --noEmit` がエラーなしで通ること。
-  ローカル file backend + ダミー config での `pulumi preview` が
-  `deployWorker=false`（Turso 3 リソースのみ・既存 URN 不変）/ `true`
-  （+ `WorkersScript` / `WorkersScriptSubdomain`）の両方で成功すること。
-  preview では provider への実 API 呼び出しは発生しないため credential 不要。
-- **未検証**: 実際の `pulumi up`（Turso / Cloudflare の実トークンが必要。ユーザが実行する）。
-  プロバイダ本体（`celest-dev/terraform-provider-turso` v0.2.3）は 2025-02 に
-  アーカイブ済みで、最新 Turso API とのランタイム互換は `pulumi up` 実行時に要確認。
+`turso.Database` の作成は **現行 Turso API では必ずエラーになる**（2026-08-19 実測）。
+プロバイダが作成直後に投げる設定更新が `size_limit` を含み、API が拒否するため:
+
+```
+error updating database configuration: decode response: unexpected status code: 400
+# API の実メッセージ: size_limit is not supported for db-api controlled databases
+```
+
+**DB 自体は作成される**が Pulumi の作成処理はそこで失敗し、state に載らない（孤児化する）。
+`turso.Group` は影響を受けない（作成できる）。
+
+回避手順 — 失敗した DB を **import して state に取り込む**:
+
+```bash
+pulumi up            # Group は作成され、Database は上記エラーで失敗する
+pulumi import turso:index/database:Database zakki         <dbName>        --yes
+pulumi import turso:index/database:Database zakki-control <controlDbName> --yes
+pulumi preview       # 差分なし（unchanged）になることを確認する
+```
+
+import 後は `pulumi preview` が差分なしになり、以降の運用（Worker 追加など）は通常どおり行える。
+根本原因はプロバイダ（`celest-dev/terraform-provider-turso` v0.2.3、2025-02 アーカイブ済み）が
+現行 API に追随していないことなので、DB を増やす予定があるなら
+Turso 部分を Platform API 直叩きへ寄せるかの検討が要る。
+
+## 検証状況（2026-08-19 時点）
+
+- **検証済み**: `pulumi install`（SDK 生成）→ `tsc --noEmit`。
+  実トークンでの `pulumi up`（stack `prod`）— `turso.Group` の作成、
+  Database は上記の import 回避を経て `pulumi preview` が差分なしになること。
+  出力 `databaseUrl` / `controlDatabaseUrl` が実ホスト名（リージョン込み）を返すこと。
+  発行した DB トークンでの embedded replica 接続・同期（`packages/data` の `openDb`）。
+- **未検証**: `deployWorker=true` の Cloudflare 側（Worker のバンドル配備・binding・route）。
 
 出典:
 

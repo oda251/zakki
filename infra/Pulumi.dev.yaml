@@ -4,4 +4,4 @@ config:
   # turso:apiToken は秘匿情報。コミットせず CLI で設定する:
   #   pulumi config set --secret turso:apiToken <token>
   zakki-infra:dbName: zakki-dev
-  zakki-infra:primaryLocation: nrt
+  zakki-infra:primaryLocation: aws-ap-northeast-1

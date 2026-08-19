@@ -1,10 +1,10 @@
 name: zakki-infra
 runtime: nodejs
+# description は stack タグにも入り、上限 256 バイト（日本語は 1 文字 3 バイト）
+# を超えると `pulumi stack init` が弾かれるため短く保つ。詳細は README を参照。
 description: >-
-  zakki のクラウドインフラ（Turso group/DB + コントロールプレーン DB +
-  Cloudflare Worker）。静的インフラのみを宣言的に管理する。ユーザごとの
-  Turso DB は実行時に Turso Platform API で生成するため、ここでは管理しない
-  （RESEARCH.md §7）。
+  zakki の静的インフラ（Turso group/DB + Cloudflare Worker）。
+  ユーザごとの DB は実行時生成のため管理外（RESEARCH.md §7）。
 
 # Turso プロバイダは Terraform ブリッジのローカルパッケージとして導入する。
 # 下の packages 定義から `pulumi install` が SDK を sdks/turso に再生成する

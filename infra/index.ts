@@ -23,8 +23,10 @@ const config = new pulumi.Config();
 const stack = pulumi.getStack();
 const groupName = config.get("groupName") ?? "zakki";
 const dbName = config.get("dbName") ?? `zakki-${stack}`;
-// 既定はリージョン東京（nrt）。Turso のロケーションキーで指定する。
-const primaryLocation = config.get("primaryLocation") ?? "nrt";
+// 既定は東京。Turso は 2026 年時点で AWS リージョン形式のロケーションキーを使う
+// （旧 3 文字コード `nrt` は API が 400 `invalid location` で弾く。2026-08-19 実測）。
+// 有効な一覧は GET https://api.turso.tech/v1/locations、最寄りは https://region.turso.io 。
+const primaryLocation = config.get("primaryLocation") ?? "aws-ap-northeast-1";
 const locations = config.getObject<string[]>("locations") ?? [primaryLocation];
 
 // --- リソース ------------------------------------------------------------
@@ -51,12 +53,22 @@ const controlDb = new turso.Database("zakki-control", {
   group: group.name,
 });
 
+/**
+ * DB の接続 URL。ホスト名は Turso が払い出したものを使う（`database.hostname`）。
+ * 名前から組み立てない: 現行 Turso のホスト名はリージョンを含む
+ * （`<db>-<org>.aws-ap-northeast-1.turso.io`）ため、旧来の `<db>-<org>.turso.io`
+ * 形式は実際の払い出しと食い違う（2026-08-19 実測）。
+ */
+function libsqlUrl(database: turso.Database): pulumi.Output<string> {
+  return pulumi.interpolate`libsql://${database.database.hostname}`;
+}
+
 // --- Cloudflare Worker（apps/api）----------------------------------------
 // apps/api（#99）のビルド成果物が無くても既存スタックの preview が壊れない
 // よう、既定 false のフラグでリソース生成ごとスキップできるようにする。
 //   pulumi config set deployWorker true
 const deployWorker = config.getBoolean("deployWorker") ?? false;
-const controlDatabaseUrlOutput = pulumi.interpolate`libsql://${controlDb.name}-${organization}.turso.io`;
+const controlDatabaseUrlOutput = libsqlUrl(controlDb);
 
 let workerScriptNameOutput: pulumi.Output<string> | undefined;
 
@@ -176,8 +188,8 @@ if (deployWorker) {
 export const databaseName = db.name;
 export const tursoGroup = group.name;
 export const tursoOrganization = organization;
-// libSQL の同期先 URL。実ホスト名は Turso が払い出す（慣例: libsql://<db>-<org>.turso.io）。
-export const databaseUrl = pulumi.interpolate`libsql://${db.name}-${organization}.turso.io`;
+// libSQL の同期先 URL（払い出された実ホスト名から作る。libsqlUrl のコメント参照）。
+export const databaseUrl = libsqlUrl(db);
 // コントロールプレーン DB（apps/api が CONTROL_DB_URL として参照）。
 export const controlDatabaseName = controlDb.name;
 export const controlDatabaseUrl = controlDatabaseUrlOutput;

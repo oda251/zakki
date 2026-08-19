@@ -8,6 +8,10 @@ pre-commit:
       run: bunx oxlint --type-check --type-aware {staged_files}
     - name: fmt
       glob: "*.{ts,tsx}"
+      # lint と同様に除外する。oxfmt は infra/ の TS を対象に取らず、infra だけを
+      # ステージしたコミットで「対象ファイルが無い」として exit 2 になり commit が止まる
+      exclude:
+        - "infra/**"
       run: bunx oxfmt --check {staged_files}
     - name: test
       glob: "*.{ts,tsx}"
