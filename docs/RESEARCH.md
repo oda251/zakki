@@ -200,16 +200,15 @@ Cloudflare Workers は Node/Bun と別ランタイム（Web 標準 API のみ、
 - **持たない**: DEK・本文・暗号鍵（wrapped DEK はユーザ自身の Turso DB に置くためバックエンドは復号不能）。
 - `packages/core`（＋ schema）を再利用。
 
-### インフラ（IaC: Pulumi）
+### インフラ（IaC: Pulumi は Cloudflare のみ）
 
-インフラは **Pulumi（TypeScript）**で管理。`infra/` をリポジトリ直下の独立プロジェクトに置く（実行時コードでないので `apps/`/`packages/` と分離）。
+**Cloudflare だけ** Pulumi（TypeScript）で管理する。`infra/` をリポジトリ直下の独立プロジェクトに置く（実行時コードでないので `apps/`/`packages/` と分離）。
 
 - **Cloudflare**: 公式プロバイダ `pulumi/pulumi-cloudflare`（Worker・Routes・DNS・secrets。[Cloudflare の Pulumi ガイド](https://developers.cloudflare.com/pulumi/)）。
-- **Turso**: ネイティブ無し → **Terraform ブリッジ**（`pulumi package add terraform-provider celest-dev/turso`、`TURSO_API_TOKEN`、[Pulumi Registry: turso](https://www.pulumi.com/registry/packages/turso/)）。コミュニティ製で成熟度は要注意。
-- **Pulumi で管理（静的）**: Cloudflare Worker（`apps/api`）/routes/DNS/secrets、Turso org/group・**コントロールプレーン DB**・API トークン。
-- **Pulumi で管理しない（ランタイム）**: **ユーザごとの Turso DB**。会員登録時にバックエンドが Turso Platform API で動的生成（数が可変・無限）。IaC state には載せない。
-- Worker 配備は Pulumi `WorkerScript` か Wrangler（Cloudflare 推奨は「リソース=Pulumi、マイグレーション=Wrangler」併用）。
-- タイミング: 主に Phase 6 以降。単一ユーザ期は Turso DB ＋ secrets の小さなスタックから型を作る。
+- **Turso は IaC で管理しない**（issue #129 / #132、2026-08-19 の実測で方針変更）。Turso は IaC を提供も推奨もしておらず（ドキュメント全ページ索引 <https://docs.turso.tech/llms.txt> に `terraform` / `pulumi` の語が無い）、公式の管理手段は CLI と Platform API だけ。Registry の turso プロバイダ 3 つはすべて非公式で、採用した `celest-dev/turso`（2025-02 アーカイブ済み）は現行 API で **DB 作成が必ず失敗した**（作成直後の設定更新に `size_limit` を載せ、API が 400 を返す）。
+- **アプリ側で作る（ブートストラップ）**: Turso の group と**コントロールプレーン DB**。`just provision` + `just migrate-control`（`apps/api/cli/`、issue #131）。台帳そのものなのでアプリ起動前に存在している必要があり、実行時プロビジョニングには畳めない。
+- **アプリ側で作る（ランタイム）**: **ユーザごとの Turso DB**。会員登録時にバックエンドが Turso Platform API で動的生成（数が可変・無限）。
+- Worker 配備は Pulumi `WorkersScript`。ローカル開発（`wrangler dev`）や tail には Wrangler を使うが、`wrangler deploy` は binding 構成がドリフトするため使わない。
 
 ### 順序
 
