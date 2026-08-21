@@ -93,6 +93,7 @@ check:
     bun run typecheck
     bun run depcruise
     bash scripts/check-arch-guards.sh
+    bun run gen-migrations && git diff --exit-code packages/data/src/db/migrations.generated.ts
     bun run knip
     bun test
     bun run web:build

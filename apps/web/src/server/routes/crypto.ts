@@ -6,6 +6,7 @@ import {
   deletePasskeyEnvelope,
   putPasskeyEnvelopeIfProvisioned,
 } from "@zakki/data/crypto/envelopes.ts";
+import { toBytes } from "@zakki/data/db/blob.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
 import type { KeyEnvelope } from "@zakki/data/db/schema.ts";
 import { keyEnvelopes } from "@zakki/data/db/schema.ts";
@@ -30,12 +31,13 @@ import { PasskeyEnvelopePutSchema } from "@zakki/web/shared/api-schemas.ts";
  * wire には出さない。
  */
 
-/** drizzle blob（Buffer）→ base64（ORIGINAL。クライアント from_base64 と対） */
-function b64(buf: Buffer): string {
-  return sodium.to_base64(
-    new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
-    sodium.base64_variants.ORIGINAL,
-  );
+/**
+ * drizzle blob → base64（ORIGINAL。クライアント from_base64 と対）。
+ * blob の表現はトランスポートで違う（ローカルは Buffer・HTTP は ArrayBuffer）ので
+ * 必ず {@link toBytes} を通す（blob.ts の注記）。
+ */
+function b64(value: Uint8Array | ArrayBuffer): string {
+  return sodium.to_base64(toBytes(value), sodium.base64_variants.ORIGINAL);
 }
 
 /**

@@ -116,6 +116,26 @@ module.exports = {
       },
     },
     {
+      name: "web-worker-portable",
+      comment:
+        "apps/web の Workers エントリ（worker.ts）から node 依存へ推移的に到達しない（issue #134）。" +
+        "Workers にはファイルシステムが無く、ローカル DB も持たない。DB は " +
+        "db/connect-web.ts（HTTP のみ）で開き、node:fs を引く db/connect.ts・" +
+        "identity/local.ts・util/paths.ts・crypto/keyfile.ts へは（bootstrap.ts 経由でも）到達しない。" +
+        "bun 用アダプタ（index.ts / bootstrap.ts）はこの制約の対象外",
+      severity: "error",
+      from: { path: "^apps/web/src/server/worker\\.ts$" },
+      to: {
+        path:
+          "^packages/data/src/db/connect\\.ts$|" +
+          "^packages/data/src/identity/local\\.ts$|" +
+          "^packages/data/src/util/paths\\.ts$|" +
+          "^packages/data/src/crypto/keyfile\\.ts$|" +
+          "^(fs|os)(/|$)",
+        reachable: true,
+      },
+    },
+    {
       name: "web-no-server-conversion",
       comment:
         "web は（client/server とも）サーバ側かな漢字変換エンジン（backend/anco = AncoEngine）へ" +

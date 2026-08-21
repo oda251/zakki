@@ -231,6 +231,58 @@ just migrate-control
 
 migration の生成は drizzle-kit（`bun run --cwd apps/api generate`）、適用は `drizzle-orm/libsql/migrator`（`apps/api/cli/migrate-control.ts`）で分けてある。適用側が drizzle-kit ではないのは、既存 snapshot が `dialect: "sqlite"` で記録されており、Turso 接続のために `dialect: "turso"` へ替えると生成側と食い違うため。migrator はテストが実 libSQL に対して使っているものと同じで、本番へ当たるものとテストが検証したものが一致する。
 
+## Cloudflare へのデプロイ（issue #134）
+
+Worker を 2 つ立てる。どちらも Cloudflare の無料枠で動く。
+
+| Worker      | 中身                               | デプロイ           |
+| ----------- | ---------------------------------- | ------------------ |
+| `zakki-api` | コントロールプレーン（`apps/api`） | Pulumi（`infra/`） |
+| `zakki-web` | 中継サーバ + SPA（`apps/web`）     | `wrangler deploy`  |
+
+### 中継サーバが Workers に載る形（`apps/web/src/server/worker.ts`）
+
+bun 版（`index.ts`）との違いは 3 つ:
+
+- **ローカル DB を開かない**。中継先はリクエストごとにコントロールプレーンが決める（`composeRelayApp`）。フォールバック先が無いので、認証できないリクエストは 401 になる
+- **静的資産は Workers Assets が配る**。`/api/*` だけ Worker を先に通し（`run_worker_first`）、それ以外は Assets が直接応答する（Worker の実行が発生しない）
+- **migration はソースに埋め込んだ SQL を使う**。drizzle の migrator は node:fs でファイルを読むため Workers では動かない。`bun run gen-migrations` が `packages/data/drizzle` を `migrations.generated.ts` へ書き出し、`db/connect-web.ts` が drizzle と**同じ `__drizzle_migrations` テーブル**へ記録する（node 側が適用済みの DB を開いても二重適用にならない。`connect-web.test.ts` が縛る）
+
+Workers 版が node 依存へ到達しないことは depcruise の `web-worker-portable` が推移的に縛る。
+
+**単一ユーザ self-host（bun / docker）はそのまま残る。** Workers 版はマルチユーザ専用で、`ZAKKI_CONTROL_PLANE_URL` を必須にしてある（未設定なら起動失敗）。
+
+### 手順（ユーザが実行）
+
+```bash
+# 1) コントロールプレーン Worker（apps/api）
+bun run --cwd apps/api build          # dist/index.js
+cd infra
+pulumi config set deployWorker true
+pulumi config set cloudflareAccountId <id>
+pulumi config set rpId     <中継サーバのオリジンの登録可能ドメイン>
+pulumi config set rpOrigin <中継サーバのオリジン>
+pulumi preview && pulumi up           # → https://zakki-api.<account>.workers.dev
+
+# 2) 中継サーバ Worker（apps/web）
+just setup-web                        # vite build + anco wasm を dist/ へ
+#    wrangler.jsonc の vars に apps/api の URL を入れる
+bun run --cwd apps/web deploy         # → https://zakki-web.<account>.workers.dev
+```
+
+### RP ID / origin（独自ドメインが無い場合）
+
+`workers.dev` は Public Suffix List に載っているため、**`<account>.workers.dev` が登録可能ドメイン**になる。したがって:
+
+- `RP_ORIGIN` = 中継サーバのオリジン（`https://zakki-web.<account>.workers.dev`）。ブラウザで開くオリジンと完全一致でなければならない
+- `RP_ID` = `<account>.workers.dev`。こうすると同じアカウント配下の 2 つの Worker で同じパスキーが有効になる
+
+2 つの Worker は別オリジンなので、ブラウザ → コントロールプレーンの JSON POST は preflight を通る。`apps/api` は **RP origin ちょうど 1 つ**を許可する CORS を持つ（issue #112）。Cookie は使わない（セッションは Authorization ヘッダの JWT）ので credentials は許可しない。
+
+### challenge 発行の流量制限（issue #112）
+
+`/auth/register/options` と `/auth/login/options` は未認証で叩けて 1 回ごとに DB へ 1 行書く。本来は Worker の前段（Cloudflare Rate Limiting Rules）で止めるのが筋だが、**zone を持たない workers.dev 配備では zone ルールセットが適用されない**。そこでアプリ層で「生きている challenge の総数」に上限（200）を置き、超えたら 429 を返す。独自ドメイン（zone）を持つ構成にしたら前段へ寄せる。
+
 ## TUI を同じ DB へ向ける（issue #135）
 
 マルチユーザ構成にすると、ブラウザは `GET /me/db` が返す per-user DB へ同期する。TUI は単一ユーザ経路（`LocalIdentity`）で環境変数の URL / トークンから DB を開くので、**放っておくと同じ日記が 2 つの DB に割れる**。
@@ -286,7 +338,7 @@ ZAKKI_CONTROL_PLANE_URL=http://localhost:8787 just web
 ```
 
 - WebAuthn はセキュアコンテキストを要求するため、ブラウザは `http://localhost:3777` で開く（`127.0.0.1` ではない）。
-- コントロールプレーンを別ポート・別ホストで動かす場合、ブラウザからのクロスオリジン fetch には CORS 許可が要る（`apps/api` は現在 CORS ヘッダを出さないので、同一オリジン配下に置くかリバースプロキシで束ねる。issue #112）。なお **CSP 側は `ZAKKI_CONTROL_PLANE_URL` のオリジンを `connect-src` に自動で足す**ので、別オリジンでも CSP では塞がれない。
+- コントロールプレーンを別ポート・別ホストで動かす場合、`apps/api` は `RP_ORIGIN` ちょうど 1 つを許可する CORS ヘッダを返す（issue #112）。ローカルで別ポートの中継から叩くときは `RP_ORIGIN` をそのオリジンに合わせる。なお **CSP 側は `ZAKKI_CONTROL_PLANE_URL` のオリジンを `connect-src` に自動で足す**ので、別オリジンでも CSP では塞がれない。
 - ログイン UI はまだ無い（`resolveRemoteSession` が起動時に自動でログインを試みる）。会員登録の UI 導線は別 issue。
 
 ## 現時点の制約（将来 issue）
@@ -295,7 +347,7 @@ ZAKKI_CONTROL_PLANE_URL=http://localhost:8787 just web
 - 会員登録・ログインの UI 導線が無い（未登録の状態ではローカルのみで起動する）。
 - 中継サーバのユーザ DB ハンドルはセッション単位のキャッシュで、失効まで保持する。多人数運用では上限・退避の設計が要る。**退避を入れるときは `openRemoteDb` の戻り値も見直しが要る**（現在は libsql の client を返さないので、開いたハンドルを閉じる手段が無い）。
 - **中継が通る実効的な窓は「セッション JWT の有効期限（12 時間）」+ 最大 60 秒**（[実効的な失効遅延](#実効的な失効遅延)）。ログアウト・退会・期限切れのいずれも、中継サーバが 60 秒ごとに `/auth/me` で再検証するところで止まる。アカウントを跨ぐことは無い（キャッシュキーが JWT そのもの）。
-- `apps/api` の CORS 設定が無い（同一オリジン配下での運用を前提にしている。issue #112）。
+- challenge 発行の流量制限はアプリ層の総数上限（200）だけで、**IP 単位ではない**（issue #112）。独自ドメイン（zone）を持つ構成にしたら Cloudflare の Rate Limiting Rules を前段に置く。
 - **`GET /me/db` が返した DB トークン（TTL 60 分）そのものは失効させられない**。ログアウト・退会の後も、その値を握ったクライアントは最長 60 分 Turso を直叩きできる（退会の場合は DB 自体が消えているので読めるものは無い）。Turso のトークンは発行時点で自己完結しているため、止めるには DB ごと作り直すか TTL を短くするしかない。
 - ログアウト・退会の UI 導線が無い（`POST /auth/logout` / `DELETE /me` を直接叩く）。
 - **TUI の長命トークンは個別に失効させられない**（issue #135）。漏れたときはその DB のトークンを一括ローテートし、`just db-token` で取り直す。TUI 側は依然として単一ユーザ経路（`LocalIdentity`）で、コントロールプレーンのセッションとは無関係に繋がる。

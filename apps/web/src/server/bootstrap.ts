@@ -36,6 +36,9 @@ import { createRemoteDbResolver } from "./identity/remote.ts";
  * - **マルチユーザ**: `ZAKKI_CONTROL_PLANE_URL` があるとき。リクエストのセッションを
  *   コントロールプレーンで解決し、そのアカウントの Turso DB を中継する。どちらの構成でも
  *   サーバは payload を解釈しない。
+ *
+ * この関数は **bun 前提**（ローカル DB を開くため node:fs 依存を引き込む）。Workers 配備は
+ * ローカル DB を持たない relay.ts の composeRelayApp を worker.ts から直接使う（issue #134）。
  */
 export async function bootstrapServer(config: ZakkiConfig): Promise<{ app: Hono }> {
   const dataHome = xdgDataHome(config.xdgDataHome);

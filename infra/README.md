@@ -97,6 +97,17 @@ set_secret controlDbToken       "$CONTROL_DB_TOKEN"
 set_secret cloudflare:apiToken  "$CLOUDFLARE_API_TOKEN"
 ```
 
+## 中継サーバ（apps/web）は wrangler でデプロイする（issue #134）
+
+Worker は 2 つある。**この stack が管理するのは `apps/api` だけ**。
+
+| Worker | 中身 | デプロイ | 理由 |
+| --- | --- | --- | --- |
+| `zakki-api` | コントロールプレーン（`apps/api`） | Pulumi（この stack） | binding と secret を宣言的に持つ |
+| `zakki-web` | 中継サーバ + SPA（`apps/web`） | `wrangler deploy` | **Workers Assets**（SPA + anco wasm）のアップロードを wrangler がネイティブに扱うため |
+
+`apps/web` には Pulumi 管理の binding が無いので、下にある「wrangler deploy と Pulumi のドリフト」は起きない（あの注意は同じ Worker を両方から触る場合の話）。手順は `../docs/MULTIUSER.md`。
+
 ## 管理対象
 
 - `cloudflare.WorkersScript`（`deployWorker=true` のときのみ）— `apps/api` のバンドルを配備。

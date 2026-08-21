@@ -272,13 +272,15 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
       label: body.label,
       now,
     });
-    await issueChallenge(db, {
+    const issued = await issueChallenge(db, {
       challenge: options.challenge,
       kind: "registration",
       accountId,
       displayName,
       now,
     });
+    if (!issued)
+      return c.json({ error: "混み合っています。しばらくしてからやり直してください" }, 429);
     return c.json(options);
   });
 
@@ -358,11 +360,13 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
       rpID: auth.rpId,
       userVerification: "required",
     });
-    await issueChallenge(db, {
+    const issued = await issueChallenge(db, {
       challenge: options.challenge,
       kind: "authentication",
       now: Date.now(),
     });
+    if (!issued)
+      return c.json({ error: "混み合っています。しばらくしてからやり直してください" }, 429);
     return c.json(options);
   });
 
@@ -489,13 +493,15 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
       // 同じ認証器で二重登録させない（対応する認証器は create をその場で拒否する）
       excludeCredentials: existing,
     });
-    await issueChallenge(db, {
+    const issued = await issueChallenge(db, {
       challenge: options.challenge,
       kind: "credential",
       accountId,
       displayName,
       now,
     });
+    if (!issued)
+      return c.json({ error: "混み合っています。しばらくしてからやり直してください" }, 429);
     return c.json(options);
   });
 

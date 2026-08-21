@@ -22,7 +22,8 @@
       "ignoreDependencies": ["@types/libsodium-wrappers-sumo"]
     },
     "packages/data": {
-      "project": "src/**/*.ts"
+      "entry": ["tools/*.ts"],
+      "project": "{src,tools}/**/*.ts"
     },
     "packages/backend": {
       "project": "src/**/*.ts"
