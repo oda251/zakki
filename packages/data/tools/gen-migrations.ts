@@ -63,4 +63,14 @@ export const EMBEDDED_MIGRATIONS: readonly EmbeddedMigration[] = ${JSON.stringif
 `;
 
 writeFileSync(OUT, body);
+
+// 書いた直後に整形する。整形しないと「生成 → fmt」で内容が動き、
+// `just check` の「再生成して差分が無いこと」が常に落ちる（生成物はコミットするため）。
+const formatted = Bun.spawnSync([join(HERE, "..", "..", "..", "node_modules", ".bin", "oxfmt"), OUT], {
+  stderr: "pipe",
+});
+if (formatted.exitCode !== 0) {
+  console.error(`gen-migrations: 整形に失敗しました: ${formatted.stderr.toString()}`);
+  process.exit(1);
+}
 console.error(`gen-migrations: ${migrations.length} 件を ${OUT} へ書き出しました`);
