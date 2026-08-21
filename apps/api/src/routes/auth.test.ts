@@ -11,7 +11,7 @@ import { createSoftAuthenticator, type SoftAuthenticator } from "@zakki/api/auth
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { accounts, authChallenges, credentials } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
-import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
+import { createTursoPlatform } from "@zakki/core/turso/platform.ts";
 
 /**
  * パスキー認証の統合検証（issue #100）。

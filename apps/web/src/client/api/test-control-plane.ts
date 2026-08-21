@@ -23,8 +23,8 @@ import type { SoftAuthenticator } from "@zakki/api/auth/test-fixtures.ts";
 import { createSoftAuthenticator } from "@zakki/api/auth/test-fixtures.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import * as schema from "@zakki/api/db/schema.ts";
-import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
-import { createFakePlatformApi } from "@zakki/api/turso/test-fixtures.ts";
+import { createTursoPlatform } from "@zakki/core/turso/platform.ts";
+import { createFakePlatformApi } from "@zakki/core/turso/test-fixtures.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import type { CredentialsApi } from "@zakki/web/client/db/passkey.ts";
 
@@ -156,11 +156,9 @@ export interface TestControlPlane {
  * （一時ファイル）で、Platform API だけ fake を実サーバに載せて向ける。
  */
 export async function createTestControlPlane(): Promise<TestControlPlane> {
-  const fake = createFakePlatformApi({
-    organization: ORGANIZATION,
-    apiToken: PLATFORM_TOKEN,
-    group: GROUP,
-  });
+  // group を持たない組織から始める（本番と同条件）。group は apps/api の
+  // プロビジョニングが ensureGroup で作る（issue #130）
+  const fake = createFakePlatformApi({ organization: ORGANIZATION, apiToken: PLATFORM_TOKEN });
   const platform = Bun.serve({ port: 0, fetch: fake.app.fetch });
 
   // libsql の :memory: はコネクション単位で独立するため一時ファイルを使う

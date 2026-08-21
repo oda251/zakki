@@ -1,7 +1,7 @@
+import { createTursoPlatform, TURSO_API_BASE_URL } from "@zakki/core/turso/platform.ts";
 import { createApp } from "./app.ts";
 import { createControlDb } from "./db/client.ts";
 import { parseApiEnv } from "./env.ts";
-import { createTursoPlatform, TURSO_API_BASE_URL } from "./turso/platform.ts";
 
 /**
  * Cloudflare Workers エントリ（issue #99）。

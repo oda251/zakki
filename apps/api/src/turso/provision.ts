@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { err, ok, type Result } from "neverthrow";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
-import type { PlatformFailure, TursoDatabase, TursoPlatform } from "@zakki/api/turso/platform.ts";
+import type { PlatformFailure, TursoDatabase, TursoPlatform } from "@zakki/core/turso/platform.ts";
 
 /**
  * アカウントごとの Turso DB プロビジョニング（issue #101）と、その逆操作である
@@ -61,6 +61,10 @@ export type ProvisionFailure =
  *
  * 台帳への INSERT が競合（同一アカウントの並行リクエスト）した場合も、名前が
  * 決定的なので既存行と同じ内容になる。上書きせず何もしない。
+ *
+ * DB は必ず group に属するため、作成の前に group を存在させる（issue #130）。
+ * group は Pulumi ではなくアプリ側の責務になった（issue #129）。台帳ヒット時は
+ * 通らないので、実際に叩かれるのは各アカウントの初回だけ。
  */
 export async function ensureUserDatabase(
   db: ControlDb,
@@ -77,6 +81,9 @@ export async function ensureUserDatabase(
   if (ledger !== undefined) {
     return ok({ name: ledger.dbName, hostname: ledger.dbHostname });
   }
+
+  const group = await platform.ensureGroup();
+  if (group.isErr()) return err(group.error);
 
   const name = await databaseNameForAccount(accountId);
   const created = await platform.createDatabase(name);

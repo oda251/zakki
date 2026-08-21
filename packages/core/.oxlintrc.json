@@ -41,6 +41,13 @@
     {
       "files": ["**/*.test.ts", "**/*.test.tsx"],
       "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "Buffer",
+            "message": "@zakki/core must stay runtime-agnostic: Buffer is not allowed"
+          }
+        ],
         "no-restricted-imports": [
           "error",
           {
