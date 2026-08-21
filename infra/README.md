@@ -4,6 +4,10 @@ zakki のクラウドインフラを Pulumi（TypeScript）で宣言的に管理
 スコープは **Turso（group + DB + コントロールプレーン DB）と Cloudflare Worker（`apps/api`）**。
 設計の正本: `../docs/RESEARCH.md §7`。
 
+> **Turso はここから外れる（issue #129 / #131 / #132）。** group とコントロールプレーン DB は
+> `just provision` + `just migrate-control` がアプリ側で作る（手順は `../docs/MULTIUSER.md`）。
+> 下の Turso に関する記述は #132 で削除する。
+
 `infra/` は実行時コードではない（`apps/` / `packages/` の Bun workspaces とは分離。
 ルートの `workspaces` 対象外なので bun は依存を管理しない）。
 

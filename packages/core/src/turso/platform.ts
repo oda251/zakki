@@ -77,7 +77,13 @@ export type PlatformFailure =
 
 /** DB トークンの発行条件 */
 export interface TokenRequest {
-  /** Turso の期間表記（例 "1h"、"2w1d30m"）。省略時の API 既定は never なので必ず渡す */
+  /**
+   * Turso の期間表記（例 "1h"、"2w1d30m"）。`"never"`（＝無期限）は特別扱いで、
+   * クエリを付けずに API の既定へ委ねる（既定値そのものを文字列で送り返す形は
+   * https://docs.turso.tech/api-reference/databases/create-token に明示が無い）。
+   * 短命トークンを使う経路は必ず具体的な期間を渡すこと——既定は無期限なので、
+   * 渡し忘れると「失効しないトークンを配る」に化ける。
+   */
   readonly expiration: string;
   /** 権限。ジャーナル DB は読み書きするので full-access */
   readonly authorization: "full-access" | "read-only";
@@ -232,10 +238,10 @@ export function createTursoPlatform(config: TursoPlatformConfig): TursoPlatform 
     },
 
     async issueToken(name, request) {
-      const query = new URLSearchParams({
-        expiration: request.expiration,
-        authorization: request.authorization,
-      });
+      const query = new URLSearchParams({ authorization: request.authorization });
+      if (request.expiration !== "never") {
+        query.set("expiration", request.expiration);
+      }
       const sent = await send(
         `${base}/${encodeURIComponent(name)}/auth/tokens?${query.toString()}`,
         { method: "POST" },

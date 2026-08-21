@@ -183,6 +183,40 @@ epoch は**アカウント単位の 1 整数**なので、端末ごとの失効�
 
 コントロールプレーン側（`apps/api`）の設定は [`apps/api/src/env.ts`](../apps/api/src/env.ts) を参照（RP ID / origin・セッション鍵・Turso Platform API のトークンと group）。
 
+## コントロールプレーンの立ち上げ（issue #131）
+
+空の Turso 組織から、コマンド 2 つで動く状態になる。Pulumi も shell スクリプトも使わない（#129 の決定。Turso は IaC を提供も推奨もしておらず、公式の管理手段は CLI と Platform API だけ）。
+
+```bash
+# 1) group とコントロールプレーン DB を用意し、接続情報を得る（冪等）
+#    組織トークンはこの実行の間だけ渡す（常用の env には置かない）
+TURSO_API_TOKEN=$(turso auth api-tokens mint zakki-provision) \
+TURSO_ORG=<your-turso-org> \
+  just provision > /tmp/control-env
+
+# 2) migration を適用する（冪等）
+set -a && source /tmp/control-env && set +a
+just migrate-control
+```
+
+`just provision` の入力（`apps/api/cli/env.ts`）:
+
+| 環境変数               | 必須 | 既定                 |
+| ---------------------- | ---- | -------------------- |
+| `TURSO_API_TOKEN`      | ✔    | —（組織スコープ）    |
+| `TURSO_ORG`            | ✔    | —                    |
+| `TURSO_GROUP`          |      | `zakki`              |
+| `TURSO_GROUP_LOCATION` |      | `aws-ap-northeast-1` |
+| `CONTROL_DB_NAME`      |      | `zakki-control-prod` |
+
+出力は stdout に `CONTROL_DB_URL` / `CONTROL_DB_TOKEN` の 2 行だけ（進捗は stderr）。この 2 つが Worker の binding になる。
+
+**組織トークンは常用の環境変数に置かない。** 組織のあらゆる DB を作成・**削除**できる権限で、アプリが常時持つには強すぎる。アプリが持つのは DB スコープのトークンだけ（`just provision` が出す `CONTROL_DB_TOKEN` と、`GET /me/db` が都度発行する短命トークン）。
+
+**起動時の自動セットアップにはしない。** 上のトークン権限に加えて、`packages/data/src/db/connect.ts` が「構築時にネットワーク I/O をしない（オフラインでも開ける）」を明示的な契約にしているため。
+
+migration の生成は drizzle-kit（`bun run --cwd apps/api generate`）、適用は `drizzle-orm/libsql/migrator`（`apps/api/cli/migrate-control.ts`）で分けてある。適用側が drizzle-kit ではないのは、既存 snapshot が `dialect: "sqlite"` で記録されており、Turso 接続のために `dialect: "turso"` へ替えると生成側と食い違うため。migrator はテストが実 libSQL に対して使っているものと同じで、本番へ当たるものとテストが検証したものが一致する。
+
 ## 未デプロイ前提の検証手順
 
 クラウド（Cloudflare Workers / Turso）に上げなくても、**この構成のコード経路はローカルで全部通せる**。

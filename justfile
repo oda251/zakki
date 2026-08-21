@@ -40,6 +40,17 @@ web-dev:
 docker:
     docker compose up --build
 
+# ---- コントロールプレーン（マルチユーザ構成の初期化） ----
+
+# Turso の group とコントロールプレーン DB を用意して接続情報を出力（冪等）
+# 組織スコープの TURSO_API_TOKEN をこの実行時だけ環境から渡す（常用の env には置かない）
+provision:
+    bun run provision
+
+# コントロールプレーン DB へ migration を適用（CONTROL_DB_URL / CONTROL_DB_TOKEN が要る）
+migrate-control:
+    bun run migrate-control
+
 # ---- CLI ----
 
 # 当日のふりかえりを vault へ書き出し（--week で直近7日）
