@@ -94,6 +94,9 @@ export function describeFailure(failure: PlatformFailure): string {
       return `Turso Platform API が ${failure.status} を返しました: ${failure.detail}`;
     case "malformed":
       return failure.detail;
+    default:
+      // switch-exhaustiveness-check が網羅を保証するので到達しない
+      return "不明な失敗";
   }
 }
 
