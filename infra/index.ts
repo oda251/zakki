@@ -3,72 +3,25 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cloudflare from "@pulumi/cloudflare";
 import * as pulumi from "@pulumi/pulumi";
-// Pulumi.yaml の packages 定義から `pulumi install` で生成されるローカル SDK
-// （sdks/turso）。パッケージ名 "@pulumi/turso" は生成物で確認済み。
-import * as turso from "@pulumi/turso";
 
 // --- 設定 ----------------------------------------------------------------
-// プロバイダ認証（turso:* 名前空間）:
-//   turso:organization … Turso の組織名（stack config に平文で可）
-//   turso:apiToken      … API トークン（必ず secret 指定で設定する。手順は infra/README.md）
-//                         未設定時は環境変数 TURSO_API_TOKEN が使われる
+// このスタックのスコープは **Cloudflare だけ**（issue #132）。Turso の group・DB は
+// アプリ側（`just provision`）が作る: Turso は IaC を提供も推奨もしておらず、
+// 非公式プロバイダは現行 API と非互換だった（issue #129, docs/MULTIUSER.md）。
+//
 // プロバイダ認証（cloudflare:* 名前空間、deployWorker=true のときのみ必要）:
 //   cloudflare:apiToken … Cloudflare API トークン（必ず secret）。
 //                         未設定時は環境変数 CLOUDFLARE_API_TOKEN が使われる
-const tursoConfig = new pulumi.Config("turso");
-const organization = tursoConfig.require("organization");
-
+//
 // アプリ固有設定（zakki-infra:* 名前空間）。stack ごとに上書きする。
 const config = new pulumi.Config();
 const stack = pulumi.getStack();
-const groupName = config.get("groupName") ?? "zakki";
-const dbName = config.get("dbName") ?? `zakki-${stack}`;
-// 既定は東京。Turso は 2026 年時点で AWS リージョン形式のロケーションキーを使う
-// （旧 3 文字コード `nrt` は API が 400 `invalid location` で弾く。2026-08-19 実測）。
-// 有効な一覧は GET https://api.turso.tech/v1/locations、最寄りは https://region.turso.io 。
-const primaryLocation = config.get("primaryLocation") ?? "aws-ap-northeast-1";
-const locations = config.getObject<string[]>("locations") ?? [primaryLocation];
-
-// --- リソース ------------------------------------------------------------
-// Turso group: DB を束ねるレプリカ群。DB 作成には事前に group が必要。
-const group = new turso.Group("zakki", {
-  name: groupName,
-  primary: primaryLocation,
-  locations,
-  extensions: "all",
-});
-
-// 単一ユーザ用 Turso DB。Phase 4 の embedded replica がここへ sync する。
-// （マルチユーザ化後の per-user DB は実行時 Platform API で作るため対象外）
-const db = new turso.Database("zakki", {
-  name: dbName,
-  group: group.name,
-});
-
-// コントロールプレーン DB（Phase 7 / issue #102）。apps/api（Worker）が
-// accounts / credentials / account_databases 台帳を置く。本文・鍵・DEK は
-// 置かない（E2E 原則、RESEARCH.md §7）。既存 group 配下に追加する。
-const controlDb = new turso.Database("zakki-control", {
-  name: config.get("controlDbName") ?? `zakki-control-${stack}`,
-  group: group.name,
-});
-
-/**
- * DB の接続 URL。ホスト名は Turso が払い出したものを使う（`database.hostname`）。
- * 名前から組み立てない: 現行 Turso のホスト名はリージョンを含む
- * （`<db>-<org>.aws-ap-northeast-1.turso.io`）ため、旧来の `<db>-<org>.turso.io`
- * 形式は実際の払い出しと食い違う（2026-08-19 実測）。
- */
-function libsqlUrl(database: turso.Database): pulumi.Output<string> {
-  return pulumi.interpolate`libsql://${database.database.hostname}`;
-}
 
 // --- Cloudflare Worker（apps/api）----------------------------------------
 // apps/api（#99）のビルド成果物が無くても既存スタックの preview が壊れない
 // よう、既定 false のフラグでリソース生成ごとスキップできるようにする。
 //   pulumi config set deployWorker true
 const deployWorker = config.getBoolean("deployWorker") ?? false;
-const controlDatabaseUrlOutput = libsqlUrl(controlDb);
 
 let workerScriptNameOutput: pulumi.Output<string> | undefined;
 
@@ -100,7 +53,7 @@ if (deployWorker) {
   // 値は必ず secret 指定で設定しコミットしない。設定手順は infra/README.md を参照
   // （実値は stdin から渡し、シェル履歴・プロセス一覧に残さない）。
   //   workerTursoApiToken … per-user DB 生成用。最小権限で別途発行する
-  //   controlDbToken      … turso db tokens create <controlDbName> で発行する
+  //   controlDbToken      … `just provision` が出力する CONTROL_DB_TOKEN
   const bindings: pulumi.Input<cloudflare.types.input.WorkersScriptBinding>[] = [
     {
       name: "SESSION_SECRET",
@@ -117,10 +70,12 @@ if (deployWorker) {
       type: "secret_text",
       text: config.requireSecret("controlDbToken"),
     },
-    // 非秘匿の実行時設定（apps/api の env スキーマと対応、issue #99）
-    { name: "CONTROL_DB_URL", type: "plain_text", text: controlDatabaseUrlOutput },
-    { name: "TURSO_ORG", type: "plain_text", text: organization },
-    { name: "TURSO_GROUP", type: "plain_text", text: group.name },
+    // 非秘匿の実行時設定（apps/api の env スキーマと対応、issue #99）。
+    // controlDbUrl は Pulumi が DB を作らなくなったので config から供給する
+    // （`just provision` が出力する CONTROL_DB_URL をそのまま入れる）。
+    { name: "CONTROL_DB_URL", type: "plain_text", text: config.require("controlDbUrl") },
+    { name: "TURSO_ORG", type: "plain_text", text: config.require("tursoOrganization") },
+    { name: "TURSO_GROUP", type: "plain_text", text: config.get("tursoGroup") ?? "zakki" },
   ];
   // WebAuthn の RP 設定。apps/api の env スキーマ（PR #108）では必須のため、
   // 未設定のまま配備すると Worker が全リクエストで env 検証に失敗する。
@@ -181,17 +136,7 @@ if (deployWorker) {
 }
 
 // --- 出力 ----------------------------------------------------------------
-// Phase 4（embedded replica）が参照する接続情報。
-// 認証トークンは Pulumi では出力しない（最小権限の scoped トークンを別途発行する）:
-//   turso db tokens create <dbName>
-// 発行したトークンは XDG 設定 / 環境変数 / ESC 経由でアプリへ渡す（RESEARCH.md §6）。
-export const databaseName = db.name;
-export const tursoGroup = group.name;
-export const tursoOrganization = organization;
-// libSQL の同期先 URL（払い出された実ホスト名から作る。libsqlUrl のコメント参照）。
-export const databaseUrl = libsqlUrl(db);
-// コントロールプレーン DB（apps/api が CONTROL_DB_URL として参照）。
-export const controlDatabaseName = controlDb.name;
-export const controlDatabaseUrl = controlDatabaseUrlOutput;
+// Turso の接続情報はここから出さない（Pulumi が作らないため）。所在とトークンは
+// `just provision` の出力が一次情報で、この stack へは config として入る。
 // Worker のスクリプト名（deployWorker=false のときは空文字列 = 未作成）。
 export const workerScriptName = workerScriptNameOutput ?? pulumi.output("");

@@ -1,4 +1,4 @@
-import { eq, lte } from "drizzle-orm";
+import { count, eq, lte } from "drizzle-orm";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { authChallenges } from "@zakki/api/db/schema.ts";
 
@@ -12,6 +12,24 @@ import { authChallenges } from "@zakki/api/db/schema.ts";
 
 /** challenge の寿命。WebAuthn の既定タイムアウト（60s）にユーザ操作の余裕を足した幅 */
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * 同時に生きていられる challenge の上限（issue #112 / #134）。
+ *
+ * `/auth/register/options` と `/auth/login/options` は**未認証で叩けて 1 回ごとに
+ * DB へ 1 行書く**。期限切れ掃除があるので定常的には「レート × TTL」で頭打ちに
+ * なるが、上限そのものは無かった。
+ *
+ * 本来は Worker の前段（Cloudflare の Rate Limiting Rules）で止めるのが筋だが、
+ * **zone を持たない workers.dev 配備では zone ルールセットが適用されない**ため、
+ * まずアプリ層で全体の上限を置く。IP 単位ではないので「誰かが埋めると他人も
+ * 登録できない」性質はあるが、DB が無制限に書かれる方を先に断つ。
+ * 独自ドメイン（zone）を持つ構成にしたら前段の rate limiting へ寄せる。
+ *
+ * 値は個人利用の実態から: 1 人が同時に持つ challenge は多くて数個で、TTL 5 分の間に
+ * 200 個溜まるのは正常な使い方ではない。
+ */
+export const MAX_LIVE_CHALLENGES = 200;
 
 /**
  * challenge の用途。登録用の challenge を認証に流用させない。
@@ -36,6 +54,10 @@ export type ConsumeResult =
 /**
  * challenge を発行済みとして記録する。ついでに期限切れ行を掃除する
  * （Workers に定期実行が無いので、書き込みのたびに掃除するのが一番安い）。
+ *
+ * 生きている challenge が {@link MAX_LIVE_CHALLENGES} に達していたら**書かずに
+ * false を返す**（issue #112）。呼び出し側は 429 を返す。掃除の後に数えるので、
+ * 上限に効くのは実際に生きている行だけ。
  */
 export async function issueChallenge(
   db: ControlDb,
@@ -47,8 +69,12 @@ export async function issueChallenge(
     displayName?: string;
     now: number;
   },
-): Promise<void> {
+): Promise<boolean> {
   await db.delete(authChallenges).where(lte(authChallenges.expiresAt, params.now));
+  const [live] = await db.select({ count: count() }).from(authChallenges);
+  if (live !== undefined && live.count >= MAX_LIVE_CHALLENGES) {
+    return false;
+  }
   await db.insert(authChallenges).values({
     challenge: params.challenge,
     kind: params.kind,
@@ -56,6 +82,7 @@ export async function issueChallenge(
     displayName: params.displayName ?? null,
     expiresAt: params.now + CHALLENGE_TTL_MS,
   });
+  return true;
 }
 
 /**

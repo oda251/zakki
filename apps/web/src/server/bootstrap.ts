@@ -14,9 +14,14 @@ import { createRemoteDbResolver } from "./identity/remote.ts";
  * web サーバは DEK を一切持たない（#45 / #28 項目1）:
  * - 暗号アンロック（keyfile unlock）・assertCryptoReady は撤去。復号・平文の
  *   読み書きはクライアント（RxDB replication + FieldCrypto）と TUI の責務で、
- *   サーバは暗号文の中継（replication / 封筒配布）と変換エンジンのみを提供する。
- *   ZAKKI_ENCRYPTION はサーバでは参照しない（TUI 専用。暗号 ON かどうかは
- *   クライアントが封筒の有無で判定する）。
+ *   サーバは **payload を不透明に扱う中継**（replication / 封筒配布）と変換
+ *   エンジンのみを提供する。ZAKKI_ENCRYPTION はサーバでは参照しない
+ *   （TUI 専用。暗号 ON かどうかはクライアントが封筒の有無で判定する）。
+ * - **payload が暗号化されているかに関心を持たない**（issue #133）。暗号は
+ *   opt-in で既定 OFF なので、wire に流れる doc は平文のこともある。それでも
+ *   サーバのコードと責務は変わらない: repl_docs は wire doc の JSON をそのまま
+ *   持つ汎用ストアで、中身を解釈しないため。不変条件は「クラウドには暗号文しか
+ *   無い」ではなく「**サーバは中身を解釈せず、復号する能力も持たない**」。
  * - assertCryptoReady（issue #46 のサイレント平文読みガード）が守っていた危険
  *   経路（chunk/graph の復号読み・平文書込みルート）自体が撤去されたため、
  *   ガードも不要になった。残る DB アクセスは repl_docs（暗号文 JSON）・
@@ -30,7 +35,10 @@ import { createRemoteDbResolver } from "./identity/remote.ts";
  * - **単一ユーザ self-host（既定）**: LocalIdentity で開いた 1 つの DB を中継する（従来どおり）。
  * - **マルチユーザ**: `ZAKKI_CONTROL_PLANE_URL` があるとき。リクエストのセッションを
  *   コントロールプレーンで解決し、そのアカウントの Turso DB を中継する。どちらの構成でも
- *   サーバは暗号文しか触らない。
+ *   サーバは payload を解釈しない。
+ *
+ * この関数は **bun 前提**（ローカル DB を開くため node:fs 依存を引き込む）。Workers 配備は
+ * ローカル DB を持たない relay.ts の composeRelayApp を worker.ts から直接使う（issue #134）。
  */
 export async function bootstrapServer(config: ZakkiConfig): Promise<{ app: Hono }> {
   const dataHome = xdgDataHome(config.xdgDataHome);

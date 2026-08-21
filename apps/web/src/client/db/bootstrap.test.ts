@@ -7,7 +7,8 @@ import { createDb } from "@zakki/data/db/connect.ts";
 import type { Hono } from "hono";
 import type { ClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
-import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
+import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
+import { makeFieldCrypto, plaintextFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { chunkPush } from "@zakki/web/client/db/modifiers.ts";
 import type { CredentialsApi, PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
@@ -95,9 +96,30 @@ async function enrollVia(api: CredentialsApi): Promise<string> {
   return credentialId;
 }
 
+/** サーバの wire から chunk の content を読む（push 済みかを外側から確かめる） */
+async function waitForServerChunk(id: string): Promise<string | undefined> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const res = await app.request("/api/replication/chunks/pull", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ checkpoint: null, limit: 100 }),
+    });
+    const body = (await res.json()) as { documents: { id: string; content: string }[] };
+    const doc = body.documents.find((d) => d.id === id);
+    if (doc !== undefined) return doc.content;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return undefined;
+}
+
 /** サーバへ暗号文 wire を直接シードする（別デバイスが push 済みの状態） */
 async function seedEncryptedChunk(dek: Uint8Array, id: string, content: string): Promise<void> {
-  const wire = chunkPush(makeFieldCrypto(dek), {
+  await seedChunk(makeFieldCrypto(dek), id, content);
+}
+
+/** wire を直接シードする。暗号 ON / OFF は渡す FieldCrypto で切り替わる */
+async function seedChunk(fc: FieldCrypto, id: string, content: string): Promise<void> {
+  const wire = chunkPush(fc, {
     id,
     parentId: null,
     position: 0,
@@ -151,14 +173,40 @@ describe("bootstrapClientDb", () => {
     );
   });
 
-  test("E2: 封筒なし（暗号未プロビジョン）→ replication は null（平文を wire に出さない）", async () => {
+  test("E2: 封筒なし（暗号 OFF, #133）→ 平文のまま replication が動き、入力も求めない", async () => {
+    // 暗号は opt-in。封筒 0 件はサーバが「暗号 OFF」を表す唯一の合図で、
+    // クライアントは恒等変換で同期する（サーバは中身を解釈しない）
+    await seedChunk(plaintextFieldCrypto(), "1", "平文の記録");
+
     let asked = 0;
     const handle = await boot(() => {
       asked += 1;
       return Promise.resolve(PASSPHRASE);
     });
-    expect(handle.replication).toBeNull();
+
+    expect(handle.replication).not.toBeNull();
+    // 開ける封筒が無いのだからパスフレーズを尋ねる相手もいない
     expect(asked).toBe(0);
+    await Promise.all(
+      Object.values(handle.replication ?? {}).map((state) => state.awaitInitialReplication()),
+    );
+    expect((await handle.db.chunks.findOne("1").exec())?.content).toBe("平文の記録");
+  });
+
+  test("E2: 暗号 OFF で書いた doc は wire にも平文で出る（サーバは中身を解釈しない）", async () => {
+    const handle = await boot(() => Promise.resolve(PASSPHRASE));
+    await handle.db.chunks.insert({
+      id: "pushed",
+      parentId: null,
+      position: 0,
+      content: "平文で送る",
+      date: null,
+      polarity: null,
+      updatedAt: "2026-07-07T00:00:01.000Z",
+    });
+
+    const content = await waitForServerChunk("pushed");
+    expect(content).toBe("平文で送る");
   });
 
   test("E2: パスフレーズ入力キャンセル → replication は null（DB は使える）", async () => {

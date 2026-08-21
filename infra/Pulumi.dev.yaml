@@ -1,7 +1,7 @@
 config:
-  # Turso 組織名（自分の組織に置き換える）。平文で可。
-  turso:organization: your-turso-org
-  # turso:apiToken は秘匿情報。コミットせず CLI で設定する:
-  #   pulumi config set --secret turso:apiToken <token>
-  zakki-infra:dbName: zakki-dev
-  zakki-infra:primaryLocation: aws-ap-northeast-1
+  # Turso 組織名（自分の組織に置き換える）。Worker の TURSO_ORG binding になる。
+  zakki-infra:tursoOrganization: your-turso-org
+  # コントロールプレーン DB の所在。`just provision` の出力をそのまま入れる。
+  #   zakki-infra:controlDbUrl: libsql://zakki-control-dev-<org>.aws-ap-northeast-1.turso.io
+  # Worker の secrets（sessionSecret / workerTursoApiToken / controlDbToken）は
+  # コミットせず CLI で設定する。手順は README を参照。

@@ -1,6 +1,6 @@
 # マルチユーザ構成（コントロールプレーン + DB-per-user）
 
-「スマホ単体で会員登録 → 自分の Turso DB に E2E で読み書き」を成立させる構成。設計の根拠は [RESEARCH.md §6 設計決定 3](RESEARCH.md#設計決定)（Identity 抽象・DB-per-user）と §7（コントロールプレーン）。実装は issue #99〜#105。
+「スマホ単体で会員登録 → 自分の Turso DB へ読み書き」を成立させる構成。設計の根拠は [RESEARCH.md §6 設計決定 3](RESEARCH.md#設計決定)（Identity 抽象・DB-per-user）と §7（コントロールプレーン）。実装は issue #99〜#105。
 
 **既定は単一ユーザ self-host のまま**で、`ZAKKI_CONTROL_PLANE_URL` を設定したときだけこの構成になる（未設定なら従来どおり LocalIdentity で 1 つの DB を開く）。
 
@@ -19,28 +19,42 @@ flowchart LR
   end
 
   subgraph web["中継サーバ（apps/web server）"]
-    REL["replication 中継 / 封筒配布<br/>暗号文しか触らない"]
+    REL["replication 中継 / 封筒配布<br/>payload を解釈しない"]
   end
 
-  UDB[("ユーザごと Turso DB<br/>暗号文 + 封筒")]
+  UDB[("ユーザごと Turso DB<br/>wire doc + 封筒")]
   TURSO["Turso Platform API<br/>DB 作成・トークン発行"]
 
   CP -- "① パスキー（PRF 付き get 1 回）" --> AUTH
   CP -- "② セッション JWT" --> ME
   ME -- "③ 実行時プロビジョニング" --> TURSO
-  UI -- "④ 暗号文 + Authorization: Bearer" --> REL
+  UI -- "④ wire doc + Authorization: Bearer" --> REL
   REL -- "⑤ 同じセッションで所在を問い合わせ" --> ME
   REL -- "⑥ dbUrl + 短命トークンで接続" --> UDB
 ```
 
-### どこに何が無いか（E2E の境界）
+### どこに何が無いか（サーバの境界）
 
-| 場所                   | あるもの                                        | **無いもの**              |
-| ---------------------- | ----------------------------------------------- | ------------------------- |
-| コントロールプレーン   | account / credential（公開鍵）・DB の所在       | DEK・PRF 出力・封筒・本文 |
-| 中継サーバ（apps/web） | 暗号文 wire doc・封筒（KEK 無しでは開けない）   | DEK・PRF 出力・平文       |
-| ユーザごと Turso DB    | 暗号文・wrapped DEK（封筒）                     | 平文・KEK                 |
-| ブラウザ               | DEK（メモリのみ）・セッション JWT（メモリのみ） | 永続化された鍵・トークン  |
+**暗号は opt-in で、既定は OFF（平文保管）**（issue #129 / #133）。不変条件は「クラウドには暗号文しか無い」ではなく **「サーバは中身を解釈せず、復号する能力も持たない」**。暗号の ON / OFF でサーバのコードも責務も変わらない。
+
+| 場所                   | あるもの                                        | **無いもの**                |
+| ---------------------- | ----------------------------------------------- | --------------------------- |
+| コントロールプレーン   | account / credential（公開鍵）・DB の所在       | DEK・PRF 出力・封筒・本文   |
+| 中継サーバ（apps/web） | 不透明な wire doc・封筒（KEK 無しでは開けない） | DEK・PRF 出力・復号する手段 |
+| ユーザごと Turso DB    | wire doc そのまま（暗号 ON なら暗号文 + 封筒）  | KEK                         |
+| ブラウザ               | DEK（メモリのみ）・セッション JWT（メモリのみ） | 永続化された鍵・トークン    |
+
+「復号する手段が無い」は依存関係のルールで機械的に担保している（`.dependency-cruiser.cjs` の `web-server-no-decrypt-capability`。サーバから DEK・復号・アンロックのモジュールへ推移的にも到達しない）。暗号を既定 OFF に戻してもこのルールは維持する。
+
+暗号 ON / OFF の判定はクライアントが**封筒の数**で行う（サーバは配るだけ）:
+
+| `GET /api/crypto/envelopes` | クライアントの動き                          |
+| --------------------------- | ------------------------------------------- |
+| 0 件                        | 暗号 OFF。恒等変換で replication を開始する |
+| 1 件以上                    | 暗号 ON。アンロックできたときだけ開始する   |
+| 取得失敗（オフライン）      | 構成不明。開始しない（local のみで動く）    |
+
+暗号を有効にするには `ZAKKI_ENCRYPTION=1` で TUI を起動する（既存データはその場で暗号化される）。戻すには `just decrypt`（issue #133）。
 
 - PRF 出力は **認証器 → ブラウザ**の中で閉じる。ログインの assertion に付く `clientExtensionResults` はそもそも送らないし、サーバも読まない（`apps/api/src/routes/auth.ts`）。
 - `GET /me/db` が返すトークンは「その DB を開ける権限」であって復号鍵ではない。全部の鍵を失えば復号不能になる（真の E2E のトレードオフ。リカバリコード封筒が必須）。
@@ -183,6 +197,145 @@ epoch は**アカウント単位の 1 整数**なので、端末ごとの失効�
 
 コントロールプレーン側（`apps/api`）の設定は [`apps/api/src/env.ts`](../apps/api/src/env.ts) を参照（RP ID / origin・セッション鍵・Turso Platform API のトークンと group）。
 
+## コントロールプレーンの立ち上げ（issue #131）
+
+空の Turso 組織から、コマンド 2 つで動く状態になる。Pulumi も shell スクリプトも使わない（#129 の決定。Turso は IaC を提供も推奨もしておらず、公式の管理手段は CLI と Platform API だけ）。
+
+```bash
+# 1) group とコントロールプレーン DB を用意し、接続情報を得る（冪等）
+#    組織トークンはこの実行の間だけ渡す（常用の env には置かない）
+TURSO_API_TOKEN=$(turso auth api-tokens mint zakki-provision) \
+TURSO_ORG=<your-turso-org> \
+  just provision > /tmp/control-env
+
+# 2) migration を適用する（冪等）
+set -a && source /tmp/control-env && set +a
+just migrate-control
+```
+
+`just provision` の入力（`apps/api/cli/env.ts`）:
+
+| 環境変数               | 必須 | 既定                 |
+| ---------------------- | ---- | -------------------- |
+| `TURSO_API_TOKEN`      | ✔    | —（組織スコープ）    |
+| `TURSO_ORG`            | ✔    | —                    |
+| `TURSO_GROUP`          |      | `zakki`              |
+| `TURSO_GROUP_LOCATION` |      | `aws-ap-northeast-1` |
+| `CONTROL_DB_NAME`      |      | `zakki-control-prod` |
+
+出力は stdout に `CONTROL_DB_URL` / `CONTROL_DB_TOKEN` の 2 行だけ（進捗は stderr）。この 2 つが Worker の binding になる。
+
+**組織トークンは常用の環境変数に置かない。** 組織のあらゆる DB を作成・**削除**できる権限で、アプリが常時持つには強すぎる。アプリが持つのは DB スコープのトークンだけ（`just provision` が出す `CONTROL_DB_TOKEN` と、`GET /me/db` が都度発行する短命トークン）。
+
+**起動時の自動セットアップにはしない。** 上のトークン権限に加えて、`packages/data/src/db/connect.ts` が「構築時にネットワーク I/O をしない（オフラインでも開ける）」を明示的な契約にしているため。
+
+migration の生成は drizzle-kit（`bun run --cwd apps/api generate`）、適用は `drizzle-orm/libsql/migrator`（`apps/api/cli/migrate-control.ts`）で分けてある。適用側が drizzle-kit ではないのは、既存 snapshot が `dialect: "sqlite"` で記録されており、Turso 接続のために `dialect: "turso"` へ替えると生成側と食い違うため。migrator はテストが実 libSQL に対して使っているものと同じで、本番へ当たるものとテストが検証したものが一致する。
+
+## Cloudflare へのデプロイ（issue #134）
+
+Worker を 2 つ立てる。どちらも Cloudflare の無料枠で動く。
+
+| Worker      | 中身                               | デプロイ           |
+| ----------- | ---------------------------------- | ------------------ |
+| `zakki-api` | コントロールプレーン（`apps/api`） | Pulumi（`infra/`） |
+| `zakki-web` | 中継サーバ + SPA（`apps/web`）     | `wrangler deploy`  |
+
+### 中継サーバが Workers に載る形（`apps/web/src/server/worker.ts`）
+
+bun 版（`index.ts`）との違いは 3 つ:
+
+- **ローカル DB を開かない**。中継先はリクエストごとにコントロールプレーンが決める（`composeRelayApp`）。フォールバック先が無いので、認証できないリクエストは 401 になる
+- **静的資産は Workers Assets が配る**。`/api/*` だけ Worker を先に通し（`run_worker_first`）、それ以外は Assets が直接応答する（Worker の実行が発生しない）
+- **migration はソースに埋め込んだ SQL を使う**。drizzle の migrator は node:fs でファイルを読むため Workers では動かない。`bun run gen-migrations` が `packages/data/drizzle` を `migrations.generated.ts` へ書き出し、`db/connect-web.ts` が drizzle と**同じ `__drizzle_migrations` テーブル**へ記録する（node 側が適用済みの DB を開いても二重適用にならない。`connect-web.test.ts` が縛る）
+
+Workers 版が node 依存へ到達しないことは depcruise の `web-worker-portable` が推移的に縛る。
+
+**単一ユーザ self-host（bun / docker）はそのまま残る。** Workers 版はマルチユーザ専用で、`ZAKKI_CONTROL_PLANE_URL` を必須にしてある（未設定なら起動失敗）。
+
+### 手順（ユーザが実行）
+
+```bash
+# 1) コントロールプレーン Worker（apps/api）
+bun run --cwd apps/api build          # dist/index.js
+cd infra
+pulumi config set deployWorker true
+pulumi config set cloudflareAccountId <id>
+pulumi config set rpId     <中継サーバのオリジンの登録可能ドメイン>
+pulumi config set rpOrigin <中継サーバのオリジン>
+pulumi preview && pulumi up           # → https://zakki-api.<account>.workers.dev
+
+# 2) 中継サーバ Worker（apps/web）
+just setup-web                        # vite build + anco wasm を dist/ へ
+#    wrangler.jsonc の vars に apps/api の URL を入れる
+bun run --cwd apps/web deploy         # → https://zakki-web.<account>.workers.dev
+```
+
+### RP ID / origin（独自ドメインが無い場合）
+
+`workers.dev` は Public Suffix List に載っているため、**`<account>.workers.dev` が登録可能ドメイン**になる。したがって:
+
+- `RP_ORIGIN` = 中継サーバのオリジン（`https://zakki-web.<account>.workers.dev`）。ブラウザで開くオリジンと完全一致でなければならない
+- `RP_ID` = `<account>.workers.dev`。こうすると同じアカウント配下の 2 つの Worker で同じパスキーが有効になる
+
+2 つの Worker は別オリジンなので、ブラウザ → コントロールプレーンの JSON POST は preflight を通る。`apps/api` は **RP origin ちょうど 1 つ**を許可する CORS を持つ（issue #112）。Cookie は使わない（セッションは Authorization ヘッダの JWT）ので credentials は許可しない。
+
+### challenge 発行の流量制限（issue #112）
+
+`/auth/register/options` と `/auth/login/options` は未認証で叩けて 1 回ごとに DB へ 1 行書く。本来は Worker の前段（Cloudflare Rate Limiting Rules）で止めるのが筋だが、**zone を持たない workers.dev 配備では zone ルールセットが適用されない**。そこでアプリ層で「生きている challenge の総数」に上限（200）を置き、超えたら 429 を返す。独自ドメイン（zone）を持つ構成にしたら前段へ寄せる。
+
+## TUI を同じ DB へ向ける（issue #135）
+
+マルチユーザ構成にすると、ブラウザは `GET /me/db` が返す per-user DB へ同期する。TUI は単一ユーザ経路（`LocalIdentity`）で環境変数の URL / トークンから DB を開くので、**放っておくと同じ日記が 2 つの DB に割れる**。
+
+TUI に WebAuthn は無い（ブラウザ前提）ので `/me/db` は通れず、返るトークンも TTL 60 分で常用には短い。そこで **長命トークンを CLI で発行して TUI の環境変数に置く**:
+
+```bash
+# 1) ブラウザで一度パスキー登録 → ログインする（ここで per-user DB が作られ、台帳に載る）
+
+# 2) その DB の接続情報を発行する（accountId はアカウントが 1 つなら省略できる）
+TURSO_API_TOKEN=<組織トークン> TURSO_ORG=<org> \
+CONTROL_DB_URL=<...> CONTROL_DB_TOKEN=<...> \
+  just db-token >> ~/.config/zakki/env
+
+# 3) TUI を起動する（ZAKKI_TURSO_URL / ZAKKI_TURSO_TOKEN を読む）
+set -a && source ~/.config/zakki/env && set +a
+just tui
+```
+
+出力は `ZAKKI_TURSO_URL` / `ZAKKI_TURSO_TOKEN` の 2 行（進捗は stderr）。期限は既定で無期限で、`DB_TOKEN_EXPIRATION=12w` のように上書きできる。
+
+このトークンは **その DB を開ける権限**であって復号鍵ではない。とはいえ日記そのものを読み書きできるので、置き場のファイル権限（`600`）で守る。失効させたいときは Turso 側でその DB のトークンを一括ローテートする（発行済みトークンを個別に消す API は無い）。
+
+## 単一ユーザ DB から per-user DB への移行（issue #136）
+
+`zakki-prod`（単一ユーザ DB）を per-user DB へ畳む **一度きりの移行**。#134 のデプロイと #135 のトークン発行が済んでいることが前提。
+
+```bash
+# 1) 移行元のスナップショットを取る（戻れるようにしてから始める）
+turso db shell zakki-prod .dump > ~/zakki-prod-$(date +%Y%m%d).sql
+
+# 2) 平文で運びたいなら先に暗号を解除する（issue #133。暗号文のままでも運べる）
+just decrypt
+
+# 3) 移送 + 照合
+ZAKKI_SOURCE_URL=libsql://zakki-prod-<org>.aws-ap-northeast-1.turso.io \
+ZAKKI_SOURCE_TOKEN=<zakki-prod のトークン> \
+ZAKKI_TARGET_URL=<just db-token が出した ZAKKI_TURSO_URL> \
+ZAKKI_TARGET_TOKEN=<同 ZAKKI_TURSO_TOKEN> \
+  just copy-db
+
+# 4) TUI / Web の接続先を per-user DB へ切り替える（~/.config/zakki/env を書き換え）
+
+# 5) 読めることを確かめてから zakki-prod を削除する
+turso db destroy zakki-prod
+```
+
+`ZAKKI_SOURCE_URL` を省略するとローカルの既定 DB が移行元になる。照合だけやり直したいときは `just copy-db --verify`。
+
+**移行先が空でなければ何もせず終了する。** 既存行があるところへ流すと id 衝突か重複になり、どちらも黙って壊れるため（マージの意味論は決まらない）。やり直すなら移行先を作り直す。
+
+照合は**行数と内容ハッシュの両方**を表ごとに突き合わせる（`packages/data/src/db/copy.ts`）。1 つでも一致しない表があれば非 0 で終了する。
+
 ## 未デプロイ前提の検証手順
 
 クラウド（Cloudflare Workers / Turso）に上げなくても、**この構成のコード経路はローカルで全部通せる**。
@@ -215,7 +368,7 @@ ZAKKI_CONTROL_PLANE_URL=http://localhost:8787 just web
 ```
 
 - WebAuthn はセキュアコンテキストを要求するため、ブラウザは `http://localhost:3777` で開く（`127.0.0.1` ではない）。
-- コントロールプレーンを別ポート・別ホストで動かす場合、ブラウザからのクロスオリジン fetch には CORS 許可が要る（`apps/api` は現在 CORS ヘッダを出さないので、同一オリジン配下に置くかリバースプロキシで束ねる。issue #112）。なお **CSP 側は `ZAKKI_CONTROL_PLANE_URL` のオリジンを `connect-src` に自動で足す**ので、別オリジンでも CSP では塞がれない。
+- コントロールプレーンを別ポート・別ホストで動かす場合、`apps/api` は `RP_ORIGIN` ちょうど 1 つを許可する CORS ヘッダを返す（issue #112）。ローカルで別ポートの中継から叩くときは `RP_ORIGIN` をそのオリジンに合わせる。なお **CSP 側は `ZAKKI_CONTROL_PLANE_URL` のオリジンを `connect-src` に自動で足す**ので、別オリジンでも CSP では塞がれない。
 - ログイン UI はまだ無い（`resolveRemoteSession` が起動時に自動でログインを試みる）。会員登録の UI 導線は別 issue。
 
 ## 現時点の制約（将来 issue）
@@ -224,6 +377,7 @@ ZAKKI_CONTROL_PLANE_URL=http://localhost:8787 just web
 - 会員登録・ログインの UI 導線が無い（未登録の状態ではローカルのみで起動する）。
 - 中継サーバのユーザ DB ハンドルはセッション単位のキャッシュで、失効まで保持する。多人数運用では上限・退避の設計が要る。**退避を入れるときは `openRemoteDb` の戻り値も見直しが要る**（現在は libsql の client を返さないので、開いたハンドルを閉じる手段が無い）。
 - **中継が通る実効的な窓は「セッション JWT の有効期限（12 時間）」+ 最大 60 秒**（[実効的な失効遅延](#実効的な失効遅延)）。ログアウト・退会・期限切れのいずれも、中継サーバが 60 秒ごとに `/auth/me` で再検証するところで止まる。アカウントを跨ぐことは無い（キャッシュキーが JWT そのもの）。
-- `apps/api` の CORS 設定が無い（同一オリジン配下での運用を前提にしている。issue #112）。
+- challenge 発行の流量制限はアプリ層の総数上限（200）だけで、**IP 単位ではない**（issue #112）。独自ドメイン（zone）を持つ構成にしたら Cloudflare の Rate Limiting Rules を前段に置く。
 - **`GET /me/db` が返した DB トークン（TTL 60 分）そのものは失効させられない**。ログアウト・退会の後も、その値を握ったクライアントは最長 60 分 Turso を直叩きできる（退会の場合は DB 自体が消えているので読めるものは無い）。Turso のトークンは発行時点で自己完結しているため、止めるには DB ごと作り直すか TTL を短くするしかない。
 - ログアウト・退会の UI 導線が無い（`POST /auth/logout` / `DELETE /me` を直接叩く）。
+- **TUI の長命トークンは個別に失効させられない**（issue #135）。漏れたときはその DB のトークンを一括ローテートし、`just db-token` で取り直す。TUI 側は依然として単一ユーザ経路（`LocalIdentity`）で、コントロールプレーンのセッションとは無関係に繋がる。

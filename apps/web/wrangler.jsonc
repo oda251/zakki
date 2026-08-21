@@ -1,0 +1,34 @@
+// zakki 中継サーバ Worker（issue #134）。
+//
+// **apps/api とは違い、こちらは wrangler でデプロイする**。静的資産（SPA + anco wasm）を
+// Workers Assets で配るため: assets のアップロードは wrangler がネイティブに扱い、
+// Pulumi の WorkersScript から同じことをするには別途アップロードセッションの JWT を
+// 用意する必要がある。この Worker には Pulumi 管理の binding が無いので、
+// infra/README.md が言う「wrangler deploy と Pulumi のドリフト」も起きない。
+//
+// 前提: `just setup-web`（vite build + anco wasm 配置）で dist/ を作っておく。
+// デプロイ: `bun run --cwd apps/web deploy`（= wrangler deploy）。手順は docs/MULTIUSER.md。
+{
+  "name": "zakki-web",
+  "main": "src/server/worker.ts",
+  "compatibility_date": "2026-07-01",
+  // libSQL クライアント（@libsql/client/web）と封筒の blob 書き込みが node の Buffer を
+  // 使うため。Workers の互換レイヤで賄える範囲（ファイルシステムは使わない。
+  // depcruise の web-worker-portable が到達しないことを縛っている）
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    // vite build + install-anco-wasm.sh の出力
+    "directory": "dist",
+    // SPA なので、資産に無いパスは index.html を返す（クライアントルータが解釈する）
+    "not_found_handling": "single-page-application",
+    // /api/* だけは Worker を先に通す。それ以外は Assets が直接応答し、
+    // Worker の実行（と課金）が発生しない
+    "run_worker_first": ["/api/*"],
+  },
+  // 非機密の設定。値は空にしてある: 埋めずに `wrangler dev` すると env 検証が
+  // 即座に落ちて設定漏れに気づける（apps/api/wrangler.jsonc と同じ方針）。
+  //   ZAKKI_CONTROL_PLANE_URL  apps/api の base URL（Workers 版は必須 = マルチユーザ専用）
+  "vars": {
+    "ZAKKI_CONTROL_PLANE_URL": "",
+  },
+}

@@ -7,6 +7,7 @@ import {
   generateSalt,
 } from "@zakki/core/crypto/kdf.ts";
 import { sodium } from "@zakki/core/crypto/sodium.ts";
+import { toBytes } from "@zakki/data/db/blob.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { EnvelopeKind } from "@zakki/data/db/schema.ts";
 import { keyEnvelopes } from "@zakki/data/db/schema.ts";
@@ -28,11 +29,6 @@ import { keyEnvelopes } from "@zakki/data/db/schema.ts";
 // 既定の Argon2id パラメータは core 側の defaultKdfParams()（INTERACTIVE プリセット）が
 // SSOT（issue #56）。sodium 定数は ready 後にしか値が入らないため、モジュール評価時に
 // 捕捉せず各関数の呼び出し時に読む。封筒には使ったパラメータを保存する。
-
-/** Buffer ⇄ Uint8Array のゼロコピー写し（drizzle blob は Buffer で返る）。 */
-function toBytes(buf: Buffer): Uint8Array {
-  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-}
 
 /**
  * 単数 kind（keyfile / passphrase / recovery）の封筒を upsert する。

@@ -26,3 +26,23 @@ export function makeFieldCrypto(dek: Uint8Array): FieldCrypto {
     fingerprint: (s) => fingerprint(dek, s),
   };
 }
+
+/**
+ * 何もしない {@link FieldCrypto}（暗号 OFF, issue #133）。
+ *
+ * 暗号は opt-in で、既定では封筒を持たない DB を使う（issue #129 の決定 2）。
+ * その構成でも replication の経路は 1 本に保ちたいので、変換だけを恒等関数に
+ * 差し替える。fingerprint が平文名そのものになるのは data 層の暗号 OFF 時と
+ * 同じ規約（analysis/apply.ts の `crypto === undefined ? name : ...`）で、
+ * TUI が書いた行と web が書いた行が同じキーで一意化される。
+ *
+ * これを使うのは「サーバから封筒 0 件が返った」ときだけ。取得に失敗した
+ * （オフライン）ときは暗号の有無が分からないので replication を開始しない。
+ */
+export function plaintextFieldCrypto(): FieldCrypto {
+  return {
+    encString: (s) => s,
+    decString: (s) => s,
+    fingerprint: (s) => s,
+  };
+}

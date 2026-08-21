@@ -80,3 +80,14 @@ export function attachCrypto(db: Db, ctx: CryptoContext): void {
 export function getCrypto(db: Db): CryptoContext | undefined {
   return registry.get(db);
 }
+
+/**
+ * Db から暗号コンテキストを外す（issue #133）。
+ *
+ * 平文化の移行（`migrateEncryptedToPlaintext`）の最後に呼ぶ。外さないと、同じ
+ * プロセスで続く書き込みが「平文になった DB へ暗号文を書く」ことになる。
+ * `attachCrypto` の逆操作で、これ以外の用途は無い。
+ */
+export function detachCrypto(db: Db): void {
+  registry.delete(db);
+}

@@ -24,6 +24,7 @@ PROCESS_ENV_ALLOW=(
   ':!apps/tui/src/cli/*.ts'         # CLI エントリポイント（合成点）
   ':!apps/tui/src/config.ts'        # config 定義（コメントでの言及のみ）
   ':!apps/web/src/server/index.ts'  # web サーバエントリポイント（合成点）
+  ':!apps/api/cli/*.ts'             # ブートストラップ CLI の合成点（issue #131。Workers ではなく bun で動く）
   ':!apps/web/vite.config.ts'       # vite dev サーバの合成点
   ':!packages/core/src/config/env.ts' # ZakkiConfig の定義本体
   ':!*.test.ts'                     # テストは CI 分岐等で環境変数を読んでよい
@@ -50,6 +51,8 @@ AAD_LITERALS='chunk\.content|tag\.name|chunkUserTag\.name|embedding\.vector'
 AAD_PATTERN="[\"'\`](${AAD_LITERALS})[\"'\`]"
 AAD_ALLOW=(
   ':!packages/core/src/crypto/aad.ts' # AAD 定数の定義本体
+  ':!packages/data/src/db/migrations.generated.ts' # 生成物（issue #134）。中身は drizzle の SQL そのもので、
+                                                   # 適用済み migration の文字列は定数化できない（過去の DDL は不変）
   ':!*.test.ts'                       # テストは期待値としてリテラルを書いてよい
   ':!*.test.tsx'
 )

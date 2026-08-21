@@ -2,15 +2,18 @@ import { eq, isNull } from "drizzle-orm";
 import { AAD } from "@zakki/core/crypto/aad.ts";
 import { generateDek, wrapDek } from "@zakki/core/crypto/dek.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
+import { contentHash64 } from "@zakki/core/util/hash.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
-import { attachCrypto, makeCryptoContext } from "@zakki/data/db/crypto-context.ts";
+import { attachCrypto, detachCrypto, makeCryptoContext } from "@zakki/data/db/crypto-context.ts";
+import { vectorToBuffer } from "@zakki/data/embedding/vector.ts";
 import {
   aadFixups,
   chunks,
   chunkUserTags,
   cryptoMeta,
   embeddings,
+  keyEnvelopes,
   tags,
 } from "@zakki/data/db/schema.ts";
 import {
@@ -147,6 +150,77 @@ export async function migratePlaintextToEncrypted(db: Db, ctx: CryptoContext): P
     // 平文からの初回暗号化では対象行は上で正しい AAD へ暗号化済み。予約は消すだけ
     await tx.delete(aadFixups);
   });
+}
+
+/**
+ * 暗号化済みの行を平文へ戻す（{@link migratePlaintextToEncrypted} の逆操作, issue #133）。
+ *
+ * 暗号は opt-in 機能として残したまま既定 OFF に戻す（issue #129 の決定）ので、
+ * 一方向だけの移行では戻せない。対称にしておけば、後でまた ON にするのも同じ 2 手で済む。
+ *
+ * 対象は forward と同じ 4 テーブル。fingerprint / content_hash は暗号 OFF の
+ * 書き込み側と同じ値へ揃える（fingerprint = 平文名、content_hash = FNV-1a）。
+ * 揃えないと、次の書き込みが「同じタグなのに別行」を作ったり、埋め込みを
+ * 毎回作り直したりする。
+ *
+ * 最後に封筒（`key_envelopes`）とメタ（`crypto_meta`）を消し、Db から
+ * {@link CryptoContext} を外す。封筒を残すと `assertCryptoReady`（guard.ts）が
+ * 「暗号 ON なのにアンロックされていない」と判断して起動を止める。
+ *
+ * **前提**: アンロック済み（`ctx` がこの DB の DEK を束ねている）であること。
+ * AAD 付替えの予約（`aad_fixups`）は復号前に消化されている必要があるが、
+ * アンロック経路（`unlockOrSetup` / `initCrypto`）が必ず `applyAadFixups` を
+ * 通すため、ここでは残骸を消すだけでよい。
+ */
+export async function migrateEncryptedToPlaintext(db: Db, ctx: CryptoContext): Promise<void> {
+  await db.transaction(async (tx) => {
+    // embeddings.content_hash を平文方式へ戻すには平文 content が要るので、
+    // chunk を復号しながら chunkId → 平文 content を控えておく。
+    const plaintextByChunk = new Map<number, string>();
+    for (const row of await tx.select().from(chunks).where(isNull(chunks.date))) {
+      const plain = ctx.decString(row.content, AAD.chunkContent);
+      plaintextByChunk.set(row.id, plain);
+      await tx.update(chunks).set({ content: plain }).where(eq(chunks.id, row.id));
+    }
+
+    for (const row of await tx.select().from(chunkUserTags)) {
+      const plain = ctx.decString(row.name, AAD.chunkUserTagName);
+      await tx
+        .update(chunkUserTags)
+        .set({ name: plain, nameFingerprint: plain })
+        .where(eq(chunkUserTags.id, row.id));
+    }
+
+    for (const row of await tx.select().from(tags)) {
+      const plain = ctx.decString(row.name, AAD.tagName);
+      await tx.update(tags).set({ name: plain, nameFingerprint: plain }).where(eq(tags.id, row.id));
+    }
+
+    for (const row of await tx.select().from(embeddings)) {
+      const vector = ctx.decVector(
+        new Uint8Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength),
+        AAD.embeddingVector,
+      );
+      const plaintext = plaintextByChunk.get(row.chunkId);
+      await tx
+        .update(embeddings)
+        .set({
+          vector: vectorToBuffer(vector),
+          // 平文が分かれば平文方式のハッシュへ。分からなければ温存し、
+          // 次の syncChunkEmbeddings が差分検知して張り替える（forward と対称）。
+          contentHash: plaintext === undefined ? row.contentHash : contentHash64(plaintext),
+        })
+        .where(eq(embeddings.chunkId, row.chunkId));
+    }
+
+    // 鍵材料を残さない。封筒が 1 つでも残ると guard が暗号 ON と判断する
+    await tx.delete(keyEnvelopes);
+    await tx.delete(cryptoMeta);
+    // アンロック経路で消化済みのはずだが、残っていても平文には意味が無い
+    await tx.delete(aadFixups);
+  });
+  // 以後の書き込みが暗号文を混ぜないよう、コンテキストを外す
+  detachCrypto(db);
 }
 
 /**

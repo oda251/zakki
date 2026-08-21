@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { ApiEnv } from "./context.ts";
 import type { AppDeps } from "./deps.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -11,6 +12,22 @@ import { meRoutes } from "./routes/me.ts";
  */
 export function createApp(deps: AppDeps): Hono<ApiEnv> {
   const app = new Hono<ApiEnv>();
+
+  // CORS（issue #112 / #134）。Worker は中継サーバとは別オリジンに置く構成なので、
+  // ブラウザからの `content-type: application/json` の POST は preflight を通る。
+  // 許可するのは **RP origin ちょうど 1 つ**——WebAuthn の origin 検証と同じ値で、
+  // ここを緩めるとパスキーの前段だけが別サイトから叩けることになる。
+  // credentials（Cookie）は使わない（セッションは Authorization ヘッダの JWT）ので
+  // 許可しない。同一オリジン配備でも付いていて害は無い（preflight が来ないだけ）。
+  app.use(
+    "*",
+    cors({
+      origin: deps.auth.rpOrigin,
+      allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+      allowHeaders: ["authorization", "content-type"],
+      maxAge: 86400,
+    }),
+  );
 
   // 注入された依存をコンテキスト変数で配る。認証・プロビジョニング
   // （api-2 / api-3）のルートが使う

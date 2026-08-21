@@ -38,3 +38,49 @@ describe("createApp", () => {
     expect(res.status).toBe(404);
   });
 });
+
+/**
+ * CORS（issue #112 / #134）。Worker は中継サーバとは別オリジンに置くので、
+ * ブラウザの JSON POST は preflight を通る。許可は RP origin ちょうど 1 つ。
+ */
+describe("CORS", () => {
+  test("RP origin からの preflight は許可される", async () => {
+    const res = await makeApp().fetch(
+      new Request("http://control.test/auth/login/options", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://zakki.test",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "content-type",
+        },
+      }),
+    );
+
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://zakki.test");
+    expect(res.headers.get("access-control-allow-headers")?.toLowerCase()).toContain(
+      "content-type",
+    );
+  });
+
+  test("別オリジンには許可ヘッダを返さない（パスキーの前段を他サイトから叩かせない）", async () => {
+    const res = await makeApp().fetch(
+      new Request("http://control.test/auth/login/options", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://evil.test",
+          "access-control-request-method": "POST",
+        },
+      }),
+    );
+
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  test("Cookie は使わないので credentials は許可しない", async () => {
+    const res = await makeApp().fetch(
+      new Request("http://control.test/healthz", { headers: { origin: "https://zakki.test" } }),
+    );
+
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull();
+  });
+});

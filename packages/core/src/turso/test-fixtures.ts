@@ -215,10 +215,12 @@ export function createFakePlatformApi(options: {
     }
     state.tokenRequests.push({
       name,
-      // 実 API の既定は expiration=never / authorization=full-access。指定漏れを
-      // 見分けたいので、テスト側では「送られてこなかった」を空文字で残す
-      expiration: c.req.query("expiration") ?? "",
-      authorization: c.req.query("authorization") ?? "",
+      // 実 API の既定は expiration=never / authorization=full-access
+      // （https://docs.turso.tech/api-reference/databases/create-token）。
+      // 記録するのは**実効値**——指定漏れは「無期限のトークンを配った」という
+      // 実害そのものとして観測されるべきで、空文字では意味が伝わらない
+      expiration: c.req.query("expiration") ?? "never",
+      authorization: c.req.query("authorization") ?? "full-access",
     });
     return c.json({ jwt: `token-for-${name}-${state.tokenRequests.length}` });
   });

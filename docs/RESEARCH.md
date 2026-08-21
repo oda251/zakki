@@ -142,7 +142,11 @@ Mozc の DX 再評価: `sudo apt install emacs-mozc-bin` のみで `mozc_emacs_h
 ### 設計決定
 
 1. **同期**: 書き込みはローカル優先（offline 書き込み）、`sync()` は**起動時＋終了時**（既存 `exit()` に追加）。打鍵 300ms autosave をリモート往復させない。primary を正本とし競合は後勝ち（単一ユーザ前提で低リスク）。
-2. **暗号化（E2E）**: **アプリ層 AEAD**（XChaCha20-Poly1305 等、行ごとにランダム nonce）で content 系（`entries.raw`/`converted`、`chunks.content`）＋ `tags` ＋ embeddings ベクトルを暗号化。クラウドは暗号文のみ。復号はメモリ内だけ（検索 index は既に in-memory `buildIndex`、ベクトルも `loadVectors` でメモリ展開＝既存パターンと整合）。
+2. **暗号化（E2E）**: **アプリ層 AEAD**（XChaCha20-Poly1305 等、行ごとにランダム nonce）で content 系（`entries.raw`/`converted`、`chunks.content`）＋ `tags` ＋ embeddings ベクトルを暗号化。復号はメモリ内だけ（検索 index は既に in-memory `buildIndex`、ベクトルも `loadVectors` でメモリ展開＝既存パターンと整合）。
+
+   > **2026-08-21 更新（issue #129 / #133）**: **暗号は opt-in で、既定は OFF（平文保管）**。コードは撤去せず残し、`ZAKKI_ENCRYPTION=1` で従来どおり有効化できる（戻すのは `just decrypt`）。
+   >
+   > これに伴い、サーバ側の不変条件を「クラウドには暗号文しか無い」から **「サーバは中身を解釈せず、復号する能力も持たない」** へ言い換える。中継サーバは payload が暗号化されているかに関心を持たない設計で、暗号の ON / OFF でコードも責務も変わらない（`repl_docs` は wire doc の JSON をそのまま持つ汎用ストア、封筒配布は `key_envelopes` をそのまま返すだけ）。復号能力を持たないことは depcruise の `web-server-no-decrypt-capability` で機械的に担保しており、このルールは維持する。詳細は [MULTIUSER.md](./MULTIUSER.md)。
    - 暗号化すると native vector index（`libsql_vector_idx`）は平文前提で使えない → **ベクトルは総当たりコサイン継続**（個人規模で十分）。
 
    **鍵管理＝封筒方式（DEK＋複数封筒）**。鍵は「誰が持つか」を E2E（自分だけ）に決定。サーバ管理鍵（OAuth で解錠）は非 E2E になるため不採用。
@@ -200,16 +204,15 @@ Cloudflare Workers は Node/Bun と別ランタイム（Web 標準 API のみ、
 - **持たない**: DEK・本文・暗号鍵（wrapped DEK はユーザ自身の Turso DB に置くためバックエンドは復号不能）。
 - `packages/core`（＋ schema）を再利用。
 
-### インフラ（IaC: Pulumi）
+### インフラ（IaC: Pulumi は Cloudflare のみ）
 
-インフラは **Pulumi（TypeScript）**で管理。`infra/` をリポジトリ直下の独立プロジェクトに置く（実行時コードでないので `apps/`/`packages/` と分離）。
+**Cloudflare だけ** Pulumi（TypeScript）で管理する。`infra/` をリポジトリ直下の独立プロジェクトに置く（実行時コードでないので `apps/`/`packages/` と分離）。
 
 - **Cloudflare**: 公式プロバイダ `pulumi/pulumi-cloudflare`（Worker・Routes・DNS・secrets。[Cloudflare の Pulumi ガイド](https://developers.cloudflare.com/pulumi/)）。
-- **Turso**: ネイティブ無し → **Terraform ブリッジ**（`pulumi package add terraform-provider celest-dev/turso`、`TURSO_API_TOKEN`、[Pulumi Registry: turso](https://www.pulumi.com/registry/packages/turso/)）。コミュニティ製で成熟度は要注意。
-- **Pulumi で管理（静的）**: Cloudflare Worker（`apps/api`）/routes/DNS/secrets、Turso org/group・**コントロールプレーン DB**・API トークン。
-- **Pulumi で管理しない（ランタイム）**: **ユーザごとの Turso DB**。会員登録時にバックエンドが Turso Platform API で動的生成（数が可変・無限）。IaC state には載せない。
-- Worker 配備は Pulumi `WorkerScript` か Wrangler（Cloudflare 推奨は「リソース=Pulumi、マイグレーション=Wrangler」併用）。
-- タイミング: 主に Phase 6 以降。単一ユーザ期は Turso DB ＋ secrets の小さなスタックから型を作る。
+- **Turso は IaC で管理しない**（issue #129 / #132、2026-08-19 の実測で方針変更）。Turso は IaC を提供も推奨もしておらず（ドキュメント全ページ索引 <https://docs.turso.tech/llms.txt> に `terraform` / `pulumi` の語が無い）、公式の管理手段は CLI と Platform API だけ。Registry の turso プロバイダ 3 つはすべて非公式で、採用した `celest-dev/turso`（2025-02 アーカイブ済み）は現行 API で **DB 作成が必ず失敗した**（作成直後の設定更新に `size_limit` を載せ、API が 400 を返す）。
+- **アプリ側で作る（ブートストラップ）**: Turso の group と**コントロールプレーン DB**。`just provision` + `just migrate-control`（`apps/api/cli/`、issue #131）。台帳そのものなのでアプリ起動前に存在している必要があり、実行時プロビジョニングには畳めない。
+- **アプリ側で作る（ランタイム）**: **ユーザごとの Turso DB**。会員登録時にバックエンドが Turso Platform API で動的生成（数が可変・無限）。
+- Worker 配備は Pulumi `WorkersScript`。ローカル開発（`wrangler dev`）や tail には Wrangler を使うが、`wrangler deploy` は binding 構成がドリフトするため使わない。
 
 ### 順序
 

@@ -100,7 +100,10 @@ module.exports = {
         "web サーバは DEK・復号能力へ（推移的にも）到達しない（issue #45 / #28 項目1）。" +
         "復号（crypto-context / getCrypto）・アンロック（unlock / keyfile / init）・" +
         "平文前提の解析（backend/analysis・embedding）はクライアント wasm / TUI の責務。" +
-        "サーバに残すのは暗号文の中継（replication）・封筒配布のみ",
+        "サーバに残すのは payload を不透明に扱う中継（replication）・封筒配布のみ。" +
+        "暗号は opt-in で既定 OFF（issue #133）なので wire の doc は平文のこともあるが、" +
+        "このルールは維持する: 担保しているのは「暗号文しか無い」ではなく" +
+        "「サーバは中身を解釈せず復号能力も持たない」ことで、暗号の ON/OFF で変わらない",
       severity: "error",
       from: { path: "^apps/web/src/server", pathNot: "\\.test\\.(ts|tsx)$" },
       to: {
@@ -109,6 +112,26 @@ module.exports = {
           "^packages/data/src/crypto/(unlock|keyfile|init|guard)\\.ts$|" +
           "^packages/backend/src/(analysis|embedding)/|" +
           "^packages/core/src/crypto/fields\\.ts$",
+        reachable: true,
+      },
+    },
+    {
+      name: "web-worker-portable",
+      comment:
+        "apps/web の Workers エントリ（worker.ts）から node 依存へ推移的に到達しない（issue #134）。" +
+        "Workers にはファイルシステムが無く、ローカル DB も持たない。DB は " +
+        "db/connect-web.ts（HTTP のみ）で開き、node:fs を引く db/connect.ts・" +
+        "identity/local.ts・util/paths.ts・crypto/keyfile.ts へは（bootstrap.ts 経由でも）到達しない。" +
+        "bun 用アダプタ（index.ts / bootstrap.ts）はこの制約の対象外",
+      severity: "error",
+      from: { path: "^apps/web/src/server/worker\\.ts$" },
+      to: {
+        path:
+          "^packages/data/src/db/connect\\.ts$|" +
+          "^packages/data/src/identity/local\\.ts$|" +
+          "^packages/data/src/util/paths\\.ts$|" +
+          "^packages/data/src/crypto/keyfile\\.ts$|" +
+          "^(fs|os)(/|$)",
         reachable: true,
       },
     },

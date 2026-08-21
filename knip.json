@@ -7,7 +7,8 @@
       "ignoreDependencies": ["dependency-cruiser", "@opentui/react"]
     },
     "apps/api": {
-      "project": "src/**/*.ts"
+      "entry": ["cli/*.ts"],
+      "project": "{src,cli}/**/*.ts"
     },
     "apps/tui": {
       "entry": ["src/cli/*.ts"],
@@ -21,7 +22,8 @@
       "ignoreDependencies": ["@types/libsodium-wrappers-sumo"]
     },
     "packages/data": {
-      "project": "src/**/*.ts"
+      "entry": ["tools/*.ts"],
+      "project": "{src,tools}/**/*.ts"
     },
     "packages/backend": {
       "project": "src/**/*.ts"

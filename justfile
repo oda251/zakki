@@ -40,6 +40,21 @@ web-dev:
 docker:
     docker compose up --build
 
+# ---- コントロールプレーン（マルチユーザ構成の初期化） ----
+
+# Turso の group とコントロールプレーン DB を用意して接続情報を出力（冪等）
+# 組織スコープの TURSO_API_TOKEN をこの実行時だけ環境から渡す（常用の env には置かない）
+provision:
+    bun run provision
+
+# コントロールプレーン DB へ migration を適用（CONTROL_DB_URL / CONTROL_DB_TOKEN が要る）
+migrate-control:
+    bun run migrate-control
+
+# TUI 用の長命 DB トークンを発行（accountId 省略時はアカウントが 1 つなら自動で選ぶ）
+db-token *args:
+    bun run db-token {{args}}
+
 # ---- CLI ----
 
 # 当日のふりかえりを vault へ書き出し（--week で直近7日）
@@ -58,6 +73,14 @@ tags *args:
 passphrase *args:
     bun run passphrase {{args}}
 
+# E2E 暗号を解除して DB を平文へ戻す（暗号は opt-in。再有効化は ZAKKI_ENCRYPTION=1）
+decrypt:
+    bun run decrypt
+
+# ジャーナル DB を別の DB へ移送して照合（--verify で照合のみ）。接続情報は環境変数
+copy-db *args:
+    bun run copy-db {{args}}
+
 # ---- 検証 ----
 
 # テストのみ実行
@@ -74,6 +97,7 @@ check:
     bun run typecheck
     bun run depcruise
     bash scripts/check-arch-guards.sh
+    bun run gen-migrations && git diff --exit-code packages/data/src/db/migrations.generated.ts
     bun run knip
     bun test
     bun run web:build

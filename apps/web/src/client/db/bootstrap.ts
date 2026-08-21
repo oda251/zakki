@@ -7,13 +7,16 @@
  * FieldCrypto と passkey 登録クロージャのみが保持し、永続ストレージ
  * （localStorage / sessionStorage / IndexedDB 等）へは書かない。
  *
- * 封筒が無い（暗号未プロビジョン）・入力キャンセル時は replication を開始しない
- * （暗号化できない doc を wire に出さないため。DB 自体は local で使える）。
+ * 暗号は opt-in（issue #129 / #133）。**封筒の数で構成を判定する**:
+ * - 0 件 = 暗号 OFF → 恒等 FieldCrypto で replication を開始する（wire は平文）
+ * - 1 件以上 = 暗号 ON → アンロックできたときだけ replication を開始する
+ *   （暗号化できない doc を wire に出さないため。DB 自体は local で使える）
+ * - 取得失敗（オフライン・サーバ未起動）= 構成が分からない → 開始しない
  */
 import type { RxStorage } from "rxdb";
 import { getRxStorageDexie } from "rxdb/plugins/storage-dexie";
 import { ready } from "@zakki/core/crypto/sodium.ts";
-import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
+import { makeFieldCrypto, plaintextFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
 import type {
@@ -128,8 +131,9 @@ export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise
   // 従来のパスフレーズプロンプト。順序はユーザ操作の軽い順（追加操作なし → 生体認証 → 入力）。
   const credentialsApi =
     options.credentialsApi === undefined ? browserCredentials() : options.credentialsApi;
+  // 封筒 0 件は「暗号 OFF」なので、アンロックを試みない（尋ねる相手がいない）
   const dek =
-    envelopes === null
+    envelopes === null || envelopes.length === 0
       ? null
       : (unlockWithEvaluatedPrf(envelopes, options.prf) ??
         (await unlockWithPasskey(envelopes, credentialsApi)) ??
@@ -194,11 +198,19 @@ function composeClientDb(
             return { unlocked: next.replication !== null, passkey: next.passkey };
           },
   };
-  if (dek === null) {
+  // 暗号 OFF（封筒 0 件）なら恒等変換で同期する。取得失敗（envelopes === null）は
+  // 構成が分からないので同期しない——平文で送ってよいのか判断できないため。
+  const fieldCrypto =
+    dek !== null
+      ? makeFieldCrypto(dek)
+      : envelopes !== null && envelopes.length === 0
+        ? plaintextFieldCrypto()
+        : null;
+  if (fieldCrypto === null) {
     return { db, replication: null, passkey };
   }
 
-  const replication = startReplication(db, makeFieldCrypto(dek), {
+  const replication = startReplication(db, fieldCrypto, {
     fetchFn: options.fetchFn,
     resyncIntervalMs: DEFAULT_RESYNC_INTERVAL_MS,
     ...options.replicationOptions,
