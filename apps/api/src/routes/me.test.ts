@@ -185,6 +185,16 @@ async function logout(token: string): Promise<Response> {
   );
 }
 
+/**
+ * 署名を確実に壊したトークンを作る。末尾 2 文字を固定値に差し替えると、元の
+ * トークンがたまたまその 2 文字で終わっていたときに**何も壊れず 200 が返る**
+ * （base64url なので 4096 回に 1 回。CI で実際に落ちた）。必ず違う文字にする。
+ */
+function tampered(token: string): string {
+  const last = token.slice(-1);
+  return `${token.slice(0, -1)}${last === "A" ? "B" : "A"}`;
+}
+
 interface DbResponse {
   dbUrl: string;
   token: string;
@@ -321,7 +331,7 @@ describe("GET /me/db の異常系", () => {
 
   test("署名の壊れたセッションは 401", async () => {
     const session = await login();
-    const res = await getDb(`${session.token.slice(0, -2)}xy`);
+    const res = await getDb(tampered(session.token));
     expect(res.status).toBe(401);
     expect(fake.state.createRequests).toEqual([]);
   });
@@ -483,7 +493,7 @@ describe("DELETE /me の異常系（孤児 DB を作らない）", () => {
 
   test("署名の壊れたセッションでは削除できない", async () => {
     const session = await login();
-    expect((await deleteMe(`${session.token.slice(0, -2)}xy`)).status).toBe(401);
+    expect((await deleteMe(tampered(session.token))).status).toBe(401);
     expect(fake.state.deleteRequests).toEqual([]);
     expect(await db.select().from(accounts)).toHaveLength(1);
   });
