@@ -306,6 +306,36 @@ just tui
 
 このトークンは **その DB を開ける権限**であって復号鍵ではない。とはいえ日記そのものを読み書きできるので、置き場のファイル権限（`600`）で守る。失効させたいときは Turso 側でその DB のトークンを一括ローテートする（発行済みトークンを個別に消す API は無い）。
 
+## 単一ユーザ DB から per-user DB への移行（issue #136）
+
+`zakki-prod`（単一ユーザ DB）を per-user DB へ畳む **一度きりの移行**。#134 のデプロイと #135 のトークン発行が済んでいることが前提。
+
+```bash
+# 1) 移行元のスナップショットを取る（戻れるようにしてから始める）
+turso db shell zakki-prod .dump > ~/zakki-prod-$(date +%Y%m%d).sql
+
+# 2) 平文で運びたいなら先に暗号を解除する（issue #133。暗号文のままでも運べる）
+just decrypt
+
+# 3) 移送 + 照合
+ZAKKI_SOURCE_URL=libsql://zakki-prod-<org>.aws-ap-northeast-1.turso.io \
+ZAKKI_SOURCE_TOKEN=<zakki-prod のトークン> \
+ZAKKI_TARGET_URL=<just db-token が出した ZAKKI_TURSO_URL> \
+ZAKKI_TARGET_TOKEN=<同 ZAKKI_TURSO_TOKEN> \
+  just copy-db
+
+# 4) TUI / Web の接続先を per-user DB へ切り替える（~/.config/zakki/env を書き換え）
+
+# 5) 読めることを確かめてから zakki-prod を削除する
+turso db destroy zakki-prod
+```
+
+`ZAKKI_SOURCE_URL` を省略するとローカルの既定 DB が移行元になる。照合だけやり直したいときは `just copy-db --verify`。
+
+**移行先が空でなければ何もせず終了する。** 既存行があるところへ流すと id 衝突か重複になり、どちらも黙って壊れるため（マージの意味論は決まらない）。やり直すなら移行先を作り直す。
+
+照合は**行数と内容ハッシュの両方**を表ごとに突き合わせる（`packages/data/src/db/copy.ts`）。1 つでも一致しない表があれば非 0 で終了する。
+
 ## 未デプロイ前提の検証手順
 
 クラウド（Cloudflare Workers / Turso）に上げなくても、**この構成のコード経路はローカルで全部通せる**。
