@@ -51,6 +51,8 @@ AAD_LITERALS='chunk\.content|tag\.name|chunkUserTag\.name|embedding\.vector'
 AAD_PATTERN="[\"'\`](${AAD_LITERALS})[\"'\`]"
 AAD_ALLOW=(
   ':!packages/core/src/crypto/aad.ts' # AAD 定数の定義本体
+  ':!packages/data/src/db/migrations.generated.ts' # 生成物（issue #134）。中身は drizzle の SQL そのもので、
+                                                   # 適用済み migration の文字列は定数化できない（過去の DDL は不変）
   ':!*.test.ts'                       # テストは期待値としてリテラルを書いてよい
   ':!*.test.tsx'
 )
