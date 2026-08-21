@@ -347,7 +347,10 @@ describe("GET /auth/me（requireSession）", () => {
 
   test("署名の壊れたトークンは 401", async () => {
     const { token } = await registerAccount();
-    const tampered = `${token.slice(0, -2)}xy`;
+    // 末尾 2 文字を固定値に差し替えると、元がその 2 文字で終わっていたときに
+    // 何も壊れない（base64url なので 4096 回に 1 回）。必ず違う文字にする
+    const last = token.slice(-1);
+    const tampered = `${token.slice(0, -1)}${last === "A" ? "B" : "A"}`;
     expect((await get("/auth/me", tampered)).status).toBe(401);
   });
 });

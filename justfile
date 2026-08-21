@@ -77,6 +77,10 @@ passphrase *args:
 decrypt:
     bun run decrypt
 
+# ジャーナル DB を別の DB へ移送して照合（--verify で照合のみ）。接続情報は環境変数
+copy-db *args:
+    bun run copy-db {{args}}
+
 # ---- 検証 ----
 
 # テストのみ実行
