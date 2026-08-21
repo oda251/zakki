@@ -17,6 +17,7 @@
     "web": "bun apps/web/src/server/index.ts",
     "provision": "bun apps/api/cli/provision.ts",
     "migrate-control": "bun apps/api/cli/migrate-control.ts",
+    "db-token": "bun apps/api/cli/db-token.ts",
     "web:dev": "bun run --cwd apps/web dev",
     "web:build": "bun run --cwd apps/web build",
     "test": "bun test",

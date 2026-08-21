@@ -231,6 +231,29 @@ just migrate-control
 
 migration の生成は drizzle-kit（`bun run --cwd apps/api generate`）、適用は `drizzle-orm/libsql/migrator`（`apps/api/cli/migrate-control.ts`）で分けてある。適用側が drizzle-kit ではないのは、既存 snapshot が `dialect: "sqlite"` で記録されており、Turso 接続のために `dialect: "turso"` へ替えると生成側と食い違うため。migrator はテストが実 libSQL に対して使っているものと同じで、本番へ当たるものとテストが検証したものが一致する。
 
+## TUI を同じ DB へ向ける（issue #135）
+
+マルチユーザ構成にすると、ブラウザは `GET /me/db` が返す per-user DB へ同期する。TUI は単一ユーザ経路（`LocalIdentity`）で環境変数の URL / トークンから DB を開くので、**放っておくと同じ日記が 2 つの DB に割れる**。
+
+TUI に WebAuthn は無い（ブラウザ前提）ので `/me/db` は通れず、返るトークンも TTL 60 分で常用には短い。そこで **長命トークンを CLI で発行して TUI の環境変数に置く**:
+
+```bash
+# 1) ブラウザで一度パスキー登録 → ログインする（ここで per-user DB が作られ、台帳に載る）
+
+# 2) その DB の接続情報を発行する（accountId はアカウントが 1 つなら省略できる）
+TURSO_API_TOKEN=<組織トークン> TURSO_ORG=<org> \
+CONTROL_DB_URL=<...> CONTROL_DB_TOKEN=<...> \
+  just db-token >> ~/.config/zakki/env
+
+# 3) TUI を起動する（ZAKKI_TURSO_URL / ZAKKI_TURSO_TOKEN を読む）
+set -a && source ~/.config/zakki/env && set +a
+just tui
+```
+
+出力は `ZAKKI_TURSO_URL` / `ZAKKI_TURSO_TOKEN` の 2 行（進捗は stderr）。期限は既定で無期限で、`DB_TOKEN_EXPIRATION=12w` のように上書きできる。
+
+このトークンは **その DB を開ける権限**であって復号鍵ではない。とはいえ日記そのものを読み書きできるので、置き場のファイル権限（`600`）で守る。失効させたいときは Turso 側でその DB のトークンを一括ローテートする（発行済みトークンを個別に消す API は無い）。
+
 ## 未デプロイ前提の検証手順
 
 クラウド（Cloudflare Workers / Turso）に上げなくても、**この構成のコード経路はローカルで全部通せる**。
@@ -275,3 +298,4 @@ ZAKKI_CONTROL_PLANE_URL=http://localhost:8787 just web
 - `apps/api` の CORS 設定が無い（同一オリジン配下での運用を前提にしている。issue #112）。
 - **`GET /me/db` が返した DB トークン（TTL 60 分）そのものは失効させられない**。ログアウト・退会の後も、その値を握ったクライアントは最長 60 分 Turso を直叩きできる（退会の場合は DB 自体が消えているので読めるものは無い）。Turso のトークンは発行時点で自己完結しているため、止めるには DB ごと作り直すか TTL を短くするしかない。
 - ログアウト・退会の UI 導線が無い（`POST /auth/logout` / `DELETE /me` を直接叩く）。
+- **TUI の長命トークンは個別に失効させられない**（issue #135）。漏れたときはその DB のトークンを一括ローテートし、`just db-token` で取り直す。TUI 側は依然として単一ユーザ経路（`LocalIdentity`）で、コントロールプレーンのセッションとは無関係に繋がる。

@@ -66,8 +66,38 @@ const MigrateEnvSchema = v.pipe(
   })),
 );
 
+/**
+ * 長命 DB トークン発行（`just db-token`, issue #135）の入力。
+ *
+ * 組織トークン（Platform API でトークンを発行するため）とコントロールプレーン DB
+ * （accountId → DB の所在を引くため）の両方が要る。TUI に置くのは出力された
+ * DB スコープのトークンだけで、この 2 つは実行時に渡すだけ。
+ */
+const DbTokenEnvSchema = v.pipe(
+  v.object({
+    TURSO_API_TOKEN: required,
+    TURSO_ORG: required,
+    CONTROL_DB_URL: required,
+    CONTROL_DB_TOKEN: required,
+    DB_TOKEN_EXPIRATION: optional,
+  }),
+  v.transform((env) => ({
+    apiToken: env.TURSO_API_TOKEN,
+    organization: env.TURSO_ORG,
+    controlDbUrl: env.CONTROL_DB_URL,
+    controlDbToken: env.CONTROL_DB_TOKEN,
+    /**
+     * Turso の期間表記（例 "12w"）。既定の `"never"` は無期限で、TUI が常用する
+     * 接続に期限切れの手当てが要らない形。失効させたいときは Turso 側で
+     * その DB のトークンを一括ローテートする（発行済みトークンを個別に消す API は無い）。
+     */
+    expiration: orDefault(env.DB_TOKEN_EXPIRATION, "never"),
+  })),
+);
+
 export type ProvisionConfig = v.InferOutput<typeof ProvisionEnvSchema>;
 export type MigrateConfig = v.InferOutput<typeof MigrateEnvSchema>;
+export type DbTokenConfig = v.InferOutput<typeof DbTokenEnvSchema>;
 
 /** 検証エラーをどの変数が不正か分かる 1 行にまとめる */
 function describe(issues: readonly v.BaseIssue<unknown>[]): string {
@@ -84,5 +114,10 @@ export function parseProvisionEnv(env: Record<string, unknown>): Result<Provisio
 
 export function parseMigrateEnv(env: Record<string, unknown>): Result<MigrateConfig, string> {
   const result = v.safeParse(MigrateEnvSchema, env);
+  return result.success ? ok(result.output) : err(describe(result.issues));
+}
+
+export function parseDbTokenEnv(env: Record<string, unknown>): Result<DbTokenConfig, string> {
+  const result = v.safeParse(DbTokenEnvSchema, env);
   return result.success ? ok(result.output) : err(describe(result.issues));
 }

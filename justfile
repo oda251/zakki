@@ -51,6 +51,10 @@ provision:
 migrate-control:
     bun run migrate-control
 
+# TUI 用の長命 DB トークンを発行（accountId 省略時はアカウントが 1 つなら自動で選ぶ）
+db-token *args:
+    bun run db-token {{args}}
+
 # ---- CLI ----
 
 # 当日のふりかえりを vault へ書き出し（--week で直近7日）
