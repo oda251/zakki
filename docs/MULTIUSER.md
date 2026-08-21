@@ -1,6 +1,6 @@
 # マルチユーザ構成（コントロールプレーン + DB-per-user）
 
-「スマホ単体で会員登録 → 自分の Turso DB に E2E で読み書き」を成立させる構成。設計の根拠は [RESEARCH.md §6 設計決定 3](RESEARCH.md#設計決定)（Identity 抽象・DB-per-user）と §7（コントロールプレーン）。実装は issue #99〜#105。
+「スマホ単体で会員登録 → 自分の Turso DB へ読み書き」を成立させる構成。設計の根拠は [RESEARCH.md §6 設計決定 3](RESEARCH.md#設計決定)（Identity 抽象・DB-per-user）と §7（コントロールプレーン）。実装は issue #99〜#105。
 
 **既定は単一ユーザ self-host のまま**で、`ZAKKI_CONTROL_PLANE_URL` を設定したときだけこの構成になる（未設定なら従来どおり LocalIdentity で 1 つの DB を開く）。
 
@@ -19,28 +19,42 @@ flowchart LR
   end
 
   subgraph web["中継サーバ（apps/web server）"]
-    REL["replication 中継 / 封筒配布<br/>暗号文しか触らない"]
+    REL["replication 中継 / 封筒配布<br/>payload を解釈しない"]
   end
 
-  UDB[("ユーザごと Turso DB<br/>暗号文 + 封筒")]
+  UDB[("ユーザごと Turso DB<br/>wire doc + 封筒")]
   TURSO["Turso Platform API<br/>DB 作成・トークン発行"]
 
   CP -- "① パスキー（PRF 付き get 1 回）" --> AUTH
   CP -- "② セッション JWT" --> ME
   ME -- "③ 実行時プロビジョニング" --> TURSO
-  UI -- "④ 暗号文 + Authorization: Bearer" --> REL
+  UI -- "④ wire doc + Authorization: Bearer" --> REL
   REL -- "⑤ 同じセッションで所在を問い合わせ" --> ME
   REL -- "⑥ dbUrl + 短命トークンで接続" --> UDB
 ```
 
-### どこに何が無いか（E2E の境界）
+### どこに何が無いか（サーバの境界）
 
-| 場所                   | あるもの                                        | **無いもの**              |
-| ---------------------- | ----------------------------------------------- | ------------------------- |
-| コントロールプレーン   | account / credential（公開鍵）・DB の所在       | DEK・PRF 出力・封筒・本文 |
-| 中継サーバ（apps/web） | 暗号文 wire doc・封筒（KEK 無しでは開けない）   | DEK・PRF 出力・平文       |
-| ユーザごと Turso DB    | 暗号文・wrapped DEK（封筒）                     | 平文・KEK                 |
-| ブラウザ               | DEK（メモリのみ）・セッション JWT（メモリのみ） | 永続化された鍵・トークン  |
+**暗号は opt-in で、既定は OFF（平文保管）**（issue #129 / #133）。不変条件は「クラウドには暗号文しか無い」ではなく **「サーバは中身を解釈せず、復号する能力も持たない」**。暗号の ON / OFF でサーバのコードも責務も変わらない。
+
+| 場所                   | あるもの                                        | **無いもの**                |
+| ---------------------- | ----------------------------------------------- | --------------------------- |
+| コントロールプレーン   | account / credential（公開鍵）・DB の所在       | DEK・PRF 出力・封筒・本文   |
+| 中継サーバ（apps/web） | 不透明な wire doc・封筒（KEK 無しでは開けない） | DEK・PRF 出力・復号する手段 |
+| ユーザごと Turso DB    | wire doc そのまま（暗号 ON なら暗号文 + 封筒）  | KEK                         |
+| ブラウザ               | DEK（メモリのみ）・セッション JWT（メモリのみ） | 永続化された鍵・トークン    |
+
+「復号する手段が無い」は依存関係のルールで機械的に担保している（`.dependency-cruiser.cjs` の `web-server-no-decrypt-capability`。サーバから DEK・復号・アンロックのモジュールへ推移的にも到達しない）。暗号を既定 OFF に戻してもこのルールは維持する。
+
+暗号 ON / OFF の判定はクライアントが**封筒の数**で行う（サーバは配るだけ）:
+
+| `GET /api/crypto/envelopes` | クライアントの動き                          |
+| --------------------------- | ------------------------------------------- |
+| 0 件                        | 暗号 OFF。恒等変換で replication を開始する |
+| 1 件以上                    | 暗号 ON。アンロックできたときだけ開始する   |
+| 取得失敗（オフライン）      | 構成不明。開始しない（local のみで動く）    |
+
+暗号を有効にするには `ZAKKI_ENCRYPTION=1` で TUI を起動する（既存データはその場で暗号化される）。戻すには `just decrypt`（issue #133）。
 
 - PRF 出力は **認証器 → ブラウザ**の中で閉じる。ログインの assertion に付く `clientExtensionResults` はそもそも送らないし、サーバも読まない（`apps/api/src/routes/auth.ts`）。
 - `GET /me/db` が返すトークンは「その DB を開ける権限」であって復号鍵ではない。全部の鍵を失えば復号不能になる（真の E2E のトレードオフ。リカバリコード封筒が必須）。

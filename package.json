@@ -13,6 +13,7 @@
     "stats": "bun apps/tui/src/cli/stats.ts",
     "tags": "bun apps/tui/src/cli/normalize-tags.ts",
     "passphrase": "bun apps/tui/src/cli/passphrase.ts",
+    "decrypt": "bun apps/tui/src/cli/decrypt.ts",
     "web": "bun apps/web/src/server/index.ts",
     "provision": "bun apps/api/cli/provision.ts",
     "migrate-control": "bun apps/api/cli/migrate-control.ts",

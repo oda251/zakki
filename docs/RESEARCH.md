@@ -142,7 +142,11 @@ Mozc の DX 再評価: `sudo apt install emacs-mozc-bin` のみで `mozc_emacs_h
 ### 設計決定
 
 1. **同期**: 書き込みはローカル優先（offline 書き込み）、`sync()` は**起動時＋終了時**（既存 `exit()` に追加）。打鍵 300ms autosave をリモート往復させない。primary を正本とし競合は後勝ち（単一ユーザ前提で低リスク）。
-2. **暗号化（E2E）**: **アプリ層 AEAD**（XChaCha20-Poly1305 等、行ごとにランダム nonce）で content 系（`entries.raw`/`converted`、`chunks.content`）＋ `tags` ＋ embeddings ベクトルを暗号化。クラウドは暗号文のみ。復号はメモリ内だけ（検索 index は既に in-memory `buildIndex`、ベクトルも `loadVectors` でメモリ展開＝既存パターンと整合）。
+2. **暗号化（E2E）**: **アプリ層 AEAD**（XChaCha20-Poly1305 等、行ごとにランダム nonce）で content 系（`entries.raw`/`converted`、`chunks.content`）＋ `tags` ＋ embeddings ベクトルを暗号化。復号はメモリ内だけ（検索 index は既に in-memory `buildIndex`、ベクトルも `loadVectors` でメモリ展開＝既存パターンと整合）。
+
+   > **2026-08-21 更新（issue #129 / #133）**: **暗号は opt-in で、既定は OFF（平文保管）**。コードは撤去せず残し、`ZAKKI_ENCRYPTION=1` で従来どおり有効化できる（戻すのは `just decrypt`）。
+   >
+   > これに伴い、サーバ側の不変条件を「クラウドには暗号文しか無い」から **「サーバは中身を解釈せず、復号する能力も持たない」** へ言い換える。中継サーバは payload が暗号化されているかに関心を持たない設計で、暗号の ON / OFF でコードも責務も変わらない（`repl_docs` は wire doc の JSON をそのまま持つ汎用ストア、封筒配布は `key_envelopes` をそのまま返すだけ）。復号能力を持たないことは depcruise の `web-server-no-decrypt-capability` で機械的に担保しており、このルールは維持する。詳細は [MULTIUSER.md](./MULTIUSER.md)。
    - 暗号化すると native vector index（`libsql_vector_idx`）は平文前提で使えない → **ベクトルは総当たりコサイン継続**（個人規模で十分）。
 
    **鍵管理＝封筒方式（DEK＋複数封筒）**。鍵は「誰が持つか」を E2E（自分だけ）に決定。サーバ管理鍵（OAuth で解錠）は非 E2E になるため不採用。

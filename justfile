@@ -69,6 +69,10 @@ tags *args:
 passphrase *args:
     bun run passphrase {{args}}
 
+# E2E 暗号を解除して DB を平文へ戻す（暗号は opt-in。再有効化は ZAKKI_ENCRYPTION=1）
+decrypt:
+    bun run decrypt
+
 # ---- 検証 ----
 
 # テストのみ実行
