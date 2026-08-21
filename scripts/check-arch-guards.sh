@@ -113,13 +113,17 @@ fi
 # Bun 固有 API はエントリ含め全面禁止（web と違い bun 用起動アダプタも無い）。
 # depcruise（api-workers-portable）は resolved 済み fs/os のみ見るため、
 # node:path 等を含む全量はここで縛る。
+#
+# packages/core/src/turso も対象にする（issue #130）: Turso Platform クライアントは
+# apps/api から core へ移したが Worker で動く要件は変わらない。depcruise の
+# api-workers-portable は直接依存しか見ないため、移設先はここで縛る。
 # ---------------------------------------------------------------------------
 WORKERS_PATTERN='"node:|'\''node:|Bun\.|from "bun"|from '\''bun'\''|"bun:'
 WORKERS_ALLOW=(
   ':!*.test.ts' # テストランナーは bun test（node:fs での migration 適用等は可）
 )
-if hits=$(git grep -nE "$WORKERS_PATTERN" -- 'apps/api/src/**/*.ts' 'apps/api/src/*.ts' "${WORKERS_ALLOW[@]}"); then
-  echo "NG: apps/api で Workers 非互換 API（node:* / Bun 固有 API）を使用しています（issue #99）"
+if hits=$(git grep -nE "$WORKERS_PATTERN" -- 'apps/api/src/**/*.ts' 'apps/api/src/*.ts' 'packages/core/src/turso/*.ts' "${WORKERS_ALLOW[@]}"); then
+  echo "NG: apps/api / packages/core/src/turso で Workers 非互換 API（node:* / Bun 固有 API）を使用しています（issue #99 / #130）"
   echo "    Web 標準 API（fetch / Web Crypto 等）に寄せてください。"
   echo "$hits"
   status=1

@@ -101,6 +101,19 @@ flowchart LR
 
 中継サーバへ渡すのは **セッション JWT だけ**で、DB の URL やトークンは渡さない。宛先はサーバがコントロールプレーンに問い合わせて決める（クライアントの申告した URL へ接続する設計にすると、任意の宛先へ繋がせる穴になる）。
 
+### ユーザ DB のプロビジョニング（issue #101 / #130）
+
+`GET /me/db` が台帳（`account_databases`）を引いて、行が無ければ作る。順序は固定で、各段が冪等:
+
+1. **台帳を引く**。ヒットすれば Platform API を一切叩かない（2 回目以降はここで終わる）
+2. **group を存在させる**（`ensureGroup`）。引ければ何もせず、無ければ作る。409 は「並行する実行者が先に作った」として成功に畳む
+3. **DB を作る**。409（already exists）は「前回の試行が台帳書き込み前に落ちた」として既存 DB を引き当てる
+4. **台帳へ書く**
+
+group がアプリの責務なのは、Turso が IaC を提供も推奨もしていないため（issue #129。公式の管理手段は CLI と Platform API だけ）。空の Turso 組織に対しても、最初の会員登録がそのまま group を作って動きだす。ロケーションキーは AWS リージョン形式（東京 = `aws-ap-northeast-1`）で、旧 3 文字コード（`nrt`）は現行 API が 400 `invalid location` で弾く。
+
+クライアント本体は [`packages/core/src/turso/platform.ts`](../packages/core/src/turso/platform.ts)。`apps/api`（Worker）とブートストラップ CLI の両方から使うため core に置く（app 間の import は depcruise で禁じてある）。
+
 ### 退会（`DELETE /me`）
 
 会員登録の逆操作（issue #116）。対象は常にセッションの持ち主自身で、相手を指定する引数は無い。
@@ -117,11 +130,11 @@ flowchart LR
 
 セッションはステートレス JWT（HS256, TTL 12 時間）なので、そのままでは「発行済みトークンを止める」手段が無い。**セッション世代（epoch）** でそれを補う。
 
-| 要素 | 実体                                                                                     |
-| ---- | ---------------------------------------------------------------------------------------- |
-| 台帳 | `accounts.session_epoch`（integer, 既定 0）                                              |
-| 発行 | `issueSession` が発行時点の世代を `epoch` claim としてトークンに焼く                     |
-| 検証 | `requireActiveSession` が JWT の `epoch` と台帳の現在値を突き合わせ、不一致なら 401      |
+| 要素 | 実体                                                                                    |
+| ---- | --------------------------------------------------------------------------------------- |
+| 台帳 | `accounts.session_epoch`（integer, 既定 0）                                             |
+| 発行 | `issueSession` が発行時点の世代を `epoch` claim としてトークンに焼く                    |
+| 検証 | `requireActiveSession` が JWT の `epoch` と台帳の現在値を突き合わせ、不一致なら 401     |
 | 失効 | `POST /auth/logout`（要セッション）が `session_epoch = session_epoch + 1` の 1 文を実行 |
 
 失効させると、そのアカウントが過去に発行したトークンが全て一斉に「古い世代」になる（＝全端末ログアウト）。
@@ -146,11 +159,11 @@ epoch は**アカウント単位の 1 整数**なので、端末ごとの失効�
 
 #### 実効的な失効遅延
 
-| 経路                                                                          | 失効までの遅延                                          |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------- |
-| コントロールプレーン（`/auth/me`・`/me/db`・`/auth/credentials`・`DELETE /me`） | **即時**（次のリクエストから 401）                     |
-| 中継サーバ経由（`/api/replication/*`・`/api/crypto/envelopes`）                | **最大 60 秒**                                          |
-| ブラウザが握ったままの DB トークン（Turso 直叩き）                            | 最大 60 分（`GET /me/db` の TTL。失効させる手段が無い） |
+| 経路                                                                            | 失効までの遅延                                          |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| コントロールプレーン（`/auth/me`・`/me/db`・`/auth/credentials`・`DELETE /me`） | **即時**（次のリクエストから 401）                      |
+| 中継サーバ経由（`/api/replication/*`・`/api/crypto/envelopes`）                 | **最大 60 秒**                                          |
+| ブラウザが握ったままの DB トークン（Turso 直叩き）                              | 最大 60 分（`GET /me/db` の TTL。失効させる手段が無い） |
 
 中継サーバのキャッシュ（`apps/web/src/server/identity/remote.ts`）はセッション JWT 単位で、ヒット時はコントロールプレーンへ問い合わせない。ここで取り得た選択肢は 3 つ:
 
@@ -182,7 +195,7 @@ bun test apps/web/src/client/api/control-plane.test.ts
 
 実物の `apps/api`（passkey 認証・プロビジョニング）と実物の `apps/web`（中継）をプロセス内で繋ぎ、登録 → ログイン → `/me/db` → RemoteIdentity → 自分の DB へ E2E 読み書き、までを通す。ローカルで再現できない依存だけを**プロトコルレベル**で差し替える:
 
-- Turso Platform API → fake（`apps/api/src/turso/test-fixtures.ts`。実 API と同じ経路・JSON）
+- Turso Platform API → fake（`packages/core/src/turso/test-fixtures.ts`。実 API と同じ経路・JSON）
 - 認証器 → WebCrypto ソフトウェア認証器（`apps/api/src/auth/test-fixtures.ts`）に PRF を足したもの
 - ユーザごとの Turso DB → 中継サーバが DB を開くアダプタにローカル libSQL を注入
 

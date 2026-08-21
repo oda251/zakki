@@ -10,9 +10,9 @@ import { createSoftAuthenticator, type SoftAuthenticator } from "@zakki/api/auth
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
-import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
+import { createTursoPlatform } from "@zakki/core/turso/platform.ts";
 import { databaseNameForAccount } from "@zakki/api/turso/provision.ts";
-import { createFakePlatformApi } from "@zakki/api/turso/test-fixtures.ts";
+import { createFakePlatformApi } from "@zakki/core/turso/test-fixtures.ts";
 
 /**
  * ユーザごと Turso DB のプロビジョニング（issue #101）と退会（issue #116）の統合検証。
@@ -30,9 +30,20 @@ const SESSION_SECRET = "test-session-secret";
 const ORG = "zakki-org";
 const GROUP = "zakki-group";
 const API_TOKEN = "platform-api-token";
+/** createTursoPlatform の既定ロケーション（TURSO_DEFAULT_LOCATION）と同じ値 */
+const LOCATION = "aws-ap-northeast-1";
 const MIGRATIONS = join(import.meta.dir, "..", "..", "drizzle");
 
-const fake = createFakePlatformApi({ organization: ORG, apiToken: API_TOKEN, group: GROUP });
+/**
+ * group を 1 つも持たない組織から始める（issue #130）。group はアプリ側が
+ * ensureGroup で作るので、この初期状態が本番の「空の組織」と同じ条件になる。
+ */
+const fake = createFakePlatformApi({ organization: ORG, apiToken: API_TOKEN });
+
+/** 実 API と同じくリージョンを含むホスト名（fake の hostnameFor と対応） */
+function hostnameOf(name: string): string {
+  return `${name}-${ORG}.${LOCATION}.turso.io`;
+}
 const server = Bun.serve({ port: 0, fetch: fake.app.fetch });
 const baseUrl = `http://127.0.0.1:${server.port}`;
 
@@ -69,10 +80,14 @@ beforeEach(async () => {
   // migrate はこの pragma を ON に戻すため、必ず migrate の後に実行する
   await client.execute("PRAGMA foreign_keys = OFF");
 
+  fake.state.groups.clear();
+  fake.state.createGroupRequests.length = 0;
   fake.state.databases.clear();
   fake.state.createRequests.length = 0;
   fake.state.tokenRequests.length = 0;
   fake.state.deleteRequests.length = 0;
+  fake.state.getGroupStatus = null;
+  fake.state.createGroupStatus = null;
   fake.state.createStatus = null;
   fake.state.getStatus = null;
   fake.state.tokenStatus = null;
@@ -204,7 +219,7 @@ describe("GET /me/db（初回）", () => {
     const body = (await res.json()) as DbResponse;
 
     const name = await databaseNameForAccount(session.accountId);
-    expect(body.dbUrl).toBe(`libsql://${name}-${ORG}.turso.io`);
+    expect(body.dbUrl).toBe(`libsql://${hostnameOf(name)}`);
     expect(body.token).toBe(`token-for-${name}-1`);
     // 短命トークン: 1 時間先に失効する（epoch 秒、セッションと同じ単位）
     expect(body.expiresAt).toBeGreaterThanOrEqual(Math.floor(before / 1000) + 3600);
@@ -226,7 +241,7 @@ describe("GET /me/db（初回）", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.accountId).toBe(session.accountId);
     expect(rows[0]?.dbName).toBe(await databaseNameForAccount(session.accountId));
-    expect(rows[0]?.dbHostname).toBe(`${rows[0]?.dbName}-${ORG}.turso.io`);
+    expect(rows[0]?.dbHostname).toBe(hostnameOf(rows[0]?.dbName ?? ""));
     // 発行したトークンも Platform API トークンも台帳のどこにも現れない
     expect(JSON.stringify(rows)).not.toContain(body.token);
     expect(JSON.stringify(rows)).not.toContain(API_TOKEN);
@@ -268,13 +283,13 @@ describe("GET /me/db の冪等性", () => {
     const session = await login();
     const name = await databaseNameForAccount(session.accountId);
     // 前回の試行が残した状態: Turso には DB があるが台帳は空
-    fake.state.databases.set(name, `${name}-${ORG}.turso.io`);
+    fake.state.databases.set(name, hostnameOf(name));
     expect(await db.select().from(accountDatabases)).toEqual([]);
 
     const res = await getDb(session.token);
     expect(res.status).toBe(200);
     const body = (await res.json()) as DbResponse;
-    expect(body.dbUrl).toBe(`libsql://${name}-${ORG}.turso.io`);
+    expect(body.dbUrl).toBe(`libsql://${hostnameOf(name)}`);
 
     // 作成は 409 で弾かれ、新しい DB は増えていない
     expect(fake.state.createRequests).toEqual([{ name, group: GROUP }]);
@@ -288,7 +303,7 @@ describe("GET /me/db の冪等性", () => {
   test("already exists の直後に DB を引けなければ 502（作り直して他人の DB を踏まない）", async () => {
     const session = await login();
     const name = await databaseNameForAccount(session.accountId);
-    fake.state.databases.set(name, `${name}-${ORG}.turso.io`);
+    fake.state.databases.set(name, hostnameOf(name));
     fake.state.getStatus = 500;
 
     const res = await getDb(session.token);
@@ -410,7 +425,7 @@ describe("DELETE /me（退会, issue #116）", () => {
     const session = await login();
     const name = await databaseNameForAccount(session.accountId);
     // プロビジョニングが「DB 作成 → 台帳書き込み」の間で落ちた状態
-    fake.state.databases.set(name, `${name}-${ORG}.turso.io`);
+    fake.state.databases.set(name, hostnameOf(name));
     expect(await db.select().from(accountDatabases)).toEqual([]);
 
     expect((await deleteMe(session.token)).status).toBe(204);

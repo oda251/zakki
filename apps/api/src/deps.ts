@@ -1,5 +1,5 @@
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import type { TursoPlatform } from "@zakki/api/turso/platform.ts";
+import type { TursoPlatform } from "@zakki/core/turso/platform.ts";
 
 /**
  * ルートが使う依存の束（apps/web/src/server/deps.ts と同じ流儀）。

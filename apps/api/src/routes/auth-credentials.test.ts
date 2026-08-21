@@ -11,7 +11,7 @@ import { createSoftAuthenticator, type SoftAuthenticator } from "@zakki/api/auth
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { accounts, credentials } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
-import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
+import { createTursoPlatform } from "@zakki/core/turso/platform.ts";
 
 /**
  * 既存アカウントへのパスキー追加・一覧・失効（issue #115）と表示名（issue #118）の

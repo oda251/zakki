@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import * as schema from "@zakki/api/db/schema.ts";
-import { createTursoPlatform } from "@zakki/api/turso/platform.ts";
+import { createTursoPlatform } from "@zakki/core/turso/platform.ts";
 import { createApp } from "./app.ts";
 
 /**
