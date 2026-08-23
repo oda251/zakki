@@ -17,13 +17,17 @@
   // depcruise の web-worker-portable が到達しないことを縛っている）
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
+    // Worker から生バイトを取るための binding（/anco/* の配信に使う。worker.ts の注記）
+    "binding": "ASSETS",
     // vite build + install-anco-wasm.sh の出力
     "directory": "dist",
     // SPA なので、資産に無いパスは index.html を返す（クライアントルータが解釈する）
     "not_found_handling": "single-page-application",
     // /api/* だけは Worker を先に通す。それ以外は Assets が直接応答し、
     // Worker の実行（と課金）が発生しない
-    "run_worker_first": ["/api/*"],
+    // /anco/* も Worker を通す: Assets 任せだと Content-Encoding: br が付かず、
+    // さらに Cloudflare が brotli の中身を再圧縮するため wasm として読めない
+    "run_worker_first": ["/api/*", "/anco/*"],
   },
   // コントロールプレーン（apps/api）への Worker → Worker 直結（issue #134）。
   // 公開 URL で fetch するとループバックして自分の SPA フォールバックを掴むため、

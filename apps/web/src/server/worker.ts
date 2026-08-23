@@ -1,7 +1,9 @@
 import type { Hono } from "hono";
 import { openRemoteWebDb } from "@zakki/data/db/connect-web.ts";
 import { composeRelayApp } from "./relay.ts";
-import { parseRelayEnv, relayServiceBinding } from "./worker-env.ts";
+import { ANCO_ASSET_TYPES, ANCO_REF_CACHE, ANCO_REF_FILE, ancoAssetHeaders } from "./anco.ts";
+import type { ServiceBinding } from "./worker-env.ts";
+import { parseRelayEnv, serviceBinding } from "./worker-env.ts";
 
 /**
  * Cloudflare Workers 用起動アダプタ（issue #134）。
@@ -39,7 +41,7 @@ function composeApp(env: Record<string, unknown>): Hono {
   // コントロールプレーンへの問い合わせは Service Binding を通す。公開 URL を
   // Worker から fetch すると自分自身へループバックする（worker-env.ts の注記）。
   // binding が無い配備は「静かに 401 を返し続ける」ので、起動失敗にして気づけるようにする
-  const controlPlane = relayServiceBinding(env);
+  const controlPlane = serviceBinding(env, "CONTROL_PLANE");
   if (controlPlane === null) {
     throw new Error(
       "zakki-web: Service Binding CONTROL_PLANE がありません（wrangler.jsonc の services を確認してください）",
@@ -54,8 +56,47 @@ function composeApp(env: Record<string, unknown>): Hono {
   return app;
 }
 
+/**
+ * anco アセット（`/anco/*`）を **Worker から**配る（issue #134）。
+ *
+ * Workers Assets に任せると `Content-Encoding: br` が付かない。それだけでなく、
+ * Cloudflare は **既に brotli の中身をさらに転送圧縮する**（実測: `accept-encoding: br`
+ * で 13,368,949 bytes・先頭が別物）ので、`_headers` で `Content-Encoding` を宣言しても
+ * 転送圧縮の方を指してしまい直らない。結果、ブラウザは 1 段だけ解いた brotli を
+ * `WebAssembly.compile` に渡し `expected magic word 00 61 73 6d` で落ちる。
+ *
+ * 非圧縮で置く手も使えない: 展開後は 53.6 MiB / 26.9 MiB で Assets の 25 MiB 上限を超える。
+ *
+ * そこで Worker が Assets から**生のバイト**（`accept-encoding: identity`）を取り、
+ * bun アダプタと同じヘッダを付けて返す。`Content-Encoding` を自分で付けた応答を
+ * Cloudflare は再圧縮しない。
+ */
+async function serveAnco(assets: ServiceBinding, request: Request): Promise<Response | null> {
+  const { pathname } = new URL(request.url);
+  const file = pathname.startsWith("/anco/") ? pathname.slice("/anco/".length) : null;
+  if (file === null) return null;
+
+  // Assets からは必ず生のまま取る（ここで encoding が付くと二重になる）
+  const raw = await assets.fetch(request.url, { headers: { "accept-encoding": "identity" } });
+  if (!raw.ok) return raw;
+
+  if (file === ANCO_REF_FILE) {
+    return new Response(raw.body, {
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": ANCO_REF_CACHE },
+    });
+  }
+  const contentType = ANCO_ASSET_TYPES.get(file);
+  if (contentType === undefined) return raw;
+  return new Response(raw.body, { headers: ancoAssetHeaders(contentType) });
+}
+
 export default {
-  fetch(request: Request, env: Record<string, unknown>): Response | Promise<Response> {
-    return composeApp(env).fetch(request);
+  async fetch(request: Request, env: Record<string, unknown>): Promise<Response> {
+    const assets = serviceBinding(env, "ASSETS");
+    if (assets !== null) {
+      const served = await serveAnco(assets, request);
+      if (served !== null) return served;
+    }
+    return await composeApp(env).fetch(request);
   },
 };
