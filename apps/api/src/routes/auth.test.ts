@@ -347,10 +347,12 @@ describe("GET /auth/me（requireSession）", () => {
 
   test("署名の壊れたトークンは 401", async () => {
     const { token } = await registerAccount();
-    // 末尾 2 文字を固定値に差し替えると、元がその 2 文字で終わっていたときに
-    // 何も壊れない（base64url なので 4096 回に 1 回）。必ず違う文字にする
-    const last = token.slice(-1);
-    const tampered = `${token.slice(0, -1)}${last === "A" ? "B" : "A"}`;
+    // 署名部の**先頭**文字を変える。末尾は有効ビットが 4 bit しかなく、下位 2 bit は
+    // デコードで捨てられるため、変えても同じバイト列になり署名が壊れないことがある
+    // （16 回に 1 回。me.test.ts の tampered() の注記）
+    const [header, payload, signature = ""] = token.split(".");
+    const head = signature.slice(0, 1);
+    const tampered = `${header}.${payload}.${head === "A" ? "B" : "A"}${signature.slice(1)}`;
     expect((await get("/auth/me", tampered)).status).toBe(401);
   });
 });

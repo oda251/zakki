@@ -186,13 +186,19 @@ async function logout(token: string): Promise<Response> {
 }
 
 /**
- * 署名を確実に壊したトークンを作る。末尾 2 文字を固定値に差し替えると、元の
- * トークンがたまたまその 2 文字で終わっていたときに**何も壊れず 200 が返る**
- * （base64url なので 4096 回に 1 回。CI で実際に落ちた）。必ず違う文字にする。
+ * 署名を確実に壊したトークンを作る。
+ *
+ * **末尾の文字をいじってはいけない。** HS256 の署名は 32 バイト = base64url 43 文字で、
+ * 末尾 1 文字は有効ビットが 4 bit しかなく**下位 2 bit はデコード時に捨てられる**。
+ * 元の末尾が "A" のときに "B" へ変えても同じバイト列にデコードされ、署名は有効なまま
+ * 200 が返る（16 回に 1 回。実際に CI で 2 回落ちた）。
+ *
+ * 署名部の**先頭**文字は常に 6 bit すべてが有効なので、ここを変えれば必ず壊れる。
  */
 function tampered(token: string): string {
-  const last = token.slice(-1);
-  return `${token.slice(0, -1)}${last === "A" ? "B" : "A"}`;
+  const [header, payload, signature = ""] = token.split(".");
+  const head = signature.slice(0, 1);
+  return `${header}.${payload}.${head === "A" ? "B" : "A"}${signature.slice(1)}`;
 }
 
 interface DbResponse {
