@@ -25,9 +25,15 @@
     // Worker の実行（と課金）が発生しない
     "run_worker_first": ["/api/*"],
   },
+  // コントロールプレーン（apps/api）への Worker → Worker 直結（issue #134）。
+  // 公開 URL で fetch するとループバックして自分の SPA フォールバックを掴むため、
+  // サーバ側の問い合わせは必ずこの binding を通す。service 名は Pulumi の
+  // workerName（既定 zakki-api-<stack>）と一致させる。
+  "services": [{ "binding": "CONTROL_PLANE", "service": "zakki-api-prod" }],
   // 非機密の設定。値は空にしてある: 埋めずに `wrangler dev` すると env 検証が
   // 即座に落ちて設定漏れに気づける（apps/api/wrangler.jsonc と同じ方針）。
-  //   ZAKKI_CONTROL_PLANE_URL  apps/api の base URL（Workers 版は必須 = マルチユーザ専用）
+  //   ZAKKI_CONTROL_PLANE_URL  apps/api の base URL。**ブラウザが直接叩く**ための公開 URL で、
+  //                            GET /api/config が返す。サーバ側の呼び出しは上の binding を使う
   "vars": {
     "ZAKKI_CONTROL_PLANE_URL": "",
   },

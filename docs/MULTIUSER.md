@@ -250,6 +250,12 @@ bun 版（`index.ts`）との違いは 3 つ:
 
 Workers 版が node 依存へ到達しないことは depcruise の `web-worker-portable` が推移的に縛る。
 
+**中継 → コントロールプレーンは Service Binding（`CONTROL_PLANE`）を通す。** 同じアカウントの workers.dev を Worker から公開 URL で fetch すると**自分自身へループバック**し、`/auth/me` が中継サーバの SPA フォールバック（200 HTML）を返す。JSON パースに失敗して「セッション解決不能」に化けるだけで例外は出ないため、**症状は静かな 401** になる（2026-08-23 の実配備で判明）。binding が無い配備は起動失敗にしてある。
+
+ブラウザ → コントロールプレーンは従来どおり公開 URL の直叩き（`GET /api/config` が返す `controlPlaneUrl`）で、そちらは CORS が要る。**サーバ側の呼び出しだけ**が binding を通る。
+
+**サーバは libsodium を読み込まない。** Workers では `ready()` が解決せずリクエストがハングする（例外ではなく無応答）。base64 変換と封筒の長さ定数は sodium 非依存の `packages/core/src/crypto/wire.ts` にある（depcruise `web-server-no-sodium`）。
+
 **単一ユーザ self-host（bun / docker）はそのまま残る。** Workers 版はマルチユーザ専用で、`ZAKKI_CONTROL_PLANE_URL` を必須にしてある（未設定なら起動失敗）。
 
 ### 手順（ユーザが実行）

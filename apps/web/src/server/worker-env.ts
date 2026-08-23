@@ -33,6 +33,33 @@ const EnvSchema = v.pipe(
 
 export type RelayConfig = v.InferOutput<typeof EnvSchema>;
 
+/** Service Binding の最小面（Worker → Worker 直結の `fetch`） */
+export interface ServiceBinding {
+  fetch(input: string, init?: RequestInit): Promise<Response>;
+}
+
+/**
+ * コントロールプレーンへの Service Binding（`CONTROL_PLANE`, issue #134）。
+ *
+ * **公開 URL では Worker → Worker が通らない。** 同じアカウントの workers.dev を
+ * Worker から fetch すると自分自身へループバックし、`/auth/me` が中継サーバの
+ * SPA フォールバック（200 HTML）を返す。JSON パースに失敗して「セッション解決不能」
+ * に化けるだけで例外は出ないので、**症状は静かな 401** になる（実配備で判明）。
+ *
+ * Service Binding なら公衆網へ出ずに直接もう一方の Worker を呼べる。
+ *
+ * ブラウザ → コントロールプレーンは従来どおり公開 URL 直叩き（`GET /api/config` が
+ * 返す `controlPlaneUrl`）で、そちらは CORS が要る。**サーバ側の呼び出しだけ**が
+ * この binding を通る。
+ */
+export function relayServiceBinding(env: Record<string, unknown>): ServiceBinding | null {
+  const binding = env.CONTROL_PLANE;
+  if (typeof binding !== "object" || binding === null || !("fetch" in binding)) return null;
+  if (typeof binding.fetch !== "function") return null;
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- binding は Workers ランタイムが注入する外部境界（fetch の有無で検証済み）
+  return binding as ServiceBinding;
+}
+
 export function parseRelayEnv(env: Record<string, unknown>): Result<RelayConfig, string> {
   const result = v.safeParse(EnvSchema, env);
   if (result.success) {
