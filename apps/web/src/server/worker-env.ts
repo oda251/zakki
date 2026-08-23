@@ -39,7 +39,7 @@ export interface ServiceBinding {
 }
 
 /**
- * コントロールプレーンへの Service Binding（`CONTROL_PLANE`, issue #134）。
+ * 名前つき Service Binding を取り出す（`CONTROL_PLANE` / `ASSETS`, issue #134）。
  *
  * **公開 URL では Worker → Worker が通らない。** 同じアカウントの workers.dev を
  * Worker から fetch すると自分自身へループバックし、`/auth/me` が中継サーバの
@@ -52,8 +52,8 @@ export interface ServiceBinding {
  * 返す `controlPlaneUrl`）で、そちらは CORS が要る。**サーバ側の呼び出しだけ**が
  * この binding を通る。
  */
-export function relayServiceBinding(env: Record<string, unknown>): ServiceBinding | null {
-  const binding = env.CONTROL_PLANE;
+export function serviceBinding(env: Record<string, unknown>, name: string): ServiceBinding | null {
+  const binding = env[name];
   if (typeof binding !== "object" || binding === null || !("fetch" in binding)) return null;
   if (typeof binding.fetch !== "function") return null;
   // oxlint-disable-next-line typescript/consistent-type-assertions -- binding は Workers ランタイムが注入する外部境界（fetch の有無で検証済み）

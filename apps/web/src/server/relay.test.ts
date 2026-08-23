@@ -6,7 +6,7 @@ import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { Hono } from "hono";
 import { composeRelayApp } from "@zakki/web/server/relay.ts";
-import { parseRelayEnv, relayServiceBinding } from "@zakki/web/server/worker-env.ts";
+import { parseRelayEnv, serviceBinding } from "@zakki/web/server/worker-env.ts";
 
 /**
  * マルチユーザ**専用**の中継アプリ（issue #134）。
@@ -124,17 +124,17 @@ describe("parseRelayEnv", () => {
   });
 });
 
-describe("relayServiceBinding", () => {
+describe("serviceBinding", () => {
   test("fetch を持つ binding を受け取る", () => {
     const fake = { fetch: () => Promise.resolve(new Response("ok")) };
-    expect(relayServiceBinding({ CONTROL_PLANE: fake })).toBe(fake);
+    expect(serviceBinding({ CONTROL_PLANE: fake }, "CONTROL_PLANE")).toBe(fake);
   });
 
   test("binding が無い・形が違うなら null（呼び出し側が起動失敗にする）", () => {
     // binding 忘れは「静かに 401 を返し続ける」形で出るので、起動時に落とす必要がある
-    expect(relayServiceBinding({})).toBeNull();
-    expect(relayServiceBinding({ CONTROL_PLANE: null })).toBeNull();
-    expect(relayServiceBinding({ CONTROL_PLANE: "https://example.test" })).toBeNull();
-    expect(relayServiceBinding({ CONTROL_PLANE: {} })).toBeNull();
+    expect(serviceBinding({}, "CONTROL_PLANE")).toBeNull();
+    expect(serviceBinding({ CONTROL_PLANE: null }, "CONTROL_PLANE")).toBeNull();
+    expect(serviceBinding({ CONTROL_PLANE: "https://example.test" }, "CONTROL_PLANE")).toBeNull();
+    expect(serviceBinding({ CONTROL_PLANE: {} }, "CONTROL_PLANE")).toBeNull();
   });
 });

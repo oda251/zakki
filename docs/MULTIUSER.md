@@ -254,6 +254,8 @@ Workers 版が node 依存へ到達しないことは depcruise の `web-worker-
 
 ブラウザ → コントロールプレーンは従来どおり公開 URL の直叩き（`GET /api/config` が返す `controlPlaneUrl`）で、そちらは CORS が要る。**サーバ側の呼び出しだけ**が binding を通る。
 
+**anco アセット（`/anco/*`）は Worker が配る。** brotli 済みの `.br` を `Content-Encoding: br` で渡してブラウザに透過解凍させる仕組みだが、Workers Assets 任せだとこのヘッダが付かず、しかも **Cloudflare が既に brotli の中身をさらに転送圧縮する**（`_headers` で宣言しても転送圧縮の方を指すので直らない）。ブラウザは 1 段だけ解いた brotli を `WebAssembly.compile` に渡し `expected magic word 00 61 73 6d` で落ちる。非圧縮で置く手も使えない（展開後 53.6 MiB / 26.9 MiB で Assets の 25 MiB 上限超え）。そこで `run_worker_first` に `/anco/*` を足し、Worker が `ASSETS` binding から生バイトを取って bun アダプタと同じヘッダを付ける。配信条件は `apps/web/src/server/anco.ts` が正本で両アダプタが共有する。
+
 **サーバは libsodium を読み込まない。** Workers では `ready()` が解決せずリクエストがハングする（例外ではなく無応答）。base64 変換と封筒の長さ定数は sodium 非依存の `packages/core/src/crypto/wire.ts` にある（depcruise `web-server-no-sodium`）。
 
 **単一ユーザ self-host（bun / docker）はそのまま残る。** Workers 版はマルチユーザ専用で、`ZAKKI_CONTROL_PLANE_URL` を必須にしてある（未設定なら起動失敗）。

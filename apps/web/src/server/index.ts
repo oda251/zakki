@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveStatic } from "hono/bun";
 import { parseZakkiConfig } from "@zakki/core/config/env.ts";
+import { ANCO_ASSET_TYPES, ANCO_REF_CACHE, ANCO_REF_FILE, ancoAssetHeaders } from "./anco.ts";
 import { bootstrapServer } from "./bootstrap.ts";
 
 // Bun 用起動アダプタ（issue #29）。Bun 固有 API（Bun.serve・hono/bun の静的配信）は
@@ -34,35 +35,22 @@ const distDir = fileURLToPath(new URL("../../dist", import.meta.url));
 // させる（over-the-wire は reactor ~13MB + 辞書 ~7MB）。dist/anco へ install-anco-wasm.sh
 // が配置する。SPA フォールバックより前に登録する。
 const ancoDir = fileURLToPath(new URL("../../dist/anco", import.meta.url));
-const ancoAssets = new Map<string, string>([
-  ["anco.reactor.wasm.br", "application/wasm"],
-  ["dict.tar.br", "application/x-tar"],
-]);
-// ref マーカー（issue #89）: install-anco-wasm.sh が書く導入 ref。これだけ no-cache で
-// 配信し、クライアントはこの値でアセット URL（?v=<ref>）と Cache API 名を versioning
-// する。アセット本体は ref 込み URL で不変になるため immutable のままでよい。
-app.get("/anco/ref.txt", (c) => {
-  const path = join(ancoDir, "ref.txt");
+// 配信条件（Content-Type・Content-Encoding: br・Cache-Control）は anco.ts が正本で、
+// Workers アダプタ（worker.ts）と共有する。片方だけ欠けると壊れ方が分かりにくい
+// （Content-Encoding が無いと圧縮バイトがそのまま WebAssembly.compile へ渡る）。
+app.get(`/anco/${ANCO_REF_FILE}`, (c) => {
+  const path = join(ancoDir, ANCO_REF_FILE);
   if (!existsSync(path)) return c.notFound();
   return new Response(Bun.file(path), {
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-cache",
-    },
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": ANCO_REF_CACHE },
   });
 });
 app.get("/anco/:file", (c) => {
   const file = c.req.param("file");
-  const contentType = ancoAssets.get(file);
+  const contentType = ANCO_ASSET_TYPES.get(file);
   const path = join(ancoDir, file);
   if (contentType === undefined || !existsSync(path)) return c.notFound();
-  return new Response(Bun.file(path), {
-    headers: {
-      "Content-Type": contentType,
-      "Content-Encoding": "br",
-      "Cache-Control": "public, max-age=31536000, immutable",
-    },
-  });
+  return new Response(Bun.file(path), { headers: ancoAssetHeaders(contentType) });
 });
 
 if (existsSync(join(distDir, "index.html"))) {
