@@ -116,6 +116,19 @@ module.exports = {
       },
     },
     {
+      name: "web-server-no-sodium",
+      comment:
+        "web サーバは libsodium を直接 import しない（issue #134）。Workers では " +
+        "`ready()` が**解決せずリクエストがハングする**（例外ではなく無応答なので気づきにくい。" +
+        "bun では動くためテストでも再現しない — 実配備で初めて出た）。サーバが sodium に" +
+        "求めていたのは base64 変換と長さ定数だけなので、sodium 非依存の " +
+        "packages/core/src/crypto/wire.ts を使う。推移的な import（data の envelopes.ts 等）は" +
+        "モジュール評価だけなら害が無いので、ここでは直接 import のみを禁じる",
+      severity: "error",
+      from: { path: "^apps/web/src/server", pathNot: "\\.test\\.(ts|tsx)$" },
+      to: { path: "^packages/core/src/crypto/sodium\\.ts$" },
+    },
+    {
       name: "web-worker-portable",
       comment:
         "apps/web の Workers エントリ（worker.ts）から node 依存へ推移的に到達しない（issue #134）。" +
