@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { errAsync } from "neverthrow";
-import { DEK_BYTES } from "@zakki/core/crypto/dek.ts";
-import { ready, sodium } from "@zakki/core/crypto/sodium.ts";
+import { fromBase64, toBase64, WRAPPED_DEK_BYTES } from "@zakki/core/crypto/wire.ts";
 import {
   deletePasskeyEnvelope,
   putPasskeyEnvelopeIfProvisioned,
@@ -35,9 +34,13 @@ import { PasskeyEnvelopePutSchema } from "@zakki/web/shared/api-schemas.ts";
  * drizzle blob → base64（ORIGINAL。クライアント from_base64 と対）。
  * blob の表現はトランスポートで違う（ローカルは Buffer・HTTP は ArrayBuffer）ので
  * 必ず {@link toBytes} を通す（blob.ts の注記）。
+ *
+ * base64 に sodium を使わないのは、Workers で `ready()` が解決せずリクエストが
+ * ハングするため（issue #134。wire.ts の注記）。ここは暗号処理ではなく表現の変換なので
+ * sodium は元々要らない。
  */
 function b64(value: Uint8Array | ArrayBuffer): string {
-  return sodium.to_base64(toBytes(value), sodium.base64_variants.ORIGINAL);
+  return toBase64(toBytes(value));
 }
 
 /**
@@ -69,8 +72,6 @@ export function cryptoRoutes(deps: AppDeps): Hono {
   const app = new Hono();
 
   app.get("/envelopes", async (c) => {
-    // base64 変換に sodium を使うため wasm 初期化を待つ（多重呼び出しは安全・即時解決）
-    await ready();
     // 封筒はユーザ自身の DB の中にある（#105 のマルチユーザ構成では中継先ごとに別）
     const db = await dbForRequest(deps, c.req.raw);
     if (db === null) return c.json({ error: "認証が必要です" }, 401);
@@ -88,23 +89,18 @@ export function cryptoRoutes(deps: AppDeps): Hono {
   app.post("/envelopes/passkey", async (c) => {
     const body = await parseBody(c.req.raw, PasskeyEnvelopePutSchema);
     if (body === null) return c.json({ error: "invalid body" }, 400);
-    await ready();
     const db = await dbForRequest(deps, c.req.raw);
     if (db === null) return c.json({ error: "認証が必要です" }, 401);
     let wrappedDek: Uint8Array;
     try {
-      wrappedDek = sodium.from_base64(body.wrappedDek, sodium.base64_variants.ORIGINAL);
+      wrappedDek = fromBase64(body.wrappedDek);
     } catch {
       return c.json({ error: "invalid body" }, 400);
     }
     // 封筒は `nonce || ciphertext`（aead.ts encrypt）で長さが一意に決まる:
     // XChaCha20 nonce 24B + DEK 32B + Poly1305 tag 16B = 72B。それ以外は wrap 済み
     // DEK 封筒ではあり得ないので保存前に拒否する（開けない封筒を作らせない）。
-    const wrappedDekBytes =
-      sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES +
-      DEK_BYTES +
-      sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES;
-    if (wrappedDek.length !== wrappedDekBytes) return c.json({ error: "invalid body" }, 400);
+    if (wrappedDek.length !== WRAPPED_DEK_BYTES) return c.json({ error: "invalid body" }, 400);
     // 暗号未プロビジョン（封筒ゼロ）の DB へは登録させない（409）。passkey 封筒だけが
     // 存在すると unlockOrSetup の初回判定（kinds.length === 0）が壊れ、PRF を評価できない
     // TUI/CLI から復旧不能になる。既存封筒 1 つ以上（= DEK が確立済み）を事前条件にする。
