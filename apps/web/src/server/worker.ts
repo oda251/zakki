@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { openRemoteWebDb } from "@zakki/data/db/connect-web.ts";
 import { composeRelayApp } from "./relay.ts";
-import { parseRelayEnv } from "./worker-env.ts";
+import { parseRelayEnv, relayServiceBinding } from "./worker-env.ts";
 
 /**
  * Cloudflare Workers 用起動アダプタ（issue #134）。
@@ -12,6 +12,8 @@ import { parseRelayEnv } from "./worker-env.ts";
  *   Assets に無いパス、つまり `/api/*` だけになる（wrangler.jsonc の
  *   `assets.not_found_handling: "single-page-application"` + `run_worker_first`）
  * - 環境変数は fetch の第 2 引数で渡る（Workers に process 環境は無い）
+ * - コントロールプレーンへの問い合わせは **Service Binding**（`CONTROL_PLANE`）を通す。
+ *   公開 URL を Worker から fetch すると自分自身へループバックする（worker-env.ts の注記）
  *
  * 単一ユーザ self-host は従来どおり bun / docker で動く。こちらを消すものではない。
  *
@@ -34,9 +36,19 @@ function composeApp(env: Record<string, unknown>): Hono {
       throw new Error(`zakki-web: ${message}`);
     },
   );
+  // コントロールプレーンへの問い合わせは Service Binding を通す。公開 URL を
+  // Worker から fetch すると自分自身へループバックする（worker-env.ts の注記）。
+  // binding が無い配備は「静かに 401 を返し続ける」ので、起動失敗にして気づけるようにする
+  const controlPlane = relayServiceBinding(env);
+  if (controlPlane === null) {
+    throw new Error(
+      "zakki-web: Service Binding CONTROL_PLANE がありません（wrangler.jsonc の services を確認してください）",
+    );
+  }
   const app = composeRelayApp({
     controlPlaneUrl: config.controlPlaneUrl,
     openUserDb: openRemoteWebDb,
+    fetchFn: (input, init) => controlPlane.fetch(input, init),
   });
   apps.set(env, app);
   return app;
