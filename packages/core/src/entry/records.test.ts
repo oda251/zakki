@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chunkText } from "@zakki/core/chunk/chunker.ts";
 import { wrapPaste } from "@zakki/core/conversion/paste.ts";
 import {
+  commitLine,
   editableBlockAt,
   firstLineRomajiLen,
   freezeLiveTail,
@@ -9,6 +10,7 @@ import {
   parseBlocks,
   replaceBlock,
   splitDisplay,
+  withDraft,
 } from "./records.ts";
 
 describe("parseBlocks", () => {
@@ -232,5 +234,43 @@ describe("freezeLiveTail", () => {
     const out = freezeLiveTail(frozen, settled);
     expect(out.changed).toBe(false);
     expect(out.raw).toBe(frozen);
+  });
+});
+
+describe("commitLine（Web の textarea で Enter した 1 行を確定する）", () => {
+  test("本文を凍結リテラルにし、行区切りの改行を足す（チャンク 1 つになる）", () => {
+    const raw = commitLine("", "今日は晴れ");
+    expect(raw).toBe(`${wrapPaste("今日は晴れ")}\n`);
+    expect(splitDisplay(raw).frozen.map((b) => b.content)).toEqual(["今日は晴れ"]);
+    expect(chunkText(raw)).toHaveLength(1);
+  });
+
+  test("既存の raw の後ろに積む（前の行はそのまま）", () => {
+    const first = commitLine("", "一行目");
+    const raw = commitLine(first, "二行目");
+    expect(splitDisplay(raw).frozen.map((b) => b.content)).toEqual(["一行目", "二行目"]);
+  });
+
+  test("空・空白だけなら改行だけ足す（空のチャンクは作らない）", () => {
+    expect(commitLine("", "")).toBe("\n");
+    expect(commitLine("", "   ")).toBe("\n");
+  });
+
+  test("Shift+Enter の改行を含む本文は 1 チャンクのまま（途中で割らない）", () => {
+    const raw = commitLine("", "一行目\n二行目");
+    expect(splitDisplay(raw).frozen).toHaveLength(1);
+  });
+});
+
+describe("withDraft（未確定の textarea 本文を保存対象に含める）", () => {
+  test("下書きがあれば raw の末尾に凍結リテラルとして足す", () => {
+    const base = commitLine("", "確定済み");
+    expect(withDraft(base, "書きかけ")).toBe(`${base}${wrapPaste("書きかけ")}`);
+  });
+
+  test("下書きが空・空白だけなら raw をそのまま返す", () => {
+    const base = commitLine("", "確定済み");
+    expect(withDraft(base, "")).toBe(base);
+    expect(withDraft(base, "  \n")).toBe(base);
   });
 });
