@@ -235,10 +235,12 @@ migration の生成は drizzle-kit（`bun run --cwd apps/api generate`）、適�
 
 Worker を 2 つ立てる。どちらも Cloudflare の無料枠で動く。
 
-| Worker      | 中身                               | デプロイ           |
-| ----------- | ---------------------------------- | ------------------ |
-| `zakki-api` | コントロールプレーン（`apps/api`） | Pulumi（`infra/`） |
-| `zakki-web` | 中継サーバ + SPA（`apps/web`）     | `wrangler deploy`  |
+| Worker           | 中身                               | デプロイ          |
+| ---------------- | ---------------------------------- | ----------------- |
+| `zakki-api-prod` | コントロールプレーン（`apps/api`） | `wrangler deploy` |
+| `zakki-web`      | 中継サーバ + SPA（`apps/web`）     | `wrangler deploy` |
+
+どちらも各 app の `wrangler.jsonc` の `env.production` を使う。以前は `apps/api` だけ Pulumi（`infra/`）で配備していたが、管理対象が Worker 1 本だけになったので wrangler に寄せて `infra/` を廃止した。
 
 ### 中継サーバが Workers に載る形（`apps/web/src/server/worker.ts`）
 
@@ -263,20 +265,23 @@ Workers 版が node 依存へ到達しないことは depcruise の `web-worker-
 ### 手順（ユーザが実行）
 
 ```bash
+# 0) 設定値を用意する（初回のみ。どちらも gitignore 済み）
+#    apps/api/.deploy.production.env:
+#      CONTROL_DB_URL / CONTROL_DB_TOKEN（just provision の出力）
+#      SESSION_SECRET / TURSO_API_TOKEN / TURSO_ORG / TURSO_GROUP
+#      RP_ID / RP_ORIGIN（下記「RP ID / origin」）
+#    apps/web/.deploy.production.env:
+#      ZAKKI_CONTROL_PLANE_URL（apps/api の公開 URL）
+
 # 1) コントロールプレーン Worker（apps/api）
-bun run --cwd apps/api build          # dist/index.js
-cd infra
-pulumi config set deployWorker true
-pulumi config set cloudflareAccountId <id>
-pulumi config set rpId     <中継サーバのオリジンの登録可能ドメイン>
-pulumi config set rpOrigin <中継サーバのオリジン>
-pulumi preview && pulumi up           # → https://zakki-api.<account>.workers.dev
+bun run --cwd apps/api deploy         # → https://zakki-api-prod.<account>.workers.dev
 
 # 2) 中継サーバ Worker（apps/web）
 just setup-web                        # vite build + anco wasm を dist/ へ
-#    wrangler.jsonc の vars に apps/api の URL を入れる
 bun run --cwd apps/web deploy         # → https://zakki-web.<account>.workers.dev
 ```
+
+**設定値は全て `--secrets-file` で渡す**（非機密の値も含む）。`RP_ID` / `RP_ORIGIN` / `ZAKKI_CONTROL_PLANE_URL` はアカウント固有の workers.dev サブドメインを含むので、公開リポジトリの `wrangler.jsonc` に書かない。そのため `env.production.vars` は空にしてあり、wrangler はトップレベルの vars が継承されない旨の警告を出すが意図どおり（同名の var があると secret と binding 名が衝突する）。secret はデプロイで消えないので、2 回目以降は値を変えるときだけファイルを更新すればよい。
 
 ### RP ID / origin（独自ドメインが無い場合）
 

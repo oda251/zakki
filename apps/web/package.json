@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy --env production --secrets-file .deploy.production.env"
   },
   "dependencies": {
     "@bjorn3/browser_wasi_shim": "0.4.2",

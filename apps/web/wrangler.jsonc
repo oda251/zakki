@@ -1,13 +1,10 @@
 // zakki 中継サーバ Worker（issue #134）。
 //
-// **apps/api とは違い、こちらは wrangler でデプロイする**。静的資産（SPA + anco wasm）を
-// Workers Assets で配るため: assets のアップロードは wrangler がネイティブに扱い、
-// Pulumi の WorkersScript から同じことをするには別途アップロードセッションの JWT を
-// 用意する必要がある。この Worker には Pulumi 管理の binding が無いので、
-// infra/README.md が言う「wrangler deploy と Pulumi のドリフト」も起きない。
+// 静的資産（SPA + anco wasm）は Workers Assets で配る。
 //
 // 前提: `just setup-web`（vite build + anco wasm 配置）で dist/ を作っておく。
-// デプロイ: `bun run --cwd apps/web deploy`（= wrangler deploy）。手順は docs/MULTIUSER.md。
+// デプロイ: `bun run --cwd apps/web deploy`（= wrangler deploy --env production）。
+// 手順は docs/MULTIUSER.md。
 {
   "name": "zakki-web",
   "main": "src/server/worker.ts",
@@ -31,8 +28,8 @@
   },
   // コントロールプレーン（apps/api）への Worker → Worker 直結（issue #134）。
   // 公開 URL で fetch するとループバックして自分の SPA フォールバックを掴むため、
-  // サーバ側の問い合わせは必ずこの binding を通す。service 名は Pulumi の
-  // workerName（既定 zakki-api-<stack>）と一致させる。
+  // サーバ側の問い合わせは必ずこの binding を通す。service 名は apps/api の
+  // env.production.name と一致させる。
   "services": [{ "binding": "CONTROL_PLANE", "service": "zakki-api-prod" }],
   // 非機密の設定。値は空にしてある: 埋めずに `wrangler dev` すると env 検証が
   // 即座に落ちて設定漏れに気づける（apps/api/wrangler.jsonc と同じ方針）。
@@ -40,5 +37,16 @@
   //                            GET /api/config が返す。サーバ側の呼び出しは上の binding を使う
   "vars": {
     "ZAKKI_CONTROL_PLANE_URL": "",
+  },
+  "env": {
+    // 本番。services / vars は env へ継承されないので書き直す。
+    // vars を空にしてあるのは apps/api/wrangler.jsonc と同じ理由: apps/api の URL は
+    // アカウント固有の workers.dev サブドメインを含むので公開リポジトリに置かず、
+    // gitignore された `.deploy.production.env` から `--secrets-file` で渡す
+    "production": {
+      "name": "zakki-web",
+      "services": [{ "binding": "CONTROL_PLANE", "service": "zakki-api-prod" }],
+      "vars": {},
+    },
   },
 }

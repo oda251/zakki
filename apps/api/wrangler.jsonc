@@ -1,30 +1,39 @@
 // zakki コントロールプレーン Worker（issue #99, docs/RESEARCH.md §7）。
 //
-// **デプロイには使わない**。Worker スクリプト・binding・route は Pulumi が管理し、
-// 配備は `infra/` の `pulumi up` に一本化する（`wrangler deploy` を併用すると
-// Pulumi が入れた secret binding を vars が上書きしてドリフトする。infra/README.md）。
-// この設定はローカル運用（`wrangler dev` / `wrangler tail`）専用。
-//
-// バンドルは `bun run --cwd apps/api build`（dist/index.js）。infra の
-// workerBundlePath がこの成果物を参照する。
+// ローカル運用（`wrangler dev` / `wrangler tail`）と本番デプロイの両方をこの設定で行う。
+// 本番は `env.production`（`bun run --cwd apps/api deploy`。手順は docs/MULTIUSER.md）。
+// バンドルは wrangler が src/index.ts から作る（事前ビルド不要）。
 // migration（apps/api/drizzle/）はデプロイ前に primary（Turso）へ適用しておく
 // （Workers ランタイムでは migrate しない）。
 {
   "name": "zakki-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
+  "observability": { "enabled": true },
   // 非機密の設定。値は空にしてある: 埋めずに `wrangler dev` すると env 検証が
   // 即座に落ちて設定漏れに気づける（プレースホルダ文字列だと検証を通ってしまう）。
+  // ローカルの値は .dev.vars に置く（vars より優先される）。
   "vars": {
     "TURSO_ORG": "",
     "TURSO_GROUP": "",
     "RP_ID": "",
     "RP_ORIGIN": "",
   },
-  // secrets（値はコミットしない。ローカルは .dev.vars、本番は Pulumi の
-  // secret_text binding。infra/README.md の set_secret 手順を参照）:
+  // secrets（値はコミットしない。ローカルは .dev.vars）:
   //   CONTROL_DB_URL    コントロールプレーン DB（Turso）の URL
   //   CONTROL_DB_TOKEN  コントロールプレーン DB の認証トークン
   //   SESSION_SECRET    セッション署名鍵（api-2）
   //   TURSO_API_TOKEN   Turso Platform API トークン（api-3 のプロビジョニング）
+  "env": {
+    // 本番。スクリプト名は apps/web の Service Binding（CONTROL_PLANE）の宛先と一致させる。
+    // **vars を空にしてある**のは意図的: RP_ID / RP_ORIGIN はアカウント固有の
+    // workers.dev サブドメインを含むので公開リポジトリに置かず、全ての設定値を
+    // gitignore された `.deploy.production.env` から `--secrets-file` で渡す。
+    // 同名の var が残っていると secret と binding 名が衝突するため、ここは空のまま保つ
+    // （vars は env へ継承されないので、トップレベルの空文字列は本番に届かない）。
+    "production": {
+      "name": "zakki-api-prod",
+      "vars": {},
+    },
+  },
 }
