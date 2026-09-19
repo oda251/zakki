@@ -268,22 +268,14 @@ body,
   font-family: inherit;
 }
 
-.composer__caret {
-  @apply ml-0.5 inline-block align-text-bottom;
-  width: 2px;
-  height: 1.1em;
-  background: var(--accent);
-  animation: composer-caret-blink 1.1s steps(1) infinite;
-}
-
-.composer:focus-within .composer__caret {
-  background: var(--text-primary);
-}
-
-@keyframes composer-caret-blink {
-  50% {
-    opacity: 0;
-  }
+/* 入力欄（ネイティブ textarea）。確定チャンクと同じ見た目で、枠は親の .composer が持つ */
+.composer__input {
+  @apply block w-full resize-none border-0 bg-transparent p-0 outline-none;
+  color: inherit;
+  font: inherit;
+  /* 本文の行数に合わせて伸びる（非対応ブラウザは rows=1 + 手動スクロール） */
+  field-sizing: content;
+  min-height: 1.5em;
 }
 
 .composer__status {

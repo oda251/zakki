@@ -91,6 +91,20 @@ export function replaceBlock(raw: string, start: number, end: number, text: stri
   return text === "" ? before + after : before + wrapPaste(text) + after;
 }
 
+/**
+ * Web の入力欄（textarea）で Enter した 1 行を確定する。本文は凍結リテラル（変換しない）で、
+ * 行区切りの改行を足すので 1 チャンクになる（TUI の Enter と同じ区切り）。
+ * 空・空白だけなら改行だけ足す（空のチャンクは作らない）。
+ */
+export function commitLine(raw: string, text: string): string {
+  return text.trim() === "" ? `${raw}\n` : `${raw}${wrapPaste(text)}\n`;
+}
+
+/** 未確定の下書き（textarea の本文）を保存対象に含めた raw。確定前でも入力を失わないため */
+export function withDraft(raw: string, draft: string): string {
+  return draft.trim() === "" ? raw : raw + wrapPaste(draft);
+}
+
 /** 編集対象として解決した raw 内のチャンク領域（docs/PANES.md §7） */
 export interface EditableBlock {
   /** raw 内の範囲 [start, end) */

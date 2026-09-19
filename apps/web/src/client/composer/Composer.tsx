@@ -5,13 +5,16 @@ import { errorMessage } from "@zakki/core/util/error.ts";
 import { SAVE_DEBOUNCE_MS } from "@zakki/core/config/timing.ts";
 import { createConversionSession } from "@zakki/core/conversion/compose.ts";
 import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
-import { wrapPaste } from "@zakki/core/conversion/paste.ts";
-import { freezeLiveTail, replaceBlock, splitDisplay } from "@zakki/core/entry/records.ts";
-import { applyKey } from "@zakki/core/input/controller.ts";
+import {
+  commitLine,
+  freezeLiveTail,
+  replaceBlock,
+  splitDisplay,
+  withDraft,
+} from "@zakki/core/entry/records.ts";
 import { createEditorStore } from "@zakki/core/input/store.ts";
 import { chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
 import { newChunkIds, planAutoLink } from "@zakki/web/client/composer/auto-link.ts";
-import { toKeyLike } from "@zakki/web/client/composer/web-keys.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { docId, numId } from "@zakki/web/client/db/ids.ts";
 import { addLinkDocs, saveChildrenDocs, upsertCorrection } from "@zakki/web/client/db/writes.ts";
@@ -38,9 +41,11 @@ interface ComposerProps {
 
 /**
  * Composer.Web（docs/COMPOSER.md）: raw 正本・凍結リテラルモデルは TUI と同一で、
- * 変換エンジンは注入（web は identityEngine で、漢字は OS の IME に任せる）。入力ゲート:
- * - ASCII 打鍵 → applyKey（ローマ字ログ）
- * - IME（compositionend）・ペースト → wrapPaste で凍結リテラル直行（docs/RECORDS.md）
+ * 変換エンジンは注入（web は identityEngine で、漢字は OS の IME に任せる）。
+ * 入力はネイティブの textarea（キャレット・IME・ペースト・選択は OS 任せ）で、Enter で
+ * その本文を 1 行分の凍結リテラルとして raw に確定する（commitLine。TUI の Enter と同じ区切り）。
+ * Shift+Enter は textarea 内の改行（1 チャンクの中の改行）。IME 変換中の Enter は IME のもの。
+ * 確定前の下書きも保存対象に含める（withDraft）ので、Enter を押さずに離れても入力を失わない。
  *
  * 保存は effect で state を監視せず、入力イベント（と変換の onUpdate）から
  * デバウンス保存関数を直接叩く（issue #52。useEffect なし）。
@@ -71,6 +76,14 @@ export function Composer({
   const [message, setMessage] = useState("");
   // 自動リンク（数珠繋ぎ）の「新規」判定基準。保存応答のたびに更新する
   const knownChunkIds = useRef<readonly number[]>(initialChunkIds);
+  // 未確定の入力（textarea の本文）。保存タイマーからも読むので ref にも持つ
+  const [draft, setDraftState] = useState("");
+  const draftRef = useRef("");
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const setDraft = useCallback((next: string) => {
+    draftRef.current = next;
+    setDraftState(next);
+  }, []);
 
   // 新規チャンクを「選択中の投稿」（保存予約時点の ?select=）から数珠繋ぎに自動リンクし、
   // 選択を最新へ移す。リンクは links コレクションへ永続化し（#77）、グラフへは
@@ -119,7 +132,7 @@ export function Composer({
       if (frozen.changed) {
         setRaw(frozen.raw);
       }
-      const converted = session.convertRaw(store.getState().raw).text;
+      const converted = session.convertRaw(withDraft(store.getState().raw, draftRef.current)).text;
       saveChildrenDocs(db, docId(parentId), chunkText(converted))
         .then((saved) => {
           setSaveState("saved");
@@ -163,32 +176,25 @@ export function Composer({
     [setRaw, scheduleSave],
   );
 
-  // 追記入力（ゲート通過後の ASCII 打鍵）
-  const onKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (store.getState().editing !== null) return; // 修正中はネイティブ input に任せる
-      const key = toKeyLike(e.nativeEvent);
-      if (key === null) return;
-      if (key.ctrl || key.meta) return; // ブラウザのショートカットを妨げない
-      e.preventDefault();
-      const action = applyKey(store.getState().raw, key);
-      if (action.type === "edit") {
-        editRaw(action.raw);
-      } else if (action.type === "rotate") {
-        conversion.rotateLastSegment(store.getState().raw); // 保存は onUpdate 経由
-      }
-      // open-search / exit は TUI 専用（web ではブラウザ機能に任せる）
+  // textarea の入力。下書きの変化も保存対象（withDraft）なのでデバウンス保存を回す
+  const onDraftChange = useCallback(
+    (next: string) => {
+      setDraft(next);
+      setSaveState("dirty");
+      scheduleSave();
     },
-    [store, editRaw, conversion],
+    [setDraft, scheduleSave],
   );
 
-  // IME 確定・ペースト → 凍結リテラル直行（打鍵ペースト扱い, docs/RECORDS.md）
-  const appendLiteral = useCallback(
-    (text: string) => {
-      if (text === "") return;
-      editRaw(store.getState().raw + wrapPaste(text));
+  // Enter で確定（Shift+Enter は改行、IME 変換中の Enter は IME の確定に任せる）
+  const onInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+      e.preventDefault();
+      editRaw(commitLine(store.getState().raw, draftRef.current));
+      setDraft("");
     },
-    [store, editRaw],
+    [store, editRaw, setDraft],
   );
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
@@ -235,18 +241,12 @@ export function Composer({
     editing !== null && editing.target.kind === "main" ? editing.target.start : null;
 
   return (
-    // フォーカス強調は CSS :focus-within（自身と修正 input の両方を拾う。
-    // 旧実装の onFocus/onBlur + state と同じ範囲。issue #58 項目 8）
+    // フォーカス強調は CSS :focus-within（textarea と修正 input の両方を拾う。issue #58 項目 8）。
+    // 枠の余白をクリックしたら textarea へフォーカスを渡す（確定チャンクのクリックは修正モード）
     <div
       className="composer"
-      tabIndex={0}
-      role="textbox"
-      aria-label="ジャーナル入力"
-      onKeyDown={onKeyDown}
-      onCompositionEnd={(e) => appendLiteral(e.data)}
-      onPaste={(e) => {
-        e.preventDefault();
-        appendLiteral(e.clipboardData.getData("text/plain"));
+      onClick={(e) => {
+        if (e.target === e.currentTarget) inputRef.current?.focus();
       }}
     >
       {frozen.map((block, i) =>
@@ -286,11 +286,22 @@ export function Composer({
           </div>
         ),
       )}
-      <div className={`${chunkWeb.base} composer__live`}>
-        {live.text}
-        <span className={chunkWeb.pending}>{live.pending}</span>
-        <span className="composer__caret" />
-      </div>
+      {(live.text !== "" || live.pending !== "") && (
+        // 以前の打鍵モデルで残った未確定のローマ字（保存時に凍結される）。通常は出ない
+        <div className={`${chunkWeb.base} composer__live`}>
+          {live.text}
+          <span className={chunkWeb.pending}>{live.pending}</span>
+        </div>
+      )}
+      <textarea
+        ref={inputRef}
+        className="composer__input"
+        aria-label="ジャーナル入力"
+        rows={1}
+        value={draft}
+        onChange={(e) => onDraftChange(e.target.value)}
+        onKeyDown={onInputKeyDown}
+      />
       <div className="composer__status">
         {saveState === "saved" ? "保存済み" : saveState === "dirty" ? "…" : `エラー: ${message}`}
         {message !== "" && saveState !== "error" && ` / ${message}`}
