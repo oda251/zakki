@@ -12,7 +12,6 @@
     "deploy": "wrangler deploy --env production --secrets-file .deploy.production.env"
   },
   "dependencies": {
-    "@bjorn3/browser_wasi_shim": "0.4.2",
     "@zakki/core": "workspace:*",
     "@zakki/data": "workspace:*",
     "drizzle-orm": "^0.45.2",

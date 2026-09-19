@@ -32,13 +32,13 @@ interface ComposerProps {
   initialChunkIds: readonly number[];
   /** ConversionPipeline のシード（corrections はローカル RxDB。#44） */
   corrections: ReadonlyMap<string, string>;
-  /** かな漢字変換エンジン（#26 で wasm クライアント実行）。ready 済みを注入する */
+  /** かな漢字変換エンジン。web は identityEngine（変換しない。ComposerPane の注記） */
   engine: KanaKanjiEngine;
 }
 
 /**
  * Composer.Web（docs/COMPOSER.md）: raw 正本・凍結リテラルモデルは TUI と同一で、
- * 変換だけ RemoteEngine（サーバの anco）に委ねる。入力ゲート:
+ * 変換エンジンは注入（web は identityEngine で、漢字は OS の IME に任せる）。入力ゲート:
  * - ASCII 打鍵 → applyKey（ローマ字ログ）
  * - IME（compositionend）・ペースト → wrapPaste で凍結リテラル直行（docs/RECORDS.md）
  *

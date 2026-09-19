@@ -100,6 +100,11 @@ style とは独立。実値は cell/px で別物のため共有しない）。`a
 **存在しない**ので、Web でもブラウザ内に汎用 IME を実装する必要はない。追記面はカーソル
 末尾固定で `変換済み + 淡色 pending + 末尾キャレット` を描くだけ。
 
+Web の変換エンジンは `identityEngine`（変換しない）。漢字は OS の IME（composition）で入力し、
+凍結リテラルとして入る。IME オフの ASCII 打鍵はローマ字 → かなまで。以前はブラウザ内で
+anco を wasm 実行していたが、配信サイズ（reactor ~13MB + 辞書 ~7MB）と Cloudflare Workers
+上の配信の壊れやすさ（brotli の二重圧縮で `WebAssembly.compile` が落ちる）から撤去した。
+
 ### New と Edit を `Composer` に統合
 
 現在の `Chunk.New`（追記・IME あり）と `Chunk.Edit`（修正・プレーン）の分裂は端末の都合。
