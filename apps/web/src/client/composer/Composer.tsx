@@ -80,6 +80,14 @@ export function Composer({
   const [draft, setDraftState] = useState("");
   const draftRef = useRef("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  // 履歴（確定チャンク）の表示範囲。既定は最新 1 件だけ（チャット風）。上へスクロール
+  // （ホイール・下向きスワイプ）すると全件を出し、欄の高さはウィンドウの高さまで伸びる。
+  // 入力を始めたら最新 1 件に戻す
+  const [expanded, setExpanded] = useState(false);
+  const touchY = useRef<number | null>(null);
+  const expandHistory = useCallback(() => {
+    if (!expanded) setExpanded(true);
+  }, [expanded]);
   const setDraft = useCallback((next: string) => {
     draftRef.current = next;
     setDraftState(next);
@@ -180,6 +188,7 @@ export function Composer({
   const onDraftChange = useCallback(
     (next: string) => {
       setDraft(next);
+      setExpanded(false);
       setSaveState("dirty");
       scheduleSave();
     },
@@ -193,6 +202,7 @@ export function Composer({
       e.preventDefault();
       editRaw(commitLine(store.getState().raw, draftRef.current));
       setDraft("");
+      setExpanded(false);
     },
     [store, editRaw, setDraft],
   );
@@ -237,62 +247,76 @@ export function Composer({
     [display.liveRaw, conversionVersion, conversion],
   );
 
+  // 既定は最新 1 件だけ。履歴欄は column-reverse（スクロールの起点が下端＝最新）なので
+  // 新しい順に並べて渡す。展開した瞬間も最新が見えたまま、上へ遡っていける
+  const visible = (expanded ? frozen : frozen.slice(-1)).toReversed();
+
   const editingStart =
     editing !== null && editing.target.kind === "main" ? editing.target.start : null;
 
   return (
-    // フォーカス強調は CSS :focus-within（textarea と修正 input の両方を拾う。issue #58 項目 8）。
-    // 枠の余白をクリックしたら textarea へフォーカスを渡す（確定チャンクのクリックは修正モード）
-    <div
-      className="composer"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) inputRef.current?.focus();
-      }}
-    >
-      {frozen.map((block, i) =>
-        editingStart === block.start && editing !== null ? (
-          <input
-            key={`edit-${block.start}`}
-            className="composer__edit"
-            value={editing.text}
-            autoFocus
-            onChange={(e) => setEditing({ ...editing, text: e.target.value })}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") commitEdit();
-              if (e.key === "Escape") setEditing(null);
-            }}
-            onBlur={commitEdit}
-          />
-        ) : (
-          <div
-            key={`${block.start}-${i}`}
-            className={chunkWeb.base}
-            title={makeTitle(block.content)}
-            onClick={() => openEdit(block)}
-          >
-            {block.content}
-            <button
-              type="button"
-              className="composer__delete"
-              aria-label="このチャンクを削除"
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteChunk(block);
-              }}
-            >
-              ✕
-            </button>
+    // チャット風: 確定チャンクは吹き出し（最新 1 件、遡ると全件）、その下に入力欄
+    <div className="composer">
+      <div
+        className={expanded ? "composer__history composer__history--expanded" : "composer__history"}
+        onWheel={(e) => {
+          if (e.deltaY < 0) expandHistory();
+        }}
+        onTouchStart={(e) => {
+          touchY.current = e.touches[0]?.clientY ?? null;
+        }}
+        onTouchMove={(e) => {
+          const y = e.touches[0]?.clientY;
+          // 指を下へ動かす = 上の（過去の）内容を見に行く
+          if (touchY.current !== null && y !== undefined && y - touchY.current > 8) expandHistory();
+        }}
+      >
+        {(live.text !== "" || live.pending !== "") && (
+          // 以前の打鍵モデルで残った未確定のローマ字（保存時に凍結される）。通常は出ない。
+          // column-reverse なので先頭に置く＝最下段に出る
+          <div className={`${chunkWeb.base} composer__live`}>
+            {live.text}
+            <span className={chunkWeb.pending}>{live.pending}</span>
           </div>
-        ),
-      )}
-      {(live.text !== "" || live.pending !== "") && (
-        // 以前の打鍵モデルで残った未確定のローマ字（保存時に凍結される）。通常は出ない
-        <div className={`${chunkWeb.base} composer__live`}>
-          {live.text}
-          <span className={chunkWeb.pending}>{live.pending}</span>
-        </div>
-      )}
+        )}
+        {visible.map((block, i) =>
+          editingStart === block.start && editing !== null ? (
+            <input
+              key={`edit-${block.start}`}
+              className="composer__edit"
+              value={editing.text}
+              autoFocus
+              onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") commitEdit();
+                if (e.key === "Escape") setEditing(null);
+              }}
+              onBlur={commitEdit}
+            />
+          ) : (
+            <div
+              key={`${block.start}-${i}`}
+              className={chunkWeb.base}
+              title={makeTitle(block.content)}
+              onClick={() => openEdit(block)}
+            >
+              {block.content}
+              <button
+                type="button"
+                className="composer__delete"
+                aria-label="このチャンクを削除"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteChunk(block);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          ),
+        )}
+      </div>
       <textarea
         ref={inputRef}
         className="composer__input"

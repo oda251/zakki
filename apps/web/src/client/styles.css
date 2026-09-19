@@ -228,27 +228,41 @@ body,
 
 /* ---- Composer.Web（docs/COMPOSER.md） ---- */
 
+/* チャット風（LINE 等）: 外枠は持たず、確定チャンクは右寄せの吹き出し、下に入力欄 */
 .composer {
-  @apply cursor-text rounded border px-2 py-1.5 outline-none;
-  border-color: var(--hairline);
-  min-height: 6rem;
+  @apply flex flex-col gap-2;
 }
 
-/* フォーカス強調（自身 or 内側の修正 input）。JS の focused state を持たない（issue #58 項目 8） */
-.composer:focus-within {
-  border-color: var(--accent);
+/* 履歴。既定は最新 1 件だけ描くので高さは中身なり。展開時はウィンドウの高さまで伸びてスクロール */
+/* column-reverse: スクロールの起点を下端（最新）にする。子は新しい順に並べる（Composer.tsx） */
+.composer__history {
+  @apply flex flex-col-reverse items-end gap-1.5;
+}
+.composer__history--expanded {
+  max-height: calc(100vh - 8rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .composer .chunk {
-  @apply relative pr-6;
+  @apply relative cursor-pointer text-ink;
+  width: fit-content;
+  max-width: 85%;
+  padding: 0.4rem 0.75rem;
+  padding-right: 1.5rem;
+  border-radius: 1rem 1rem 0.25rem 1rem;
+  background: var(--accent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .composer .chunk:hover {
-  background: rgba(255, 255, 255, 0.05);
+  filter: brightness(1.08);
 }
 
 .composer__delete {
-  @apply absolute right-1 top-1 hidden cursor-pointer rounded border-0 bg-transparent px-1 text-xs text-ink-muted;
+  @apply absolute right-1 top-1 hidden cursor-pointer rounded border-0 bg-transparent px-1 text-xs;
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .composer .chunk:hover .composer__delete {
@@ -263,23 +277,28 @@ body,
 }
 
 .composer__edit {
-  @apply w-full rounded border bg-transparent px-2 py-1.5 text-sm text-ink outline-none;
+  @apply rounded-2xl border bg-transparent px-3 py-1.5 text-sm text-ink outline-none;
+  width: 85%;
   border-color: var(--accent);
   font-family: inherit;
 }
 
-/* 入力欄（ネイティブ textarea）。確定チャンクと同じ見た目で、枠は親の .composer が持つ */
+/* 入力欄（ネイティブ textarea）。角丸のメッセージ入力欄 */
 .composer__input {
-  @apply block w-full resize-none border-0 bg-transparent p-0 outline-none;
-  color: inherit;
-  font: inherit;
+  @apply block w-full resize-none rounded-2xl border bg-transparent px-3 py-2 text-sm text-ink outline-none;
+  border-color: var(--hairline);
+  font-family: inherit;
   /* 本文の行数に合わせて伸びる（非対応ブラウザは rows=1 + 手動スクロール） */
   field-sizing: content;
-  min-height: 1.5em;
+  min-height: 2.25rem;
+  max-height: 40vh;
+}
+.composer__input:focus {
+  border-color: var(--accent);
 }
 
 .composer__status {
-  @apply mt-1 text-right text-xs text-ink-muted;
+  @apply text-right text-xs text-ink-muted;
 }
 
 .composer__session {
