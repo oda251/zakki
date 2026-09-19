@@ -17,10 +17,9 @@ setup:
 setup-zenz:
     ./scripts/install-zenz.sh
 
-# web の配信物一式を dist に用意（SPA ビルド + anco wasm 変換アセット）
+# web の配信物（SPA ビルド）を dist に用意
 setup-web:
     bun run web:build
-    ./scripts/install-anco-wasm.sh
 
 # ---- 起動 ----
 
@@ -28,7 +27,7 @@ setup-web:
 tui:
     bun start
 
-# web サーバを起動（API + SPA + anco wasm 配信、既定 :3777）。初回は先に `just setup-web`
+# web サーバを起動（API + SPA 配信、既定 :3777）。初回は先に `just setup-web`
 web:
     bun run web
 

@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { take } from "rxjs";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { identityEngine } from "@zakki/core/conversion/engine.ts";
 import { Composer } from "@zakki/web/client/composer/Composer.tsx";
-import { useWasmEngine } from "@zakki/web/client/composer/wasm-engine.ts";
 import { correctionsView } from "@zakki/web/client/db/live.ts";
 import { useObservable } from "@zakki/web/client/hooks/use-observable.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
@@ -14,8 +14,10 @@ import { useGraphStore } from "@zakki/web/client/store/graph.ts";
  *
  * corrections（学習）はローカル RxDB の correctionsView から（#44）。take(1) で初回値に
  * 凍結するのは、学習保存のたびに変換セッションを作り直さないため（セッション内の学習は
- * ConversionSession 自身が保持する）。変換エンジンは wasm クライアント実行（#26）で、
- * ready まで待ってから Composer を組む。init 失敗はブロッキングエラー（フォールバックなし）。
+ * ConversionSession 自身が保持する）。web はかな漢字変換エンジンを持たない（identityEngine）:
+ * 日本語は OS の IME（composition）で入力し、凍結リテラルとして入る。IME オフの ASCII 打鍵は
+ * ローマ字 → かなまで（漢字にはしない）。以前の anco wasm 埋め込みは、配信サイズ
+ * （reactor ~13MB + 辞書 ~7MB）と Workers 上の配信の壊れやすさから撤去した。
  * バッファの見出しはグラフ（liveQuery）から導出するため、rename も自動で追随する。
  */
 export function ComposerPane() {
@@ -27,7 +29,6 @@ export function ComposerPane() {
   const currentNode = useGraphStore((s) =>
     currentId === null ? undefined : s.data?.nodes.find((n) => n.id === currentId),
   );
-  const wasm = useWasmEngine();
 
   const corrections = useObservable<ReadonlyMap<string, string> | null>(
     useMemo(() => (db === null ? null : correctionsView(db).pipe(take(1))), [db]),
@@ -37,16 +38,7 @@ export function ComposerPane() {
   if (error !== null) {
     return <div className="empty-note">バッファ読み込みエラー: {error}</div>;
   }
-  if (wasm.error !== null) {
-    return <div className="empty-note">変換エンジンの初期化に失敗しました: {wasm.error}</div>;
-  }
-  if (
-    db === null ||
-    currentId === null ||
-    initialRaw === null ||
-    corrections === null ||
-    wasm.engine === null
-  ) {
+  if (db === null || currentId === null || initialRaw === null || corrections === null) {
     return <div className="empty-note">読み込み中…</div>;
   }
   return (
@@ -65,7 +57,7 @@ export function ComposerPane() {
         initialRaw={initialRaw}
         initialChunkIds={initialChunkIds}
         corrections={corrections}
-        engine={wasm.engine}
+        engine={identityEngine}
       />
     </div>
   );

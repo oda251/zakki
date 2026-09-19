@@ -25,10 +25,10 @@ just tags        # タグの統合提案（--apply で適用）
 
 ## Web UI
 
-グラフビュー（ノード=チャンク、エッジ=関連リンク）を中心にした Web 版。右に TUI と同じ入力欄と関連表示、左に日付チャンク一覧・タグフィルタを持つ（データモデルは [docs/CHUNKS.md](docs/CHUNKS.md)）。かな漢字変換はブラウザ内 wasm で完結する（サーバ往復なし、issue #26）。
+グラフビュー（ノード=チャンク、エッジ=関連リンク）を中心にした Web 版。右に TUI と同じ入力欄と関連表示、左に日付チャンク一覧・タグフィルタを持つ（データモデルは [docs/CHUNKS.md](docs/CHUNKS.md)）。Web 版はかな漢字変換エンジンを持たない。日本語は OS の IME で入力する（IME オフのローマ字はかなまで変換する）。
 
 ```sh
-just setup-web   # クライアント（Vite）をビルドし、anco wasm 変換アセットを dist に導入
+just setup-web   # クライアント（Vite）をビルドして dist に置く
 just web         # http://localhost:3777（ZAKKI_WEB_PORT で変更可）
 just web-dev     # 開発時: vite dev サーバ（:5173）。別途 just web で API を起動
 ```
@@ -37,7 +37,6 @@ Docker で動かす場合（DB は `zakki-data` volume に永続化）:
 
 ```sh
 docker compose up --build
-# anco wasm Release のタグを変える場合: docker compose build --build-arg ANCO_REF=vX.Y.Z
 ```
 
 留意:

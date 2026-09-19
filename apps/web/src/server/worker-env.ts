@@ -39,7 +39,7 @@ export interface ServiceBinding {
 }
 
 /**
- * 名前つき Service Binding を取り出す（`CONTROL_PLANE` / `ASSETS`, issue #134）。
+ * 名前つき Service Binding を取り出す（`CONTROL_PLANE`, issue #134）。
  *
  * **公開 URL では Worker → Worker が通らない。** 同じアカウントの workers.dev を
  * Worker から fetch すると自分自身へループバックし、`/auth/me` が中継サーバの
