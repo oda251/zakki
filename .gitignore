@@ -8,8 +8,5 @@ apps/api/dist/
 # Claude Code の作業ディレクトリ（エージェント worktree 等）
 .claude/
 
-# Pulumi (infra/)
-infra/bin/
-infra/.pulumi/
-# infra は Bun workspaces 対象外で lockfile はコミットしない（pulumi install が生成）
-infra/bun.lock
+# 本番デプロイの設定値（アカウント固有の値・secrets。wrangler deploy --secrets-file で渡す）
+.deploy.*.env
