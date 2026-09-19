@@ -94,15 +94,33 @@ export function replaceBlock(raw: string, start: number, end: number, text: stri
 /**
  * Web の入力欄（textarea）で Enter した 1 行を確定する。本文は凍結リテラル（変換しない）で、
  * 行区切りの改行を足すので 1 チャンクになる（TUI の Enter と同じ区切り）。
- * 空・空白だけなら改行だけ足す（空のチャンクは作らない）。
+ *
+ * at は差し込む位置（raw 上の index。{@link insertionPointAfter} で得る）。null なら末尾に積む。
+ * 空・空白だけのとき、末尾なら改行だけ足し（空のチャンクは作らない）、途中なら何も変えない
+ * （途中に空行を作ると前後のチャンクの区切りが変わるため）。
  */
-export function commitLine(raw: string, text: string): string {
-  return text.trim() === "" ? `${raw}\n` : `${raw}${wrapPaste(text)}\n`;
+export function commitLine(raw: string, text: string, at: number | null = null): string {
+  if (at === null) return text.trim() === "" ? `${raw}\n` : `${raw}${wrapPaste(text)}\n`;
+  return text.trim() === "" ? raw : `${raw.slice(0, at)}${wrapPaste(text)}\n${raw.slice(at)}`;
 }
 
-/** 未確定の下書き（textarea の本文）を保存対象に含めた raw。確定前でも入力を失わないため */
-export function withDraft(raw: string, draft: string): string {
-  return draft.trim() === "" ? raw : raw + wrapPaste(draft);
+/**
+ * 未確定の下書き（textarea の本文）を保存対象に含めた raw。確定前でも入力を失わないため。
+ * at は {@link commitLine} と同じ（確定したときと同じ位置に置く）
+ */
+export function withDraft(raw: string, draft: string, at: number | null = null): string {
+  if (draft.trim() === "") return raw;
+  return at === null
+    ? raw + wrapPaste(draft)
+    : `${raw.slice(0, at)}${wrapPaste(draft)}\n${raw.slice(at)}`;
+}
+
+/**
+ * 確定チャンク（{@link splitDisplay} の frozen）の blockIndex 番目の「直後」に差し込むときの
+ * raw 上の位置 = 次のチャンクの先頭。最後のチャンクなら null（末尾に積めばよい）
+ */
+export function insertionPointAfter(raw: string, blockIndex: number): number | null {
+  return splitDisplay(raw).frozen[blockIndex + 1]?.start ?? null;
 }
 
 /** 編集対象として解決した raw 内のチャンク領域（docs/PANES.md §7） */

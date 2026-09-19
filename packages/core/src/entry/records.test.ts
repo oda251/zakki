@@ -6,6 +6,7 @@ import {
   editableBlockAt,
   firstLineRomajiLen,
   freezeLiveTail,
+  insertionPointAfter,
   liveTailStart,
   parseBlocks,
   replaceBlock,
@@ -272,5 +273,31 @@ describe("withDraft（未確定の textarea 本文を保存対象に含める）
     const base = commitLine("", "確定済み");
     expect(withDraft(base, "")).toBe(base);
     expect(withDraft(base, "  \n")).toBe(base);
+  });
+});
+
+describe("選択中チャンクの直後へ挿入（insertionPointAfter + commitLine / withDraft の at）", () => {
+  const three = commitLine(commitLine(commitLine("", "一"), "二"), "三");
+
+  test("insertionPointAfter は次のチャンクの先頭位置。最後のチャンクなら null（末尾に積む）", () => {
+    const blocks = splitDisplay(three).frozen;
+    expect(insertionPointAfter(three, 0)).toBe(blocks[1]?.start ?? -1);
+    expect(insertionPointAfter(three, 1)).toBe(blocks[2]?.start ?? -1);
+    expect(insertionPointAfter(three, 2)).toBeNull();
+  });
+
+  test("commitLine(at) は指定位置に 1 チャンクを差し込む（前後はそのまま）", () => {
+    const raw = commitLine(three, "新", insertionPointAfter(three, 0));
+    expect(splitDisplay(raw).frozen.map((b) => b.content)).toEqual(["一", "新", "二", "三"]);
+  });
+
+  test("commitLine(at) で本文が空なら何も変えない（途中に空行を作らない）", () => {
+    expect(commitLine(three, "  ", insertionPointAfter(three, 0))).toBe(three);
+  });
+
+  test("withDraft(at) も同じ位置に下書きを差し込む", () => {
+    const raw = withDraft(three, "書きかけ", insertionPointAfter(three, 1));
+    expect(splitDisplay(raw).frozen.map((b) => b.content)).toEqual(["一", "二", "書きかけ", "三"]);
+    expect(withDraft(three, "", insertionPointAfter(three, 1))).toBe(three);
   });
 });

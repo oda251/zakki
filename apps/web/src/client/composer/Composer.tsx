@@ -8,6 +8,7 @@ import type { KanaKanjiEngine } from "@zakki/core/conversion/engine.ts";
 import {
   commitLine,
   freezeLiveTail,
+  insertionPointAfter,
   replaceBlock,
   splitDisplay,
   withDraft,
@@ -46,6 +47,8 @@ interface ComposerProps {
  * 変換エンジンは注入（web は identityEngine で、漢字は OS の IME に任せる）。
  * 入力はネイティブの textarea（キャレット・IME・ペースト・選択は OS 任せ）で、Enter で
  * その本文を 1 行分の凍結リテラルとして raw に確定する（commitLine。TUI の Enter と同じ区切り）。
+ * 選択中のチャンクがあれば、その直後に差し込む（次の投稿は選択中から数珠繋ぎにリンクされるので、
+ * 並び順もそれに合わせる）。
  * Shift+Enter は textarea 内の改行（1 チャンクの中の改行）。IME 変換中の Enter は IME のもの。
  * 確定前の下書きも保存対象に含める（withDraft）ので、Enter を押さずに離れても入力を失わない。
  *
@@ -98,6 +101,10 @@ export function Composer({
     },
     [expanded],
   );
+  // 直前に Enter で差し込んだチャンクの frozen 上の位置。保存（300ms 後）で選択がそのチャンクへ
+  // 移るまでの間、次の投稿の差し込み位置・表示のアンカーとして使う（連打しても順に並ぶ）。
+  // 差し込んだ時点の選択と今の選択が違えば（ユーザが別のノードを選んだ）無効
+  const pendingAnchor = useRef<{ index: number; selectedAt: number | null } | null>(null);
   const setDraft = useCallback((next: string) => {
     draftRef.current = next;
     setDraftState(next);
@@ -112,6 +119,9 @@ export function Composer({
     (savedChunks: readonly { id: number }[], anchor: number | null) => {
       const fresh = newChunkIds(knownChunkIds.current, savedChunks);
       knownChunkIds.current = savedChunks.map((c) => c.id);
+      // 保存済みの並びが追いついたので、以降のアンカーは選択（下で移す）から引ける。
+      // 次の保存が控えている（その後も Enter した）なら、まだ保持する
+      if (saveTimer.current === null) pendingAnchor.current = null;
       const plan = planAutoLink({
         parentId,
         anchor,
@@ -124,6 +134,11 @@ export function Composer({
         setMessage(`リンクの保存に失敗: ${errorMessage(e)}`);
       });
       selectNode(plan.select);
+      // まだ保存待ちの差し込みがある（連打）なら、選択の移動を「ユーザが別を選んだ」と
+      // 取り違えないよう、アンカーの基準をこの選択へ付け替える
+      if (pendingAnchor.current !== null) {
+        pendingAnchor.current = { ...pendingAnchor.current, selectedAt: plan.select };
+      }
     },
     [db, parentId],
   );
@@ -136,6 +151,27 @@ export function Composer({
   // 変換の onUpdate（非同期変換の確定・候補ローテーション）。バッファ切替で
   // アンマウントされても保留中の保存はそのまま走らせ、直前の入力を失わない。
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 次の投稿の差し込み先。アンカー（直前に差し込んだチャンク、無ければ選択中のチャンク）の
+  // 直後で、アンカーが無い・最後のチャンクなら末尾（at = null）。index は差し込まれる
+  // チャンクの frozen 上の位置
+  const anchorIndexOf = useCallback((raw: string): number | null => {
+    const selected = parseRoute(currentHref()).select;
+    const pending = pendingAnchor.current;
+    if (pending !== null && pending.selectedAt === selected) return pending.index;
+    const index = selected === null ? -1 : knownChunkIds.current.indexOf(selected);
+    return index === -1 || index >= splitDisplay(raw).frozen.length ? null : index;
+  }, []);
+  const insertionOf = useCallback(
+    (raw: string): { at: number | null; index: number } => {
+      const anchor = anchorIndexOf(raw);
+      const at = anchor === null ? null : insertionPointAfter(raw, anchor);
+      return {
+        at,
+        index: at === null || anchor === null ? splitDisplay(raw).frozen.length : anchor + 1,
+      };
+    },
+    [anchorIndexOf],
+  );
   const conversionRef = useRef<ReturnType<typeof createConversionSession> | null>(null);
   const scheduleSave = useCallback(() => {
     // アンカー（数珠繋ぎの起点）は予約時点で捕捉する: 発火（300ms 後）までにバッファが
@@ -150,12 +186,18 @@ export function Composer({
       if (frozen.changed) {
         setRaw(frozen.raw);
       }
-      const converted = session.convertRaw(withDraft(store.getState().raw, draftRef.current)).text;
+      const current = store.getState().raw;
+      const { at, index: draftIndex } = insertionOf(current);
+      const hasDraft = draftRef.current.trim() !== "";
+      const converted = session.convertRaw(withDraft(current, draftRef.current, at)).text;
       saveChildrenDocs(db, docId(parentId), chunkText(converted))
         .then((saved) => {
           setSaveState("saved");
+          // 下書きのチャンクは保存するが、確定（Enter）するまではリンクも選択の移動もしない。
+          // 「新規」判定からも外しておくと、確定後の保存で新規として拾われてリンクされる
+          const committed = saved.filter((_, i) => !(hasDraft && i === draftIndex));
           linkNewChunks(
-            saved.map((c) => ({ id: numId(c.id) })),
+            committed.map((c) => ({ id: numId(c.id) })),
             anchor,
           );
         })
@@ -164,7 +206,7 @@ export function Composer({
           setMessage(errorMessage(e));
         });
     }, SAVE_DEBOUNCE_MS);
-  }, [store, setRaw, db, parentId, linkNewChunks]);
+  }, [store, setRaw, db, parentId, linkNewChunks, insertionOf]);
 
   // 変換合成（機能ロジック）は core と共有し、副作用（永続化・エラー表示・再保存）だけ注入する
   const conversion = useMemo(
@@ -210,11 +252,17 @@ export function Composer({
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
       e.preventDefault();
-      editRaw(commitLine(store.getState().raw, draftRef.current));
+      const current = store.getState().raw;
+      const { at, index } = insertionOf(current);
+      const next = commitLine(current, draftRef.current, at);
+      if (next !== current && draftRef.current.trim() !== "") {
+        pendingAnchor.current = { index, selectedAt: parseRoute(currentHref()).select };
+      }
+      editRaw(next);
       setDraft("");
       setExpanded(false);
     },
-    [store, editRaw, setDraft],
+    [store, editRaw, setDraft, insertionOf],
   );
 
   // 修正モード（確定チャンククリック）: ネイティブ input で編集し、Enter/blur で replaceBlock
@@ -257,17 +305,14 @@ export function Composer({
     [display.liveRaw, conversionVersion, conversion],
   );
 
-  // 既定は「選択ノード（無ければ最新）とその直前」の 2 件（historyWindow）。選択ノードは
-  // 次の投稿のリンク元なので、それを最新として見せる。frozen と保存済みチャンク id は
-  // raw の順序で 1:1（docs/PANES.md 実装リスク2）。
+  // 既定は「アンカー（選択中のチャンク。次の投稿はその直後に入る）とその直前」の 2 件
+  // （historyWindow）。アンカーが無ければ最新 2 件。frozen と保存済みチャンク id は
+  // raw の順序で 1:1（docs/PANES.md 実装リスク2）。useRoute の購読で選択の変化に追随する。
   // 履歴欄は column-reverse（スクロールの起点が下端＝最新）なので新しい順に並べて渡す
-  const selected = useRoute().select;
-  const savedIds = knownChunkIds.current;
-  const selectedIndex = selected === null ? -1 : savedIds.indexOf(selected);
+  useRoute();
   const [windowStart, windowEnd] = historyWindow({
     total: frozen.length,
-    selectedIndex: selectedIndex === -1 ? null : selectedIndex,
-    savedCount: savedIds.length,
+    anchorIndex: anchorIndexOf(raw),
   });
   const visible = (expanded ? frozen : frozen.slice(windowStart, windowEnd)).toReversed();
 
