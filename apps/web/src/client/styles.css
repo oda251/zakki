@@ -272,12 +272,16 @@ body,
   @apply ml-0.5 inline-block align-text-bottom;
   width: 2px;
   height: 1.1em;
-  background: var(--accent);
+  background: var(--text-primary);
   animation: composer-caret-blink 1.1s steps(1) infinite;
+  /* 入力欄にフォーカスがあるときだけ出す（幅は保つので、出し入れで文字がずれない） */
+  visibility: hidden;
 }
 
-.composer:focus-within .composer__caret {
-  background: var(--text-primary);
+/* :focus（自身）に絞る: 確定チャンクの修正 input にフォーカスがある間はそちらの
+   ネイティブキャレットが出るので、末尾のキャレットは消しておく */
+.composer:focus .composer__caret {
+  visibility: visible;
 }
 
 @keyframes composer-caret-blink {
