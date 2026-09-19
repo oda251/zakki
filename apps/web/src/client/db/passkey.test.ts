@@ -10,7 +10,6 @@ import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import {
   createPasskeyCredential,
   evaluatePrf,
-  healPasskeyEnvelope,
   PRF_SALT,
   revokePasskeyEnvelope,
   savePasskeyEnvelope,
@@ -287,54 +286,5 @@ describe("複数パスキー（issue #120）", () => {
       ...envelopes,
     ];
     expect(await unlockWithPasskey(broken, api)).toEqual(dek);
-  });
-});
-
-describe("healPasskeyEnvelope（自己修復, issue #120）", () => {
-  test("P13: 封筒が無いクレデンシャルの PRF を渡すと封筒を作る（生体認証は追加で求めない）", async () => {
-    const api = fakeAuthenticator();
-    // 登録の 2 段目（封筒 POST）だけ失敗した状態＝クレデンシャルはあるが封筒が無い
-    const credentialId = await createPasskeyCredential(api);
-    const envelopes = await fetchEnvelopes(fetchFn);
-    expect(envelopes.some((e) => e.kind === "passkey")).toBe(false);
-
-    // ログイン時に評価済みの PRF（#105）をそのまま使う: get は呼ばれない
-    const prf = await evaluatePrf(api, [credentialId]);
-    let gets = 0;
-    const counted = {
-      ...api,
-      get: (options: CredentialRequestOptions) => {
-        gets += 1;
-        return api.get(options);
-      },
-    };
-    expect(await healPasskeyEnvelope(dek, prf, envelopes, { fetchFn })).toBe(true);
-    expect(gets).toBe(0);
-
-    // 修復した封筒はそのパスキーで開ける
-    const healed = await fetchEnvelopes(fetchFn);
-    expect(await unlockWithPasskey(healed, counted)).toEqual(dek);
-    expect(gets).toBe(1);
-  });
-
-  test("P14: 既に封筒があるクレデンシャル・PRF 未評価（null）なら何もしない", async () => {
-    const api = fakeAuthenticator();
-    const credentialId = await enroll(api);
-    const envelopes = await fetchEnvelopes(fetchFn);
-    const prf = await evaluatePrf(api, [credentialId]);
-
-    expect(await healPasskeyEnvelope(dek, prf, envelopes, { fetchFn })).toBe(false);
-    expect(await healPasskeyEnvelope(dek, null, envelopes, { fetchFn })).toBe(false);
-    expect((await fetchEnvelopes(fetchFn)).filter((e) => e.kind === "passkey")).toHaveLength(1);
-  });
-
-  test("P15: 保存に失敗しても例外にしない（起動を止めない）", async () => {
-    const api = fakeAuthenticator();
-    const credentialId = await createPasskeyCredential(api);
-    const prf = await evaluatePrf(api, [credentialId]);
-    // 暗号未プロビジョン（封筒ゼロ）の DB は 409 を返す
-    const emptyApp = createApp({ db: await createDb(":memory:") });
-    const emptyFetch: FetchLike = async (input, init) => emptyApp.request(input, init);
-    expect(await healPasskeyEnvelope(dek, prf, [], { fetchFn: emptyFetch })).toBe(false);
   });
 });

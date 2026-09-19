@@ -8,7 +8,7 @@ import * as schema from "@zakki/api/db/schema.ts";
 import { deleteAccount } from "@zakki/api/turso/provision.ts";
 import type { PlatformFailure, TursoPlatform } from "@zakki/core/turso/platform.ts";
 import { createTursoPlatform, TURSO_API_BASE_URL } from "@zakki/core/turso/platform.ts";
-import { parseRelinkIdentityEnv } from "./env.ts";
+import { parseDbTokenEnv } from "./env.ts";
 import { describeFailure } from "./provision.ts";
 
 /**
@@ -51,23 +51,20 @@ export async function relinkIdentities(
 ): Promise<Result<{ moved: number }, RelinkFailure>> {
   if (from === to) return err({ kind: "same-account" });
 
-  const [fromAccount] = await db.select().from(accounts).where(eq(accounts.id, from)).limit(1);
+  const [[fromAccount], [toAccount]] = await Promise.all([
+    db.select().from(accounts).where(eq(accounts.id, from)).limit(1),
+    db.select().from(accounts).where(eq(accounts.id, to)).limit(1),
+  ]);
   if (fromAccount === undefined) return err({ kind: "unknown-source", accountId: from });
-
-  const [toAccount] = await db.select().from(accounts).where(eq(accounts.id, to)).limit(1);
   if (toAccount === undefined) return err({ kind: "unknown-target", accountId: to });
 
-  const pending = await db
-    .select()
-    .from(accountIdentities)
-    .where(eq(accountIdentities.accountId, from));
-  const moved = pending.length;
-  if (moved > 0) {
+  const moved = (
     await db
       .update(accountIdentities)
       .set({ accountId: to })
-      .where(eq(accountIdentities.accountId, from));
-  }
+      .where(eq(accountIdentities.accountId, from))
+      .returning({ subject: accountIdentities.subject })
+  ).length;
 
   const deleted = await deleteAccount(db, platform, from);
   if (deleted.isErr()) return err({ kind: "delete-failed", cause: deleted.error });
@@ -99,7 +96,8 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  const config = parseRelinkIdentityEnv(process.env).match(
+  // db-token と同じ 2 系統（組織トークン + コントロールプレーン DB）。TTL は使わない
+  const config = parseDbTokenEnv(process.env).match(
     (c) => c,
     (message): never => {
       console.error(`zakki relink-identity: ${message}`);

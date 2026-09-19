@@ -2,7 +2,7 @@
  * クライアント DB の起動シーケンス（issue #43 の合成点）。
  *
  * sodium ready → RxDB（本番は Dexie storage）→ unlock（封筒 → passkey PRF、
- * 失敗時はパスフレーズ → DEK, #104）→ 封筒の自己修復（#120）→ replication 開始、
+ * 失敗時はパスフレーズ → DEK, #104）→ replication 開始、
  * の順で組み立てる。パスキーは複数登録できる（封筒はクレデンシャルごと, #120）。DEK は
  * FieldCrypto と passkey 登録クロージャのみが保持し、永続ストレージ
  * （localStorage / sessionStorage / IndexedDB 等）へは書かない。
@@ -26,14 +26,12 @@ import type {
 import { startReplication } from "@zakki/web/client/db/replication.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import type { CryptoEnvelope } from "@zakki/web/shared/api-schemas.ts";
-import type { CredentialsApi, PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
+import type { CredentialsApi } from "@zakki/web/client/db/passkey.ts";
 import {
   browserCredentials,
   createPasskeyCredential,
-  healPasskeyEnvelope,
   revokePasskeyEnvelope,
   savePasskeyEnvelope,
-  unlockWithEvaluatedPrf,
   unlockWithPasskey,
 } from "@zakki/web/client/db/passkey.ts";
 import { fetchEnvelopes, unlockWithPrompt } from "@zakki/web/client/db/unlock.ts";
@@ -90,13 +88,6 @@ export interface BootstrapOptions {
   promptFn?: (attempt: number) => Promise<string | null>;
   /** WebAuthn adapter。既定は {@link browserCredentials}（未対応環境では null） */
   credentialsApi?: CredentialsApi | null;
-  /**
-   * 評価済みの PRF 出力（credentialId 付き）。渡すと生体認証を求めずに、その
-   * credentialId に対応する passkey 封筒を開く。ログイン（OIDC, docs/MULTIUSER.md「ログイン（OIDC）」）
-   * とは切り離されており、control-plane.ts からはもう渡らない。credentialId を伴うのは、
-   * 封筒がクレデンシャルごとにあるため（#120）。
-   */
-  prf?: PrfEvaluation | null;
   replicationOptions?: Pick<StartReplicationOptions, "live" | "resyncIntervalMs" | "retryTime">;
 }
 
@@ -128,30 +119,17 @@ export async function bootstrapClientDb(options: BootstrapOptions = {}): Promise
       return null;
     }),
   ]);
-  // 0) ログイン時の get で PRF を既に評価しているなら、それで開く（#105。生体認証は 1 回で済む）
-  // → 1) passkey 封筒があれば PRF で無言アンロック（#104） → 2) 失敗・キャンセル・未対応なら
-  // 従来のパスフレーズプロンプト。順序はユーザ操作の軽い順（追加操作なし → 生体認証 → 入力）。
+  // 1) passkey 封筒があれば PRF で無言アンロック（#104） → 2) 失敗・キャンセル・未対応なら
+  // 従来のパスフレーズプロンプト。順序はユーザ操作の軽い順（生体認証 → 入力）。
   const credentialsApi =
     options.credentialsApi === undefined ? browserCredentials() : options.credentialsApi;
   // 封筒 0 件は「暗号 OFF」なので、アンロックを試みない（尋ねる相手がいない）
   const dek =
     envelopes === null || envelopes.length === 0
       ? null
-      : (unlockWithEvaluatedPrf(envelopes, options.prf) ??
-        (await unlockWithPasskey(envelopes, credentialsApi)) ??
+      : ((await unlockWithPasskey(envelopes, credentialsApi)) ??
         (await unlockWithPrompt(envelopes, options.promptFn ?? defaultPrompt)));
-  // 自己修復（#120）: DEK が手に入ったのに「いま使っているパスキーの封筒」が無ければ、
-  // その場で作る。#115 で追加したパスキーの封筒を作り損ねた・登録の 2 段目だけ失敗した、
-  // といった取りこぼしが次回ログインで自動的に埋まる（PRF は評価済みなので追加操作なし）。
-  // 起動を止めないよう、失敗は healPasskeyEnvelope 側で警告に畳む。
-  const healed =
-    dek === null || envelopes === null
-      ? false
-      : await healPasskeyEnvelope(dek, options.prf, envelopes, { fetchFn: options.fetchFn });
-  // 修復した封筒は UI の状態（enrolled / credentialIds）にも反映したいので取り直す。
-  // 走るのは取りこぼしがあった起動だけで、失敗しても元の一覧のまま続行する。
-  const current = healed ? await fetchEnvelopes(options.fetchFn).catch(() => envelopes) : envelopes;
-  return composeClientDb(db, current, credentialsApi, options, dek);
+  return composeClientDb(db, envelopes, credentialsApi, options, dek);
 }
 
 /**

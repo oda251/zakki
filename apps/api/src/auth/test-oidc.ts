@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { FetchLike } from "@zakki/api/auth/providers/oidc.ts";
 
 /**
  * テスト用の fake OIDC プロバイダ（テスト専用。本番コードから import しない）。
@@ -25,9 +26,6 @@ export interface IssueCodeParams {
   readonly subject: string;
   readonly email?: string;
 }
-
-/** fetch の呼び出し面（Bun の `typeof fetch` は preconnect 等を含むので自前で絞る） */
-export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface FakeIdp {
   readonly issuer: string;

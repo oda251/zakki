@@ -108,7 +108,7 @@ sequenceDiagram
 | `GET /auth/oidc/:provider/callback` | code 交換 → アカウント解決 → SPA へ handoff code 付きで 302             |
 | `POST /auth/login/exchange`         | handoff code（単回・60 秒）をセッション JWT に換える                    |
 
-- **プロバイダは差し替え可能**。ルートは `IdentityProvider` ポート（`apps/api/src/auth/providers/types.ts`）だけを知り、Google は汎用 OIDC アダプタ（`providers/oidc.ts`, oauth4webapi）に issuer と client を渡したもの。別の OIDC プロバイダは合成点（`apps/api/src/index.ts`）で足すだけで、OIDC でない OAuth2（GitHub 等）はポートを実装するアダプタを書く。
+- **プロバイダは差し替え可能**。ルートは `IdentityProvider` ポート（`apps/api/src/auth/providers/types.ts`）だけを知り、Google は汎用 OIDC アダプタ（`providers/oidc.ts`, oauth4webapi）に issuer と client を渡したもの。別の OIDC プロバイダは合成点（`apps/api/src/index.ts`）で足し、client ID / secret を env（`apps/api/src/env.ts`）に加えるだけで、OIDC でない OAuth2（GitHub 等）はポートを実装するアダプタを書く。
 - **アカウントは `(provider, sub)` で同定する**（`account_identities`）。メールは変わりうるので同定に使わず、別プロバイダの同じメールも自動では結ばない。
 - **セッション JWT を URL に載せない**。コールバックは使い捨ての handoff code だけを fragment（サーバへ送られない）に載せ、SPA は読んだ直後に `history.replaceState` で消してから POST で交換する。
 - state・PKCE verifier・nonce は Workers がリクエスト間で状態を持てないので DB（`oidc_states`, TTL 10 分）に置く。

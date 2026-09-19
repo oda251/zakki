@@ -238,32 +238,6 @@ function passkeyEnvelopes(envelopes: readonly CryptoEnvelope[]): PasskeyCryptoEn
 }
 
 /**
- * **評価済みの** PRF で passkey 封筒を開く。
- *
- * 呼び出し元が別の理由（コントロールプレーンへのログインとは切り離した, #105 /
- * docs/MULTIUSER.md「ログイン（OIDC）」）で既に assertion と PRF 出力を 1 回の `get()` で得ている
- * なら、その結果をここへ渡せば **生体認証をもう一度求めずに**アンロックできる。開けるのは
- * 「その評価に使ったクレデンシャルの封筒」だけ（PRF 出力はクレデンシャル固有なので、
- * 他のパスキーの封筒はそもそも開かない, #120）。該当封筒が無い・評価結果が無い・
- * 開けない場合は null で、呼び出し側は従来の経路へ落ちる。
- */
-export function unlockWithEvaluatedPrf(
-  envelopes: readonly CryptoEnvelope[],
-  prf: PrfEvaluation | null | undefined,
-): Uint8Array | null {
-  if (prf === null || prf === undefined) return null;
-  const envelope = passkeyEnvelopes(envelopes).find((e) => e.credentialId === prf.credentialId);
-  if (envelope === undefined) return null;
-  try {
-    return openPasskeyEnvelope(envelope, prf.prfOutput);
-  } catch {
-    // 封筒の改竄・別 rpId での再登録等で AEAD 認証に失敗。秘密は出さない
-    console.warn("zakki-passkey: ログイン時の PRF 出力では封筒を開けませんでした");
-    return null;
-  }
-}
-
-/**
  * passkey 封筒があれば PRF 評価 → unwrap して DEK を返す（無言アンロック）。
  *
  * 封筒が複数ある（パスキーを複数登録した, issue #120）場合は **全部の credentialId を
@@ -325,7 +299,7 @@ export async function savePasskeyEnvelope(
   await postPasskeyEnvelope(dek, await evaluatePrf(api, [credentialId]), options);
 }
 
-/** 評価済みの PRF で DEK を wrap して保存する（登録・自己修復の共通部）。 */
+/** 評価済みの PRF で DEK を wrap して保存する */
 async function postPasskeyEnvelope(
   dek: Uint8Array,
   prf: PrfEvaluation,
@@ -343,37 +317,6 @@ async function postPasskeyEnvelope(
     },
     options.fetchFn,
   );
-}
-
-/**
- * **自己修復**（issue #120）: いま使っているクレデンシャルの封筒が無ければ、その場で作る。
- *
- * ログインの `get()` で PRF を評価済み（#105）なのに、その credentialId の封筒が無い
- * ＝「パスキーは使えるが記録は読めない」状態。原因は登録の 2 段目（封筒 POST）だけが
- * 失敗した取りこぼしや、#115 で追加したパスキーに封筒を作り損ねた場合。DEK が他の手段
- * （パスフレーズ等）で得られた直後なら、**生体認証を追加で求めずに** 封筒を埋められる。
- *
- * 起動を止めないため、保存の失敗は警告に畳んで false を返す（次回また試みる）。
- *
- * @returns 封筒を新しく作ったら true
- */
-export async function healPasskeyEnvelope(
-  dek: Uint8Array,
-  prf: PrfEvaluation | null | undefined,
-  envelopes: readonly CryptoEnvelope[],
-  options: { fetchFn?: FetchLike } = {},
-): Promise<boolean> {
-  if (prf === null || prf === undefined) return false;
-  if (passkeyEnvelopes(envelopes).some((e) => e.credentialId === prf.credentialId)) return false;
-  try {
-    await postPasskeyEnvelope(dek, prf, options);
-    return true;
-  } catch (err: unknown) {
-    console.warn(
-      `zakki-passkey: 封筒の自己修復に失敗しました（次回再試行）: ${err instanceof Error ? err.name : "unknown"}`,
-    );
-    return false;
-  }
 }
 
 /**

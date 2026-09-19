@@ -11,10 +11,8 @@ import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { makeFieldCrypto, plaintextFieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { chunkPush } from "@zakki/web/client/db/modifiers.ts";
-import type { CredentialsApi, PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
-import { createPasskeyCredential, evaluatePrf } from "@zakki/web/client/db/passkey.ts";
+import type { CredentialsApi } from "@zakki/web/client/db/passkey.ts";
 import { fakeAuthenticator } from "@zakki/web/client/db/test-passkey.ts";
-import { fetchEnvelopes } from "@zakki/web/client/db/unlock.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 
@@ -45,7 +43,6 @@ afterEach(async () => {
 async function boot(
   promptFn: (attempt: number) => Promise<string | null>,
   credentialsApi: CredentialsApi | null = null,
-  prf: PrfEvaluation | null = null,
 ): Promise<ClientDb> {
   nameSeq += 1;
   const handle = await bootstrapClientDb({
@@ -55,7 +52,6 @@ async function boot(
     promptFn,
     // 既定（browserCredentials）は jsdom 無しの bun では常に null。明示注入で分岐を固定する
     credentialsApi,
-    prf,
     replicationOptions: { live: false },
   });
   handles.push(handle);
@@ -427,43 +423,5 @@ describe("bootstrapClientDb + 複数パスキー (#120)", () => {
     }, phone);
     expect(lostAsked).toBe(1);
     expect(lost.replication).not.toBeNull();
-  });
-
-  test("M3: 自己修復 — パスフレーズで開いた直後、現在のクレデンシャルの封筒が無ければ作る", async () => {
-    const dek = generateDek();
-    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
-    const api = fakeAuthenticator();
-    // 登録の 2 段目（封筒 POST）を取りこぼした状態＝クレデンシャルはあるが封筒が無い
-    const credentialId = await createPasskeyCredential(api);
-    const prf = await evaluatePrf(api, [credentialId]);
-    expect((await fetchEnvelopes(fetchFn)).some((e) => e.kind === "passkey")).toBe(false);
-
-    // ログインで PRF は評価済み（#105）→ 封筒は開けないのでパスフレーズで開く → その場で修復
-    const healed = await boot(() => Promise.resolve(PASSPHRASE), api, prf);
-    expect(healed.replication).not.toBeNull();
-    expect(healed.passkey.enrolled).toBe(true);
-    expect(healed.passkey.credentialIds).toEqual([credentialId]);
-    await close(healed);
-
-    // 次の起動はパスフレーズ無しで開く（取りこぼしが埋まっている）
-    let asked = 0;
-    const next = await boot(() => {
-      asked += 1;
-      return Promise.resolve(PASSPHRASE);
-    }, api);
-    expect(asked).toBe(0);
-    expect(next.replication).not.toBeNull();
-  });
-
-  test("M4: 封筒が既にあれば自己修復は走らない（封筒は増えない）", async () => {
-    const dek = generateDek();
-    await addPassphraseEnvelope(serverDb, dek, PASSPHRASE);
-    const api = fakeAuthenticator();
-    const credentialId = await enrollVia(api);
-    const prf = await evaluatePrf(api, [credentialId]);
-
-    const handle = await boot(() => Promise.resolve(PASSPHRASE), api, prf);
-    expect(handle.passkey.credentialIds).toEqual([credentialId]);
-    expect((await fetchEnvelopes(fetchFn)).filter((e) => e.kind === "passkey")).toHaveLength(1);
   });
 });

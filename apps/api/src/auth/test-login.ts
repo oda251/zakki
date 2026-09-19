@@ -1,4 +1,3 @@
-import { expect } from "bun:test";
 import { createOidcProvider } from "@zakki/api/auth/providers/oidc.ts";
 import type { IdentityProvider } from "@zakki/api/auth/providers/types.ts";
 import {
@@ -18,6 +17,13 @@ import {
 export const TEST_API_ORIGIN = "https://control.test";
 /** テストでの SPA の origin（CORS とログイン後の戻り先） */
 export const TEST_APP_ORIGIN = "https://zakki.test";
+
+/** 想定外のステータスなら失敗させる（apps/api/src は bun:test を import できないため自前で投げる） */
+function assertStatus(response: Response, expected: number, label: string): void {
+  if (response.status !== expected) {
+    throw new Error(`${label}: status ${response.status}（期待 ${expected}）`);
+  }
+}
 
 /** fetch ハンドラだけを持つもの（Hono app を想定） */
 export interface FetchHandler {
@@ -47,7 +53,7 @@ export interface StartedLogin {
 /** `GET /auth/oidc/:provider/start` を叩き、認可 URL から state / nonce / challenge を読む */
 export async function startLogin(app: FetchHandler, provider = "google"): Promise<StartedLogin> {
   const response = await app.fetch(new Request(`${TEST_API_ORIGIN}/auth/oidc/${provider}/start`));
-  expect(response.status).toBe(302);
+  assertStatus(response, 302, "start");
   const location = new URL(response.headers.get("location") ?? "");
   return {
     response,
@@ -122,9 +128,9 @@ export async function loginWithIdp(
 ): Promise<TestSession> {
   const started = await startLogin(app);
   const cb = await callback(app, idp, started, identity);
-  expect(cb.status).toBe(302);
+  assertStatus(cb, 302, "callback");
   const res = await exchange(app, handoffCodeOf(cb));
-  expect(res.status).toBe(200);
+  assertStatus(res, 200, "exchange");
   const body: unknown = await res.json();
   if (!isTestSession(body)) throw new Error(`セッションの形ではない: ${JSON.stringify(body)}`);
   return body;

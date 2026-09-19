@@ -30,7 +30,7 @@ void Promise.all([
 ])
   .then(async ([m, remote]) => {
     if (remote?.status === "signed-out") {
-      useAuthStore.getState().setSignedOut(remote.providers, remote.error);
+      useAuthStore.getState().setSignedOut(remote);
     }
     const { db, passkey } = await m.bootstrapClientDb(
       remote?.status === "signed-in"

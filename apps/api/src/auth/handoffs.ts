@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { generateRandomState } from "oauth4webapi";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import { loginHandoffs } from "@zakki/api/db/schema.ts";
 
@@ -16,21 +17,13 @@ import { loginHandoffs } from "@zakki/api/db/schema.ts";
 /** コードの寿命。SPA が fragment を読んで即座に交換するだけなので短くてよい */
 export const LOGIN_HANDOFF_TTL_MS = 60 * 1000;
 
-/** コードのバイト長。32 バイト = 256bit あれば推測されない */
-const CODE_BYTES = 32;
-
-function base64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
-
 /** handoff コードを発行する（callback が呼ぶ。単回使用は consume 側の DELETE で保証） */
 export async function issueLoginHandoff(
   db: ControlDb,
   params: { accountId: string; now: number },
 ): Promise<string> {
-  const code = base64Url(crypto.getRandomValues(new Uint8Array(CODE_BYTES)));
+  // OIDC の state と同じ生成器（32 バイトの乱数を base64url）。推測されない強さは同じでよい
+  const code = generateRandomState();
   await db.insert(loginHandoffs).values({
     code,
     accountId: params.accountId,

@@ -3,8 +3,8 @@ import { useAuthStore } from "@zakki/web/client/store/auth.ts";
 /**
  * OIDC ログイン導線（docs/MULTIUSER.md「ログイン（OIDC）」）。未ログイン（多人数構成で
  * `resolveRemoteSession` が signed-out を返した）ときだけ、プロバイダごとの
- * ログインボタンを出す。signed-in・単一ユーザ構成では {@link useAuthStore} の
- * 既定値（`{ kind: "hidden" }`）のままなので何も描画しない。
+ * ログインボタンを出す。signed-in・単一ユーザ構成では {@link useAuthStore} が
+ * null のままなので何も描画しない。
  *
  * 押すと `window.location.assign` で開始 URL（`${base}/auth/oidc/:id/start`）へ
  * 遷移するだけ。同意後のコールバック・handoff 交換は control-plane.ts /
@@ -26,13 +26,13 @@ function describeError(reason: string): string {
 }
 
 export function LoginButton() {
-  const ui = useAuthStore((s) => s.ui);
+  const signedOut = useAuthStore((s) => s.signedOut);
 
-  if (ui.kind !== "signed-out") return null;
+  if (signedOut === null) return null;
 
   return (
     <div className="sidebar__footer">
-      {ui.providers.map((provider) => (
+      {signedOut.providers.map((provider) => (
         <button
           key={provider.id}
           type="button"
@@ -42,7 +42,9 @@ export function LoginButton() {
           {provider.name} でログイン
         </button>
       ))}
-      {ui.error !== null && <div className="empty-note">{describeError(ui.error)}</div>}
+      {signedOut.error !== null && (
+        <div className="empty-note">{describeError(signedOut.error)}</div>
+      )}
     </div>
   );
 }

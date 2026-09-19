@@ -219,6 +219,14 @@ async function listProviders(
  * `fetchFn` をそのまま `bootstrapClientDb` に渡すと、封筒取得・replication が
  * 「自分の DB」へ向く（中継の宛先はサーバが解決する）。
  */
+/** 未ログイン。ログインボタン（store/auth.ts）はこの形をそのまま持つ */
+export interface SignedOutSession {
+  readonly status: "signed-out";
+  readonly providers: readonly RemoteProviderOption[];
+  /** fragment のエラー理由、交換失敗なら `"exchange"`、それ以外は null */
+  readonly error: string | null;
+}
+
 export type RemoteSession =
   | {
       readonly status: "signed-in";
@@ -226,12 +234,7 @@ export type RemoteSession =
       readonly fetchFn: FetchLike;
       readonly client: ControlPlaneClient;
     }
-  | {
-      readonly status: "signed-out";
-      readonly providers: readonly RemoteProviderOption[];
-      /** fragment のエラー理由、交換失敗なら `"exchange"`、それ以外は null */
-      readonly error: string | null;
-    };
+  | SignedOutSession;
 
 /**
  * 起動時の構成選択（issue #105）。**設定ベース**で、判断材料は中継サーバが返す

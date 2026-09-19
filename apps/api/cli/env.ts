@@ -95,32 +95,9 @@ const DbTokenEnvSchema = v.pipe(
   })),
 );
 
-/**
- * 既存アカウント付け替え（`just relink-identity`, docs/MULTIUSER.md「ログイン（OIDC）」）の入力。
- *
- * {@link DbTokenEnvSchema} と同じ 2 系統（組織トークン + コントロールプレーン DB）が
- * 要る。こちらはトークン発行ではなく from の Turso DB を削除するため
- * （`deleteAccount`, apps/api/src/turso/provision.ts）、TTL の概念は無い。
- */
-const RelinkIdentityEnvSchema = v.pipe(
-  v.object({
-    TURSO_API_TOKEN: required,
-    TURSO_ORG: required,
-    CONTROL_DB_URL: required,
-    CONTROL_DB_TOKEN: required,
-  }),
-  v.transform((env) => ({
-    apiToken: env.TURSO_API_TOKEN,
-    organization: env.TURSO_ORG,
-    controlDbUrl: env.CONTROL_DB_URL,
-    controlDbToken: env.CONTROL_DB_TOKEN,
-  })),
-);
-
 export type ProvisionConfig = v.InferOutput<typeof ProvisionEnvSchema>;
 export type MigrateConfig = v.InferOutput<typeof MigrateEnvSchema>;
 export type DbTokenConfig = v.InferOutput<typeof DbTokenEnvSchema>;
-export type RelinkIdentityConfig = v.InferOutput<typeof RelinkIdentityEnvSchema>;
 
 /** 検証エラーをどの変数が不正か分かる 1 行にまとめる */
 function describe(issues: readonly v.BaseIssue<unknown>[]): string {
@@ -142,12 +119,5 @@ export function parseMigrateEnv(env: Record<string, unknown>): Result<MigrateCon
 
 export function parseDbTokenEnv(env: Record<string, unknown>): Result<DbTokenConfig, string> {
   const result = v.safeParse(DbTokenEnvSchema, env);
-  return result.success ? ok(result.output) : err(describe(result.issues));
-}
-
-export function parseRelinkIdentityEnv(
-  env: Record<string, unknown>,
-): Result<RelinkIdentityConfig, string> {
-  const result = v.safeParse(RelinkIdentityEnvSchema, env);
   return result.success ? ok(result.output) : err(describe(result.issues));
 }
