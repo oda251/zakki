@@ -80,9 +80,9 @@ export function Composer({
   const [draft, setDraftState] = useState("");
   const draftRef = useRef("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  // 履歴（確定チャンク）の表示範囲。既定は最新 1 件だけ（チャット風）。上へスクロール
+  // 履歴（確定チャンク）の表示範囲。既定は最新 2 件だけ（チャット風）。上へスクロール
   // （ホイール・下向きスワイプ）すると全件を出し、欄の高さはウィンドウの高さまで伸びる。
-  // 入力を始めたら最新 1 件に戻す
+  // 入力を始めたら最新 2 件に戻す
   const [expanded, setExpanded] = useState(false);
   const touchY = useRef<number | null>(null);
   const expandHistory = useCallback(() => {
@@ -247,15 +247,15 @@ export function Composer({
     [display.liveRaw, conversionVersion, conversion],
   );
 
-  // 既定は最新 1 件だけ。履歴欄は column-reverse（スクロールの起点が下端＝最新）なので
+  // 既定は最新 2 件だけ。履歴欄は column-reverse（スクロールの起点が下端＝最新）なので
   // 新しい順に並べて渡す。展開した瞬間も最新が見えたまま、上へ遡っていける
-  const visible = (expanded ? frozen : frozen.slice(-1)).toReversed();
+  const visible = (expanded ? frozen : frozen.slice(-2)).toReversed();
 
   const editingStart =
     editing !== null && editing.target.kind === "main" ? editing.target.start : null;
 
   return (
-    // チャット風: 確定チャンクは吹き出し（最新 1 件、遡ると全件）、その下に入力欄
+    // チャット風: 確定チャンクは吹き出し（最新 2 件、遡ると全件）、その下に入力欄
     <div className="composer">
       <div
         className={expanded ? "composer__history composer__history--expanded" : "composer__history"}

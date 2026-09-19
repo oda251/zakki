@@ -228,15 +228,15 @@ body,
 
 /* ---- Composer.Web（docs/COMPOSER.md） ---- */
 
-/* チャット風（LINE 等）: 外枠は持たず、確定チャンクは右寄せの吹き出し、下に入力欄 */
+/* チャット風（LINE 等）: 外枠は持たず、確定チャンクは左寄せの吹き出し、下に入力欄 */
 .composer {
   @apply flex flex-col gap-2;
 }
 
-/* 履歴。既定は最新 1 件だけ描くので高さは中身なり。展開時はウィンドウの高さまで伸びてスクロール */
+/* 履歴。既定は最新 2 件だけ描くので高さは中身なり。展開時はウィンドウの高さまで伸びてスクロール */
 /* column-reverse: スクロールの起点を下端（最新）にする。子は新しい順に並べる（Composer.tsx） */
 .composer__history {
-  @apply flex flex-col-reverse items-end gap-1.5;
+  @apply flex flex-col-reverse items-start gap-1.5;
 }
 .composer__history--expanded {
   max-height: calc(100vh - 8rem);
@@ -250,7 +250,7 @@ body,
   max-width: 85%;
   padding: 0.4rem 0.75rem;
   padding-right: 1.5rem;
-  border-radius: 1rem 1rem 0.25rem 1rem;
+  border-radius: 1rem 1rem 1rem 0.25rem;
   background: var(--accent);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
