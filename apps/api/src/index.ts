@@ -37,7 +37,7 @@ function composeApp(env: Record<string, unknown>): ReturnType<typeof createApp> 
       appOrigin: config.appOrigin,
       sessionSecret: config.sessionSecret,
     },
-    // Google が最初のプロバイダ（docs/tmp/oidc-google-login.md）。汎用 OIDC アダプタ
+    // Google が最初のプロバイダ（docs/MULTIUSER.md「ログイン（OIDC）」）。汎用 OIDC アダプタ
     // （auth/providers/oidc.ts）に issuer と client を渡すだけで合成できる
     providers: [
       createOidcProvider({

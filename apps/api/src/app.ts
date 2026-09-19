@@ -39,7 +39,7 @@ export function createApp(deps: AppDeps): Hono<ApiEnv> {
   // 死活監視のみ（DB ping なしの静的 200）
   app.get("/healthz", (c) => c.json({ ok: true }));
 
-  // OIDC ログイン（docs/tmp/oidc-google-login.md）
+  // OIDC ログイン（docs/MULTIUSER.md「ログイン（OIDC）」）
   app.route("/auth", authRoutes(deps));
 
   // ユーザごと DB のプロビジョニング（issue #101、要セッション）

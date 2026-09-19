@@ -24,7 +24,7 @@ import { parseBody } from "@zakki/api/parse.ts";
 
 /**
  * OIDC（Authorization Code + PKCE）によるログインとセッション発行
- * （docs/tmp/oidc-google-login.md）、および全端末ログアウト（issue #117）。
+ * （docs/MULTIUSER.md「ログイン（OIDC）」）、および全端末ログアウト（issue #117）。
  *
  * ルートはプロバイダの詳細を知らない。知っているのは {@link IdentityProvider} という
  * ポートだけで、Google かどうか・OIDC か素の OAuth2 かはアダプタ側

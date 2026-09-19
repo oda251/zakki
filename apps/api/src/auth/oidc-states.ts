@@ -3,7 +3,7 @@ import type { ControlDb } from "@zakki/api/db/client.ts";
 import { oidcStates } from "@zakki/api/db/schema.ts";
 
 /**
- * OIDC の state / PKCE verifier / nonce の発行と消費（docs/tmp/oidc-google-login.md）。
+ * OIDC の state / PKCE verifier / nonce の発行と消費（docs/MULTIUSER.md「ログイン（OIDC）」）。
  *
  * Workers はステートレスなので `/auth/oidc/:provider/start` → `/callback` の間の
  * state・PKCE verifier・nonce をメモリに置けない。コントロールプレーン DB の

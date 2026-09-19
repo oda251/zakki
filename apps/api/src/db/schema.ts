@@ -29,7 +29,7 @@ export const accounts = sqliteTable("accounts", {
 });
 
 /**
- * アカウントと外部 ID プロバイダ（OIDC）の結び付け（docs/tmp/oidc-google-login.md）。
+ * アカウントと外部 ID プロバイダ（OIDC）の結び付け（docs/MULTIUSER.md「ログイン（OIDC）」）。
  *
  * 同定は **`(provider, subject)`** で行う。メールは同定に使わない
  * （`subject` はプロバイダ内で不変な ID だが、メールは変わりうる上に
@@ -59,7 +59,7 @@ export const accountIdentities = sqliteTable(
 );
 
 /**
- * OIDC の state / PKCE verifier / nonce の短命ストア（docs/tmp/oidc-google-login.md）。
+ * OIDC の state / PKCE verifier / nonce の短命ストア（docs/MULTIUSER.md「ログイン（OIDC）」）。
  *
  * Workers はリクエスト間で状態を持てない（isolate はいつでも捨てられる）ため、
  * `/auth/oidc/:provider/start` で発行した state・PKCE verifier・nonce を
@@ -88,7 +88,7 @@ export const oidcStates = sqliteTable(
 );
 
 /**
- * ログイン handoff の使い捨てコード（docs/tmp/oidc-google-login.md）。
+ * ログイン handoff の使い捨てコード（docs/MULTIUSER.md「ログイン（OIDC）」）。
  *
  * OIDC の callback はブラウザへの 302 リダイレクトで終わるため、この時点で
  * セッション JWT をそのまま URL に載せると履歴・Referer・アクセスログに残る

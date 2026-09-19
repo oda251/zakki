@@ -114,12 +114,11 @@ export function cryptoRoutes(deps: AppDeps): Hono {
     return c.json({ ok: true });
   });
 
-  // passkey 封筒の失効（issue #120）。パスキー自体（公開鍵）はコントロールプレーン DB に
-  // あり、ここでは触れない: 失効は「クレデンシャル（apps/api の DELETE /auth/credentials/:id,
-  // #115）」と「封筒（この経路）」の **2 つの DB に跨る** ため、両方を消すのはクライアントの
-  // 責務になる。片方だけ成功しても致命的ではない（クレデンシャルを失効させれば PRF を
-  // 評価できないので、残った封筒を開く経路が無い）。
-  // 存在しない credentialId でも 200（冪等。2 段階削除の再実行を失敗させない）。
+  // passkey 封筒の失効（issue #120）。ログインが OIDC に替わり
+  // （docs/MULTIUSER.md「ログイン（OIDC）」）コントロールプレーンはこの WebAuthn クレデンシャルを
+  // 管理しなくなったため、失効は**この封筒を消すだけ**でよい（クレデンシャル自体は
+  // 認証器の中に残るが、対応する封筒が無ければ DEK を開けないので実質失効する）。
+  // 存在しない credentialId でも 200（冪等。再実行を失敗させない）。
   app.delete("/envelopes/passkey/:credentialId", async (c) => {
     const credentialId = c.req.param("credentialId");
     if (credentialId === "") return c.json({ error: "invalid credentialId" }, 400);

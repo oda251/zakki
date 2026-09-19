@@ -44,7 +44,7 @@ const EnvSchema = v.pipe(
     tursoOrg: env.TURSO_ORG,
     /** ユーザ DB を作る Turso group */
     tursoGroup: env.TURSO_GROUP,
-    /** SPA の origin（CORS の許可元・ログイン後の戻り先。docs/tmp/oidc-google-login.md） */
+    /** SPA の origin（CORS の許可元・ログイン後の戻り先。docs/MULTIUSER.md「ログイン（OIDC）」） */
     appOrigin: env.APP_ORIGIN,
     /** コントロールプレーン自身の origin（OIDC redirect_uri の組み立てに使う） */
     apiOrigin: env.API_ORIGIN,

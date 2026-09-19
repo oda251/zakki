@@ -11,7 +11,7 @@ export interface AppDeps {
   db: ControlDb;
   auth: AuthConfig;
   /**
-   * ログインに使える外部 ID プロバイダ（docs/tmp/oidc-google-login.md）。
+   * ログインに使える外部 ID プロバイダ（docs/MULTIUSER.md「ログイン（OIDC）」）。
    * ルート（routes/auth.ts）はこの型だけを知り、Google かどうかを知らない。
    * `id` で `/auth/oidc/:provider/*` の provider パラメータと引き合わせる
    */
@@ -21,7 +21,7 @@ export interface AppDeps {
 }
 
 /**
- * OIDC ログインの設定（docs/tmp/oidc-google-login.md）。値は検証済み env（env.ts）から来る。
+ * OIDC ログインの設定（docs/MULTIUSER.md「ログイン（OIDC）」）。値は検証済み env（env.ts）から来る。
  *
  * ここに現れるのは SPA の origin とセッション署名鍵だけで、E2E の鍵材料
  * （DEK・PRF 出力・封筒）は一切含まない。

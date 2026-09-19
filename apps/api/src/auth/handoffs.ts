@@ -3,7 +3,7 @@ import type { ControlDb } from "@zakki/api/db/client.ts";
 import { loginHandoffs } from "@zakki/api/db/schema.ts";
 
 /**
- * ログイン handoff の使い捨てコード（docs/tmp/oidc-google-login.md）。
+ * ログイン handoff の使い捨てコード（docs/MULTIUSER.md「ログイン（OIDC）」）。
  *
  * OIDC の callback はブラウザへの 302 リダイレクトで終わるため、この時点で
  * セッション JWT をそのまま URL に載せると履歴・Referer・アクセスログに残る

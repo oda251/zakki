@@ -60,9 +60,10 @@ export interface PasskeyControls {
   /** 作成済み credential の PRF を評価して封筒を保存する（Safari では別クリックで呼び直せる） */
   saveEnvelope: ((credentialId: string) => Promise<void>) | null;
   /**
-   * そのパスキーの封筒を消す（#120）。**クレデンシャル本体はコントロールプレーン DB に
-   * あり、ここでは消えない**: 失効はクレデンシャル（`DELETE /auth/credentials/:id`, #115）
-   * → 封筒（これ）の 2 段階で、両方を呼ぶのは UI 側の責務。
+   * そのパスキーの封筒を消す（#120）。ログインが OIDC に替わり（docs/MULTIUSER.md「ログイン（OIDC）」）
+   * コントロールプレーンはこの WebAuthn クレデンシャルを管理しなくなったため、失効は
+   * **封筒を消すだけ**（クレデンシャル自体は認証器の中に残るが、対応する封筒が無ければ
+   * 開ける DEK が無いので実質失効する）。
    */
   revokeEnvelope: ((credentialId: string) => Promise<void>) | null;
   /**
@@ -90,9 +91,10 @@ export interface BootstrapOptions {
   /** WebAuthn adapter。既定は {@link browserCredentials}（未対応環境では null） */
   credentialsApi?: CredentialsApi | null;
   /**
-   * コントロールプレーンへのログイン時に **同じ get で** 得た PRF 評価結果（issue #105）。
-   * 渡すと生体認証を再度求めずに passkey 封筒を開く。単一ユーザ構成では未指定。
-   * credentialId を伴うのは、封筒がクレデンシャルごとにあるため（#120）。
+   * 評価済みの PRF 出力（credentialId 付き）。渡すと生体認証を求めずに、その
+   * credentialId に対応する passkey 封筒を開く。ログイン（OIDC, docs/MULTIUSER.md「ログイン（OIDC）」）
+   * とは切り離されており、control-plane.ts からはもう渡らない。credentialId を伴うのは、
+   * 封筒がクレデンシャルごとにあるため（#120）。
    */
   prf?: PrfEvaluation | null;
   replicationOptions?: Pick<StartReplicationOptions, "live" | "resyncIntervalMs" | "retryTime">;

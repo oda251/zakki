@@ -12,7 +12,7 @@ import { parseRelinkIdentityEnv } from "./env.ts";
 import { describeFailure } from "./provision.ts";
 
 /**
- * OIDC 移行の一度きりの運用 CLI（docs/tmp/oidc-google-login.md「既存アカウントの
+ * OIDC 移行の一度きりの運用 CLI（docs/MULTIUSER.md「ログイン（OIDC）」「既存アカウントの
  * 付け替え CLI」）。
  *   bun run relink-identity <fromAccountId> <toAccountId>
  *

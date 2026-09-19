@@ -181,8 +181,8 @@ export interface PrfEvaluation {
  * `credentials.get` の戻り値から PRF 評価結果（credential id + 32 バイト出力）を取り出す。
  *
  * 取り出しだけを切り出してあるのは、PRF 評価が **必ずしも専用の get** とは限らないため:
- * コントロールプレーンへのログイン（issue #105）は同じ 1 回の get で assertion と
- * PRF 出力の両方を受け取り、この関数で後者だけを読む。
+ * assertion（認証）と PRF 出力の両方を同じ 1 回の get で受け取る呼び出し元が
+ * この関数で後者だけを読む。
  *
  * @throws {PasskeyError} キャンセル・PRF 未対応・出力長が不正な場合
  */
@@ -238,11 +238,12 @@ function passkeyEnvelopes(envelopes: readonly CryptoEnvelope[]): PasskeyCryptoEn
 }
 
 /**
- * **評価済みの** PRF で passkey 封筒を開く（issue #105）。
+ * **評価済みの** PRF で passkey 封筒を開く。
  *
- * コントロールプレーンへのログインは assertion と PRF 出力を 1 回の `get()` で得るので、
- * その結果をここへ渡せば **生体認証をもう一度求めずに**アンロックできる。開けるのは
- * 「ログインに使ったクレデンシャルの封筒」だけ（PRF 出力はクレデンシャル固有なので、
+ * 呼び出し元が別の理由（コントロールプレーンへのログインとは切り離した, #105 /
+ * docs/MULTIUSER.md「ログイン（OIDC）」）で既に assertion と PRF 出力を 1 回の `get()` で得ている
+ * なら、その結果をここへ渡せば **生体認証をもう一度求めずに**アンロックできる。開けるのは
+ * 「その評価に使ったクレデンシャルの封筒」だけ（PRF 出力はクレデンシャル固有なので、
  * 他のパスキーの封筒はそもそも開かない, #120）。該当封筒が無い・評価結果が無い・
  * 開けない場合は null で、呼び出し側は従来の経路へ落ちる。
  */
@@ -376,13 +377,12 @@ export async function healPasskeyEnvelope(
 }
 
 /**
- * passkey 封筒を 1 本消す（失効の 2 段階目, issue #120）。
+ * passkey 封筒を 1 本消す（issue #120）。
  *
- * パスキーの失効は **2 つの DB に跨る**: クレデンシャル（公開鍵）はコントロールプレーン
- * DB（`DELETE /auth/credentials/:id`, #115）、封筒はユーザ自身のジャーナル DB。サーバは
- * 互いの DB を触らないので、両方消すのは **クライアントの責務**。順序はクレデンシャル →
- * 封筒（先に封筒だけ消えるとアンロック手段を失うため）。片方だけ成功しても致命的では
- * ないが、封筒が残るとバックアップに無意味な行が残るので掃除する。
+ * ログインが OIDC に替わり（docs/MULTIUSER.md「ログイン（OIDC）」）コントロールプレーンは
+ * この WebAuthn クレデンシャル（公開鍵）を管理しなくなったため、失効は**封筒を消す
+ * だけ**でよい: クレデンシャル自体は認証器の中に残るが、対応する封筒が無ければ
+ * DEK を開けないので実質失効する。
  */
 export async function revokePasskeyEnvelope(
   credentialId: string,

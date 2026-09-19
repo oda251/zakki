@@ -25,7 +25,7 @@
   //   CONTROL_DB_TOKEN     コントロールプレーン DB の認証トークン
   //   SESSION_SECRET       セッション署名鍵（api-2）
   //   TURSO_API_TOKEN      Turso Platform API トークン（api-3 のプロビジョニング）
-  //   GOOGLE_CLIENT_SECRET Google OAuth クライアントシークレット（docs/tmp/oidc-google-login.md）
+  //   GOOGLE_CLIENT_SECRET Google OAuth クライアントシークレット（docs/MULTIUSER.md「ログイン（OIDC）」）
   "env": {
     // 本番。スクリプト名は apps/web の Service Binding（CONTROL_PLANE）の宛先と一致させる。
     // **vars を空にしてある**のは意図的: APP_ORIGIN / API_ORIGIN はアカウント固有の

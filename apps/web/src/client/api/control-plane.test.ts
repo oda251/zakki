@@ -12,17 +12,13 @@ import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import type { ControlPlaneClient } from "@zakki/web/client/api/control-plane.ts";
 import {
   createControlPlaneClient,
+  readLoginFragment,
   resolveRemoteSession,
 } from "@zakki/web/client/api/control-plane.ts";
-import type {
-  TestAuthenticator,
-  TestControlPlane,
-} from "@zakki/web/client/api/test-control-plane.ts";
+import type { TestControlPlane } from "@zakki/web/client/api/test-control-plane.ts";
 import { createTestControlPlane } from "@zakki/web/client/api/test-control-plane.ts";
 import type { ClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
-import type { PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
-import { PRF_SALT } from "@zakki/web/client/db/passkey.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 import { createRemoteDbResolver } from "@zakki/web/server/identity/remote.ts";
@@ -30,10 +26,10 @@ import { createRemoteDbResolver } from "@zakki/web/server/identity/remote.ts";
 /**
  * issue #105: コントロールプレーン統合（RemoteIdentity）の受け入れ検証。
  *
- * 実物の apps/api（#100 の passkey 認証・#101 の DB プロビジョニング）と実物の
+ * 実物の apps/api（OIDC ログイン・#101 の DB プロビジョニング）と実物の
  * apps/web（replication 中継・封筒配布）を **プロセス内で繋いで** 通す。差し替えるのは
- * ローカルで再現できない 2 つだけ: Turso Platform API（#101 の fake）と認証器
- * （#100 の WebCrypto ソフトウェア認証器 + PRF）。メソッド単位の mock は使わない。
+ * ローカルで再現できない 2 つだけ: Turso Platform API（#101 の fake）と ID プロバイダ
+ * （fake OIDC プロバイダ）。メソッド単位の mock は使わない。
  *
  * ユーザごとの Turso DB もローカルには実体が無いので、中継サーバが DB を開く
  * アダプタ（`openUserDb`）にだけローカル libSQL を注入する——そこへ渡ってくる
@@ -106,22 +102,22 @@ afterEach(async () => {
   await cp.stop();
 });
 
-/** 会員登録 → ログインまでを通し、クライアントと認証器を返す */
-async function signUp(): Promise<{
-  client: ControlPlaneClient;
-  authenticator: TestAuthenticator;
-  credentialId: string;
-  prf: PrfEvaluation | null;
-}> {
-  const authenticator = await cp.authenticator();
-  const client = createControlPlaneClient({
-    baseUrl: cp.baseUrl,
-    credentials: authenticator,
-    fetchFn: routedFetch,
-  });
-  const { credentialId } = await client.register();
-  const { prf } = await client.login();
-  return { client, authenticator, credentialId, prf };
+let subjectSeq = 0;
+
+/** Google で同意して戻ってきた fragment から handoff code を取り出す */
+async function authorizeCode(subject: string): Promise<string> {
+  const fragment = readLoginFragment(await cp.authorize(subject));
+  if (fragment?.kind !== "code") throw new Error(`ログインできていない: ${JSON.stringify(fragment)}`);
+  return fragment.code;
+}
+
+/** 新しい利用者として初回ログインまでを通し、クライアントを返す */
+async function signUp(): Promise<{ client: ControlPlaneClient; subject: string }> {
+  subjectSeq += 1;
+  const subject = `sub-${subjectSeq}`;
+  const client = createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch });
+  await client.completeLogin(await authorizeCode(subject));
+  return { client, subject };
 }
 
 /** セッション JWT を載せた GET のリクエスト設定 */
@@ -153,8 +149,6 @@ function advanceRelayClock(seconds: number): void {
 /** リモート構成でクライアント DB を起動する（storage / prompt は注入） */
 async function boot(options: {
   client: ControlPlaneClient;
-  authenticator: TestAuthenticator;
-  prf?: PrfEvaluation | null;
   promptFn?: (attempt: number) => Promise<string | null>;
 }): Promise<ClientDb> {
   nameSeq += 1;
@@ -162,9 +156,9 @@ async function boot(options: {
     storage: testStorage(),
     dbName: `zakkiremote${nameSeq}`,
     fetchFn: options.client.authorizedFetch,
-    credentialsApi: options.authenticator,
+    // E2E のパスキーアンロックはログインと切り離した（この検証はパスフレーズで開く）
+    credentialsApi: null,
     promptFn: options.promptFn ?? (() => Promise.resolve(null)),
-    ...(options.prf === undefined ? {} : { prf: options.prf }),
     replicationOptions: { live: false },
   });
   handles.push(handle);
@@ -172,7 +166,7 @@ async function boot(options: {
 }
 
 describe("RemoteIdentity（コントロールプレーン統合）", () => {
-  test("R1: 登録 → ログイン → /me/db → 接続情報が RemoteIdentity に反映される", async () => {
+  test("R1: ログイン → /me/db → 接続情報が RemoteIdentity に反映される", async () => {
     const { client } = await signUp();
     const session = client.session();
     const identity = await client.identity();
@@ -186,51 +180,27 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     expect(identity.encKey).toBeUndefined();
   });
 
-  test("R2: ログインの WebAuthn get は 1 回で、assertion と PRF 出力を同時に得る", async () => {
-    const authenticator = await cp.authenticator();
-    let gets = 0;
-    const counted = {
-      ...authenticator,
-      get: async (options: CredentialRequestOptions) => {
-        gets += 1;
-        return authenticator.get(options);
-      },
-    };
-    const client = createControlPlaneClient({
-      baseUrl: cp.baseUrl,
-      credentials: counted,
-      fetchFn: routedFetch,
-    });
-    await client.register();
-    const { session, prf } = await client.login();
-
-    expect(gets).toBe(1);
-    expect(session.accountId).not.toBe("");
-    // 同じ get の clientExtensionResults から取り出した PRF 出力（32 バイト）と、
-    // それを **どのクレデンシャルで評価したか**（封筒はクレデンシャルごと, #120）
-    expect(prf).not.toBeNull();
-    expect([...(prf?.prfOutput ?? [])]).toEqual([...authenticator.prfFor(PRF_SALT)]);
-    expect(prf?.credentialId).not.toBe("");
+  test("R2: 同じ Google アカウントで入り直すと同じアカウント（同じ DB）に戻る", async () => {
+    const { client, subject } = await signUp();
+    const again = createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch });
+    const session = await again.completeLogin(await authorizeCode(subject));
+    expect(session.accountId).toBe(client.session()?.accountId ?? "");
+    expect((await again.identity()).tursoUrl).toBe((await client.identity()).tursoUrl ?? "");
   });
 
-  test("R3: PRF 出力・DEK はコントロールプレーンへの wire に現れない", async () => {
-    const { authenticator } = await signUp();
-    const prf = authenticator.prfFor(PRF_SALT);
-    const encodings = [
-      Buffer.from(prf).toString("base64"),
-      Buffer.from(prf).toString("base64url"),
-      Buffer.from(prf).toString("hex"),
-    ];
-    expect(cp.requests.length).toBeGreaterThan(0);
-    for (const { body } of cp.requests) {
-      for (const encoded of encodings) expect(body).not.toContain(encoded);
-      // 未署名の拡張結果はそもそも送らない（サーバも読まない）。**JSON のキーの形**で
-      // 探す: 裸の "prf" だと base64url の中身（credentialId・attestationObject は
-      // 毎回ランダム）にたまたま 3 文字が並ぶだけで落ちるフレークになる。
-      // 引用符は base64url に現れないので、これで検出したい形だけを見られる
-      expect(body).not.toContain('"clientExtensionResults"');
-      expect(body).not.toContain('"prf"');
+  test("R3: handoff code は一度しか使えない（URL に残った code を再利用できない）", async () => {
+    const code = await authorizeCode("sub-replay");
+    const first = createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch });
+    await first.completeLogin(code);
+    const second = createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch });
+    let rejected = false;
+    try {
+      await second.completeLogin(code);
+    } catch {
+      rejected = true;
     }
+    expect(rejected).toBe(true);
+    expect(second.session()).toBeNull();
   });
 
   test("R4: セッション JWT は永続ストレージへ書かれない", async () => {
@@ -250,11 +220,7 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
       await client.identity();
       expect(writes).toEqual([]);
       // 別インスタンス（＝リロード相当）は何も引き継がない
-      const fresh = createControlPlaneClient({
-        baseUrl: cp.baseUrl,
-        credentials: await cp.authenticator(),
-        fetchFn: routedFetch,
-      });
+      const fresh = createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch });
       expect(fresh.session()).toBeNull();
       // bun の rejects matcher は await できない型を返すため、明示的に捕まえて検証する
       let rejected = false;
@@ -434,20 +400,16 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
   });
 
   test("R6j: ログアウト後に再ログインすれば新しいセッションで中継が通る", async () => {
-    const { client, authenticator } = await signUp();
+    const { client, subject } = await signUp();
     expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
     const oldToken = client.session()?.token ?? "";
     expect((await logout(oldToken)).status).toBe(204);
     advanceRelayClock(61);
     expect((await client.authorizedFetch("/api/crypto/envelopes")).status).toBe(401);
 
-    // 同じパスキーで入り直す（新しい世代のトークンが出る）
-    const reloaded = createControlPlaneClient({
-      baseUrl: cp.baseUrl,
-      credentials: authenticator,
-      fetchFn: routedFetch,
-    });
-    await reloaded.login();
+    // 同じ Google アカウントで入り直す（新しい世代のトークンが出る）
+    const reloaded = createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch });
+    await reloaded.completeLogin(await authorizeCode(subject));
     expect(reloaded.session()?.token).not.toBe(oldToken);
     expect((await reloaded.authorizedFetch("/api/crypto/envelopes")).status).toBe(200);
     // 戻り先は同じユーザ DB（ログアウトはデータに触らない）
@@ -492,7 +454,7 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
   });
 
   test("R8: 自分の DB に対して E2E で読み書きでき、平文はどのサーバにも現れない", async () => {
-    const { client, authenticator } = await signUp();
+    const { client } = await signUp();
     // 中継先の DB を確定させてから、そこへ封筒を用意する（TUI / CLI でのプロビジョン相当）
     await client.authorizedFetch("/api/crypto/envelopes", { method: "GET" });
     const identity = await client.identity();
@@ -501,11 +463,7 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     const dek = generateDek();
     await addPassphraseEnvelope(userDb, dek, PASSPHRASE);
 
-    const handle = await boot({
-      client,
-      authenticator,
-      promptFn: () => Promise.resolve(PASSPHRASE),
-    });
+    const handle = await boot({ client, promptFn: () => Promise.resolve(PASSPHRASE) });
     expect(handle.replication).not.toBeNull();
     const plaintext = "スマホから書いた記録";
     await handle.db.chunks.insert({
@@ -528,48 +486,22 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
     // コントロールプレーンが受け取った本文にも平文は無い
     for (const { body } of cp.requests) expect(body).not.toContain(plaintext);
   });
+});
 
-  test("R9: ログインで得た PRF 出力だけで封筒が開く（追加の生体認証なし）", async () => {
-    const { client, authenticator, credentialId } = await signUp();
-    await client.authorizedFetch("/api/crypto/envelopes", { method: "GET" });
-    const identity = await client.identity();
-    const userDb = userDbs.get(identity.tursoUrl ?? "");
-    if (userDb === undefined) throw new Error("ユーザ DB が開かれているはず");
-    const dek = generateDek();
-    await addPassphraseEnvelope(userDb, dek, PASSPHRASE);
+describe("readLoginFragment", () => {
+  test("R13: #login=<code> は code", () => {
+    expect(readLoginFragment("#login=abc")).toEqual({ kind: "code", code: "abc" });
+  });
 
-    // パスフレーズで開いた状態から、同じパスキーの PRF で封筒を追加する（#104 の経路）
-    const first = await boot({
-      client,
-      authenticator,
-      promptFn: () => Promise.resolve(PASSPHRASE),
-    });
-    if (first.passkey.saveEnvelope === null) throw new Error("アンロック済みなら保存できるはず");
-    await first.passkey.saveEnvelope(credentialId);
+  test("R14: #login_error=<reason> はエラー理由", () => {
+    expect(readLoginFragment("#login_error=denied")).toEqual({ kind: "error", reason: "denied" });
+  });
 
-    // 再ログイン（get 1 回）→ その PRF 出力だけで無言アンロック。prompt は呼ばれない
-    let gets = 0;
-    const counted = {
-      ...authenticator,
-      get: async (options: CredentialRequestOptions) => {
-        gets += 1;
-        return authenticator.get(options);
-      },
-    };
-    const reloaded = createControlPlaneClient({
-      baseUrl: cp.baseUrl,
-      credentials: counted,
-      fetchFn: routedFetch,
-    });
-    const { prf } = await reloaded.login();
-    const second = await boot({
-      client: reloaded,
-      authenticator,
-      prf,
-      promptFn: () => Promise.reject(new Error("パスフレーズを聞いてはいけない")),
-    });
-    expect(second.replication).not.toBeNull();
-    expect(gets).toBe(1);
+  test("R15: ログインと無関係な fragment・空は null", () => {
+    expect(readLoginFragment("")).toBeNull();
+    expect(readLoginFragment("#")).toBeNull();
+    expect(readLoginFragment("#section-2")).toBeNull();
+    expect(readLoginFragment("#login=")).toBeNull();
   });
 });
 
@@ -578,7 +510,8 @@ describe("resolveRemoteSession（設定ベースの構成選択）", () => {
     const singleUser = createApp({ db: selfHostDb });
     const session = await resolveRemoteSession({
       fetchFn: async (input, init) => singleUser.request(input, init),
-      credentials: await cp.authenticator(),
+      hash: "",
+      clearHash: () => undefined,
     });
     expect(session).toBeNull();
 
@@ -587,31 +520,73 @@ describe("resolveRemoteSession（設定ベースの構成選択）", () => {
     expect(res.status).toBe(200);
   });
 
-  test("R11: URL があればログインして RemoteIdentity を返す", async () => {
-    const authenticator = await cp.authenticator();
-    // 先に会員登録を済ませておく（ログイン UI が未実装の段階の想定）
-    await createControlPlaneClient({
-      baseUrl: cp.baseUrl,
-      credentials: authenticator,
-      fetchFn: routedFetch,
-    }).register();
-
+  test("R11: fragment に handoff code があればセッションを得て RemoteIdentity を返し、fragment を消す", async () => {
+    const hash = await cp.authorize("sub-r11");
+    let cleared = 0;
     // /api/config は中継サーバから、それ以外（/auth/*・/me/db）はコントロールプレーンから
     const session = await resolveRemoteSession({
       fetchFn: routedFetch,
-      credentials: authenticator,
+      hash,
+      clearHash: () => {
+        cleared += 1;
+      },
     });
 
-    expect(session).not.toBeNull();
-    expect(session?.identity.tursoUrl).toMatch(/^libsql:\/\//);
-    expect(session?.prf).not.toBeNull();
+    expect(session?.status).toBe("signed-in");
+    if (session?.status !== "signed-in") throw new Error("ログイン済みのはず");
+    expect(session.identity.tursoUrl).toMatch(/^libsql:\/\//);
+    expect((await session.fetchFn("/api/crypto/envelopes")).status).toBe(200);
+    // code は単回使用で、URL（履歴）に残しておく意味が無い
+    expect(cleared).toBe(1);
   });
 
-  test("R12: ログインできない（未登録）ときは null に畳んでローカルのみで起動する", async () => {
+  test("R12: fragment が無ければ未ログイン。プロバイダ一覧と開始 URL を返す", async () => {
     const session = await resolveRemoteSession({
       fetchFn: routedFetch,
-      credentials: await cp.authenticator(),
+      hash: "",
+      clearHash: () => undefined,
     });
-    expect(session).toBeNull();
+    expect(session).toEqual({
+      status: "signed-out",
+      providers: [
+        { id: "google", name: "Google", loginUrl: `${cp.baseUrl}/auth/oidc/google/start` },
+      ],
+      error: null,
+    });
+  });
+
+  test("R16: プロバイダが拒否を返した（#login_error=denied）ら未ログイン + エラー理由", async () => {
+    let cleared = 0;
+    const session = await resolveRemoteSession({
+      fetchFn: routedFetch,
+      hash: "#login_error=denied",
+      clearHash: () => {
+        cleared += 1;
+      },
+    });
+    expect(session?.status).toBe("signed-out");
+    if (session?.status !== "signed-out") throw new Error("未ログインのはず");
+    expect(session.error).toBe("denied");
+    expect(cleared).toBe(1);
+  });
+
+  test("R17: code の交換に失敗（使用済み）したら未ログイン + exchange エラー", async () => {
+    const hash = await cp.authorize("sub-r17");
+    const fragment = readLoginFragment(hash);
+    if (fragment?.kind !== "code") throw new Error("code のはず");
+    // 先に誰かが使った（= リロードで同じ URL を開き直した）状態
+    await createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch }).completeLogin(
+      fragment.code,
+    );
+
+    const session = await resolveRemoteSession({
+      fetchFn: routedFetch,
+      hash,
+      clearHash: () => undefined,
+    });
+    expect(session?.status).toBe("signed-out");
+    if (session?.status !== "signed-out") throw new Error("未ログインのはず");
+    expect(session.error).toBe("exchange");
+    expect(session.providers.map((p) => p.id)).toEqual(["google"]);
   });
 });

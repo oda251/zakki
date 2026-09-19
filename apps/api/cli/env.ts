@@ -96,7 +96,7 @@ const DbTokenEnvSchema = v.pipe(
 );
 
 /**
- * 既存アカウント付け替え（`just relink-identity`, docs/tmp/oidc-google-login.md）の入力。
+ * 既存アカウント付け替え（`just relink-identity`, docs/MULTIUSER.md「ログイン（OIDC）」）の入力。
  *
  * {@link DbTokenEnvSchema} と同じ 2 系統（組織トークン + コントロールプレーン DB）が
  * 要る。こちらはトークン発行ではなく from の Turso DB を削除するため
