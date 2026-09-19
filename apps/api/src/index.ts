@@ -1,4 +1,5 @@
 import { createTursoPlatform, TURSO_API_BASE_URL } from "@zakki/core/turso/platform.ts";
+import { createOidcProvider } from "./auth/providers/oidc.ts";
 import { createApp } from "./app.ts";
 import { createControlDb } from "./db/client.ts";
 import { parseApiEnv } from "./env.ts";
@@ -33,10 +34,21 @@ function composeApp(env: Record<string, unknown>): ReturnType<typeof createApp> 
   const app = createApp({
     db,
     auth: {
-      rpId: config.rpId,
-      rpOrigin: config.rpOrigin,
+      appOrigin: config.appOrigin,
       sessionSecret: config.sessionSecret,
     },
+    // Google が最初のプロバイダ（docs/tmp/oidc-google-login.md）。汎用 OIDC アダプタ
+    // （auth/providers/oidc.ts）に issuer と client を渡すだけで合成できる
+    providers: [
+      createOidcProvider({
+        id: "google",
+        displayName: "Google",
+        issuer: "https://accounts.google.com",
+        clientId: config.googleClientId,
+        clientSecret: config.googleClientSecret,
+        redirectUri: `${config.apiOrigin}/auth/oidc/google/callback`,
+      }),
+    ],
     turso: createTursoPlatform({
       baseUrl: TURSO_API_BASE_URL,
       apiToken: config.tursoApiToken,

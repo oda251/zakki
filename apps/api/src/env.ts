@@ -26,8 +26,10 @@ const EnvSchema = v.pipe(
     TURSO_API_TOKEN: required,
     TURSO_ORG: required,
     TURSO_GROUP: required,
-    RP_ID: required,
-    RP_ORIGIN: required,
+    APP_ORIGIN: required,
+    API_ORIGIN: required,
+    GOOGLE_CLIENT_ID: required,
+    GOOGLE_CLIENT_SECRET: required,
   }),
   v.transform((env) => ({
     /** コントロールプレーン DB（Turso）の URL */
@@ -42,10 +44,14 @@ const EnvSchema = v.pipe(
     tursoOrg: env.TURSO_ORG,
     /** ユーザ DB を作る Turso group */
     tursoGroup: env.TURSO_GROUP,
-    /** WebAuthn Relying Party ID（api-2） */
-    rpId: env.RP_ID,
-    /** WebAuthn Relying Party origin（api-2） */
-    rpOrigin: env.RP_ORIGIN,
+    /** SPA の origin（CORS の許可元・ログイン後の戻り先。docs/tmp/oidc-google-login.md） */
+    appOrigin: env.APP_ORIGIN,
+    /** コントロールプレーン自身の origin（OIDC redirect_uri の組み立てに使う） */
+    apiOrigin: env.API_ORIGIN,
+    /** Google OAuth クライアント ID */
+    googleClientId: env.GOOGLE_CLIENT_ID,
+    /** Google OAuth クライアントシークレット */
+    googleClientSecret: env.GOOGLE_CLIENT_SECRET,
   })),
 );
 

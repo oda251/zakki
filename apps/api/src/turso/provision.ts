@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { err, ok, type Result } from "neverthrow";
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
+import { accountDatabases, accountIdentities, accounts, loginHandoffs } from "@zakki/api/db/schema.ts";
 import type { PlatformFailure, TursoDatabase, TursoPlatform } from "@zakki/core/turso/platform.ts";
 
 /**
@@ -130,8 +130,8 @@ export async function ensureUserDatabase(
  * 名前は accountId から決定的に導かれる（= そのアカウント以外の DB を指し得ない）
  * ので、余分に消してしまう危険は無い。実在しなければ 404 が成功に畳まれる。
  *
- * 子テーブル（credentials / account_databases）はスキーマの `onDelete: "cascade"` に
- * 頼らず明示的に消す。理由は実装内のコメントを参照。
+ * 子テーブル（account_identities / login_handoffs / account_databases）はスキーマの
+ * `onDelete: "cascade"` に頼らず明示的に消す。理由は実装内のコメントを参照。
  */
 export async function deleteAccount(
   db: ControlDb,
@@ -153,10 +153,12 @@ export async function deleteAccount(
   // 本番の ControlDb は HTTP（@libsql/client/web）でリクエストごとにステートレスなので
   // pragma を張り続けられず、cascade が発火しない。batch はトランザクションで包まれ
   // pragma がその中では効かないため、子から順に明示的に消す（登録側が accounts +
-  // credentials を 1 バッチで書くのと対称）。
+  // account_identities を 1 バッチで書くのと対称）。login_handoffs は accounts への
+  // FK を持つので同じ理由で明示的に消す（有効なままだと未消費の handoff が孤児になる）
   await db.batch([
+    db.delete(accountIdentities).where(eq(accountIdentities.accountId, accountId)),
+    db.delete(loginHandoffs).where(eq(loginHandoffs.accountId, accountId)),
     db.delete(accountDatabases).where(eq(accountDatabases.accountId, accountId)),
-    db.delete(credentials).where(eq(credentials.accountId, accountId)),
     db.delete(accounts).where(eq(accounts.id, accountId)),
   ]);
   return ok(undefined);

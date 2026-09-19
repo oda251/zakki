@@ -15,8 +15,10 @@ const validEnv = {
   TURSO_API_TOKEN: "turso-api-token",
   TURSO_ORG: "example-org",
   TURSO_GROUP: "default",
-  RP_ID: "zakki.example.com",
-  RP_ORIGIN: "https://zakki.example.com",
+  APP_ORIGIN: "https://zakki.example.com",
+  API_ORIGIN: "https://api.zakki.example.com",
+  GOOGLE_CLIENT_ID: "google-client-id",
+  GOOGLE_CLIENT_SECRET: "google-client-secret",
 };
 
 describe("Workers エントリ", () => {

@@ -1,3 +1,4 @@
+import type { IdentityProvider } from "@zakki/api/auth/providers/types.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
 import type { TursoPlatform } from "@zakki/core/turso/platform.ts";
 
@@ -9,22 +10,25 @@ import type { TursoPlatform } from "@zakki/core/turso/platform.ts";
 export interface AppDeps {
   db: ControlDb;
   auth: AuthConfig;
+  /**
+   * ログインに使える外部 ID プロバイダ（docs/tmp/oidc-google-login.md）。
+   * ルート（routes/auth.ts）はこの型だけを知り、Google かどうかを知らない。
+   * `id` で `/auth/oidc/:provider/*` の provider パラメータと引き合わせる
+   */
+  providers: readonly IdentityProvider[];
   /** ユーザごと DB のプロビジョニング先（issue #101）。テストは fake サーバを向ける */
   turso: TursoPlatform;
 }
 
 /**
- * パスキー認証の設定（issue #100）。値は検証済み env（env.ts）から来る。
+ * OIDC ログインの設定（docs/tmp/oidc-google-login.md）。値は検証済み env（env.ts）から来る。
  *
- * ここに現れるのは RP の同一性とセッション署名鍵だけで、E2E の鍵材料
- * （DEK・PRF 出力・封筒）は一切含まない。PRF は registration options で
- * extension を有効化するのみ、評価結果はクライアントに閉じる（#103 / #104）。
+ * ここに現れるのは SPA の origin とセッション署名鍵だけで、E2E の鍵材料
+ * （DEK・PRF 出力・封筒）は一切含まない。
  */
 export interface AuthConfig {
-  /** WebAuthn Relying Party ID（例 zakki.example.com） */
-  readonly rpId: string;
-  /** 許可する origin（例 https://zakki.example.com）。完全一致で検証する */
-  readonly rpOrigin: string;
+  /** SPA の origin（例 https://zakki.example.com）。CORS の許可元・ログイン後の戻り先 */
+  readonly appOrigin: string;
   /** セッション JWT（HS256）の署名鍵 */
   readonly sessionSecret: string;
 }
