@@ -88,6 +88,14 @@ export function Composer({
   const expandHistory = useCallback(() => {
     if (!expanded) setExpanded(true);
   }, [expanded]);
+  // 最新側（下端）にいる状態でさらに下へ送ったら畳む。件数が少なく溢れない（スクロールが
+  // 起きない）ときも、これで元の 2 件表示に戻せる。column-reverse なので下端 = scrollTop 0
+  const collapseIfAtLatest = useCallback(
+    (el: HTMLElement) => {
+      if (expanded && Math.abs(el.scrollTop) < 1) setExpanded(false);
+    },
+    [expanded],
+  );
   const setDraft = useCallback((next: string) => {
     draftRef.current = next;
     setDraftState(next);
@@ -261,6 +269,7 @@ export function Composer({
         className={expanded ? "composer__history composer__history--expanded" : "composer__history"}
         onWheel={(e) => {
           if (e.deltaY < 0) expandHistory();
+          else if (e.deltaY > 0) collapseIfAtLatest(e.currentTarget);
         }}
         onTouchStart={(e) => {
           touchY.current = e.touches[0]?.clientY ?? null;
@@ -268,7 +277,10 @@ export function Composer({
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY;
           // 指を下へ動かす = 上の（過去の）内容を見に行く
-          if (touchY.current !== null && y !== undefined && y - touchY.current > 8) expandHistory();
+          if (touchY.current === null || y === undefined) return;
+          if (y - touchY.current > 8) expandHistory();
+          // 指を上へ動かす = 新しい側へ戻る。最新側にいれば畳む
+          else if (touchY.current - y > 8) collapseIfAtLatest(e.currentTarget);
         }}
       >
         {(live.text !== "" || live.pending !== "") && (
