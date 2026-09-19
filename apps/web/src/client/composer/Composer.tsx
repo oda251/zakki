@@ -15,12 +15,14 @@ import {
 import { createEditorStore } from "@zakki/core/input/store.ts";
 import { chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
 import { newChunkIds, planAutoLink } from "@zakki/web/client/composer/auto-link.ts";
+import { historyWindow } from "@zakki/web/client/composer/history-window.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { docId, numId } from "@zakki/web/client/db/ids.ts";
 import { addLinkDocs, saveChildrenDocs, upsertCorrection } from "@zakki/web/client/db/writes.ts";
 import { currentHref } from "@zakki/web/client/router/history.ts";
 import { selectNode } from "@zakki/web/client/router/navigate.ts";
 import { parseRoute } from "@zakki/web/client/router/route.ts";
+import { useRoute } from "@zakki/web/client/router/use-route.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 
 type SaveState = "saved" | "dirty" | "error";
@@ -255,9 +257,19 @@ export function Composer({
     [display.liveRaw, conversionVersion, conversion],
   );
 
-  // 既定は最新 2 件だけ。履歴欄は column-reverse（スクロールの起点が下端＝最新）なので
-  // 新しい順に並べて渡す。展開した瞬間も最新が見えたまま、上へ遡っていける
-  const visible = (expanded ? frozen : frozen.slice(-2)).toReversed();
+  // 既定は「選択ノード（無ければ最新）とその直前」の 2 件（historyWindow）。選択ノードは
+  // 次の投稿のリンク元なので、それを最新として見せる。frozen と保存済みチャンク id は
+  // raw の順序で 1:1（docs/PANES.md 実装リスク2）。
+  // 履歴欄は column-reverse（スクロールの起点が下端＝最新）なので新しい順に並べて渡す
+  const selected = useRoute().select;
+  const savedIds = knownChunkIds.current;
+  const selectedIndex = selected === null ? -1 : savedIds.indexOf(selected);
+  const [windowStart, windowEnd] = historyWindow({
+    total: frozen.length,
+    selectedIndex: selectedIndex === -1 ? null : selectedIndex,
+    savedCount: savedIds.length,
+  });
+  const visible = (expanded ? frozen : frozen.slice(windowStart, windowEnd)).toReversed();
 
   const editingStart =
     editing !== null && editing.target.kind === "main" ? editing.target.start : null;

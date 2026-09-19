@@ -5,7 +5,7 @@ import { numId } from "@zakki/web/client/db/ids.ts";
 import { getOrCreateDateChunkDoc, saveChildrenDocs } from "@zakki/web/client/db/writes.ts";
 import { connectRouter } from "@zakki/web/client/router/controller.ts";
 import { currentHref } from "@zakki/web/client/router/history.ts";
-import { gotoChunk } from "@zakki/web/client/router/navigate.ts";
+import { gotoAll, gotoChunk, selectNode } from "@zakki/web/client/router/navigate.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
@@ -179,5 +179,76 @@ describe("connectRouter", () => {
     stub.dispatchEvent(Object.assign(new Event("keydown"), { key: "Escape" }));
     await settled();
     expect(currentHref()).toBe(`/all?select=${parentId}`);
+  });
+
+  test("選択ノードが別の日付に属するなら、入力欄（バッファ）はその日付へ切り替わる", async () => {
+    const db = await open();
+    useBufferStore.getState().connect(db);
+    const older = await getOrCreateDateChunkDoc(db, "2026-07-01", T1);
+    const olderPosts = await saveChildrenDocs(db, older.id, [{ content: "前の日" }], T1);
+    const olderId = numId(older.id);
+    const olderPostId = numId(olderPosts[0]?.id ?? "");
+    disconnects.push(useGraphStore.getState().connect(db));
+
+    install("/all");
+    disconnects.push(connectRouter());
+    await settled();
+    const todayId = useBufferStore.getState().currentId;
+    expect(todayId).not.toBe(olderId);
+
+    // 他の日付の投稿を選ぶ → その日付のセッションを開く（グラフの階層 = URL は変えない）
+    selectNode(olderPostId);
+    await settled();
+    expect(useBufferStore.getState().currentId).toBe(olderId);
+    expect(currentHref()).toBe(`/all?select=${olderPostId}`);
+
+    // 日付ノードそのものを選んだ場合も、その日付のセッション
+    selectNode(todayId);
+    await settled();
+    expect(useBufferStore.getState().currentId).toBe(todayId);
+  });
+
+  test("同じセッション内の選択ではバッファを開き直さない（入力中の内容を壊さない）", async () => {
+    const db = await open();
+    useBufferStore.getState().connect(db);
+    const parent = await getOrCreateDateChunkDoc(db, "2026-07-07", T1);
+    const posts = await saveChildrenDocs(db, parent.id, [{ content: "一" }, { content: "二" }], T1);
+    const parentId = numId(parent.id);
+    disconnects.push(useGraphStore.getState().connect(db));
+
+    install(`/c/${parentId}`);
+    disconnects.push(connectRouter());
+    await settled();
+    const before = useBufferStore.getState();
+
+    selectNode(numId(posts[0]?.id ?? ""));
+    await settled();
+    selectNode(null);
+    await settled();
+    const after = useBufferStore.getState();
+    expect(after.currentId).toBe(parentId);
+    // 開き直していれば initialRaw は新しい文字列オブジェクトになる（値は同じでも参照で分かる）
+    expect(after.initialRaw).toBe(before.initialRaw);
+  });
+
+  test("選択を外すと URL のドリル位置のセッションに戻る", async () => {
+    const db = await open();
+    useBufferStore.getState().connect(db);
+    const older = await getOrCreateDateChunkDoc(db, "2026-07-01", T1);
+    const olderPosts = await saveChildrenDocs(db, older.id, [{ content: "前の日" }], T1);
+    disconnects.push(useGraphStore.getState().connect(db));
+
+    install("/all");
+    disconnects.push(connectRouter());
+    await settled();
+    const todayId = useBufferStore.getState().currentId;
+
+    selectNode(numId(olderPosts[0]?.id ?? ""));
+    await settled();
+    expect(useBufferStore.getState().currentId).toBe(numId(older.id));
+
+    gotoAll(null);
+    await settled();
+    expect(useBufferStore.getState().currentId).toBe(todayId);
   });
 });
