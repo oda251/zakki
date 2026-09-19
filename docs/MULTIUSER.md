@@ -14,7 +14,7 @@ flowchart LR
   end
 
   subgraph api["コントロールプレーン（apps/api / Cloudflare Workers）"]
-    AUTH["passkey 登録・ログイン<br/>accounts / credentials 台帳"]
+    AUTH["OIDC ログイン（Google）<br/>accounts / identities 台帳"]
     ME["GET /me/db<br/>DB の所在 + 短命トークン<br/>DELETE /me（退会）"]
   end
 
@@ -25,7 +25,10 @@ flowchart LR
   UDB[("ユーザごと Turso DB<br/>wire doc + 封筒")]
   TURSO["Turso Platform API<br/>DB 作成・トークン発行"]
 
-  CP -- "① パスキー（PRF 付き get 1 回）" --> AUTH
+  IDP["ID プロバイダ<br/>（Google）"]
+
+  CP -- "① OIDC（リダイレクト）→ handoff code" --> AUTH
+  AUTH -- "code 交換・id_token 検証" --> IDP
   CP -- "② セッション JWT" --> ME
   ME -- "③ 実行時プロビジョニング" --> TURSO
   UI -- "④ wire doc + Authorization: Bearer" --> REL
@@ -39,7 +42,7 @@ flowchart LR
 
 | 場所                   | あるもの                                        | **無いもの**                |
 | ---------------------- | ----------------------------------------------- | --------------------------- |
-| コントロールプレーン   | account / credential（公開鍵）・DB の所在       | DEK・PRF 出力・封筒・本文   |
+| コントロールプレーン   | account / 外部 ID（provider, sub）・DB の所在   | DEK・PRF 出力・封筒・本文   |
 | 中継サーバ（apps/web） | 不透明な wire doc・封筒（KEK 無しでは開けない） | DEK・PRF 出力・復号する手段 |
 | ユーザごと Turso DB    | wire doc そのまま（暗号 ON なら暗号文 + 封筒）  | KEK                         |
 | ブラウザ               | DEK（メモリのみ）・セッション JWT（メモリのみ） | 永続化された鍵・トークン    |
@@ -56,7 +59,7 @@ flowchart LR
 
 暗号を有効にするには `ZAKKI_ENCRYPTION=1` で TUI を起動する（既存データはその場で暗号化される）。戻すには `just decrypt`（issue #133）。
 
-- PRF 出力は **認証器 → ブラウザ**の中で閉じる。ログインの assertion に付く `clientExtensionResults` はそもそも送らないし、サーバも読まない（`apps/api/src/routes/auth.ts`）。
+- ログイン（OIDC）と E2E のアンロックは別物。ログインで得るのは「どのアカウントか」だけで、鍵材料は一切含まない。パスキーは E2E のアンロック専用で、PRF 出力は **認証器 → ブラウザ**の中で閉じる。
 - `GET /me/db` が返すトークンは「その DB を開ける権限」であって復号鍵ではない。全部の鍵を失えば復号不能になる（真の E2E のトレードオフ。リカバリコード封筒が必須）。
 
 ## 構成要素
@@ -73,41 +76,45 @@ flowchart LR
 
 1. ブラウザは起動時に `GET /api/config` を叩く（中継サーバが自分の設定から `controlPlaneUrl` を返す）。
 2. `null` なら従来経路（LocalIdentity 相当。認証なしで自分の 1 つの DB を読む）。
-3. 値があればパスキーでログインし、`GET /me/db` の応答を `RemoteIdentity` に写す。ログインできない（未登録・キャンセル・WebAuthn 非対応）ときは `null` に畳んでローカルのみで起動する。
+3. 値があれば、URL の fragment に handoff code（`#login=<code>`）があるときだけ交換してログインし、`GET /me/db` の応答を `RemoteIdentity` に写す。code が無い・交換に失敗したときはローカルのみで起動し、「Google でログイン」ボタンを出す（押すと `/auth/oidc/google/start` へ遷移）。
 
-### パスキーの追加・失効（機種変更, issue #115）
+### ログイン（OIDC）
 
-登録経路（`POST /auth/register/options`）は毎回新しい accountId を採番するので、2 台目の端末でそれを使うと**別アカウントが生える**。既存アカウントに鍵を足すのは要セッションの別経路にした。
+コントロールプレーンのログインは OIDC の Authorization Code + PKCE。以前はパスキー（WebAuthn）だったが、OIDC に置き換えた。
 
-| エンドポイント                           | 役割                                                                       |
-| ---------------------------------------- | -------------------------------------------------------------------------- |
-| `POST /auth/credentials/options`         | 既存 accountId を `userID` にした登録 options（`excludeCredentials` 付き） |
-| `POST /auth/credentials/verify`          | attestation 検証 → `credentials` に 1 行追加（`accounts` は作らない）      |
-| `GET /auth/credentials`                  | 一覧（credentialId・表示名・作成日時。公開鍵は返さない）                   |
-| `DELETE /auth/credentials/:credentialId` | 失効。**最後の 1 本は 409**（アカウントに入れなくなるため）                |
+```mermaid
+sequenceDiagram
+  participant B as ブラウザ（SPA）
+  participant A as apps/api
+  participant G as Google
+  B->>A: GET /auth/oidc/google/start
+  A->>A: state / PKCE verifier / nonce を oidc_states へ
+  A-->>B: 302 → Google
+  B->>G: 同意
+  G-->>B: 302 → /auth/oidc/google/callback?code&state
+  B->>A: callback
+  A->>A: state を消費（単回・期限・プロバイダ一致）
+  A->>G: code + verifier を交換（id_token の nonce を検証）
+  A->>A: (google, sub) で account を引く／無ければ作る
+  A-->>B: 302 → APP_ORIGIN/#login=<handoff code>
+  B->>A: POST /auth/login/exchange { code }
+  A-->>B: { accountId, token, expiresAt }
+```
 
-- 新端末はまだログインできないので、**ログイン済み端末で ceremony を行い WebAuthn の cross-device authentication（hybrid transport）で新端末の認証器を使う**のが主導線。そのため `authenticatorSelection` に `authenticatorAttachment` を指定しない（指定すると platform / cross-platform のどちらかに絞られ hybrid が落ちる）。
-- challenge の `kind` は `"credential"` で、新規登録の `"registration"` と分けてある。同じにすると追加用 challenge を `register/verify` へ流し込めてしまう。
-- **PRF 出力はクレデンシャルごとに異なる**ため、DEK 封筒もクレデンシャルごとに 1 本持つ（issue #120。`key_envelopes` は代理キー + 部分ユニークインデックスで「3 種は単数・passkey は鍵ごと」を表す）。追加したパスキーで封筒を作れば、そのパスキー単独でログインもアンロックもできる。
+| エンドポイント                      | 役割                                                                    |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| `GET /auth/providers`               | ログインに使えるプロバイダ（`[{ id, name }]`）。UI はこれでボタンを出す |
+| `GET /auth/oidc/:provider/start`    | 認可エンドポイントへ 302                                                |
+| `GET /auth/oidc/:provider/callback` | code 交換 → アカウント解決 → SPA へ handoff code 付きで 302             |
+| `POST /auth/login/exchange`         | handoff code（単回・60 秒）をセッション JWT に換える                    |
 
-#### 失効はクライアントが 2 段階で行う（issue #120）
+- **プロバイダは差し替え可能**。ルートは `IdentityProvider` ポート（`apps/api/src/auth/providers/types.ts`）だけを知り、Google は汎用 OIDC アダプタ（`providers/oidc.ts`, oauth4webapi）に issuer と client を渡したもの。別の OIDC プロバイダは合成点（`apps/api/src/index.ts`）で足すだけで、OIDC でない OAuth2（GitHub 等）はポートを実装するアダプタを書く。
+- **アカウントは `(provider, sub)` で同定する**（`account_identities`）。メールは変わりうるので同定に使わず、別プロバイダの同じメールも自動では結ばない。
+- **セッション JWT を URL に載せない**。コールバックは使い捨ての handoff code だけを fragment（サーバへ送られない）に載せ、SPA は読んだ直後に `history.replaceState` で消してから POST で交換する。
+- state・PKCE verifier・nonce は Workers がリクエスト間で状態を持てないので DB（`oidc_states`, TTL 10 分）に置く。
+- 失敗は `APP_ORIGIN/#login_error=<state|denied|provider>` で SPA へ戻す。
 
-**クレデンシャルと封筒は別の DB にある。** クレデンシャル（公開鍵）はコントロールプレーン DB、封筒はユーザ自身のジャーナル DB で、サーバは互いの DB を触らない。したがって失効は 1 つの API では完結せず、クライアントが順に呼ぶ。
-
-| 順  | 呼ぶもの                                                         | 消えるもの                     |
-| --- | ---------------------------------------------------------------- | ------------------------------ |
-| 1   | `DELETE /auth/credentials/:credentialId`（コントロールプレーン） | パスキー（ログイン・PRF 評価） |
-| 2   | `DELETE /api/crypto/envelopes/passkey/:credentialId`（中継）     | そのパスキーの DEK 封筒        |
-
-順序はこの通り（先に封筒だけ消すとアンロック手段を失う）。片方だけ成功しても致命的ではない: クレデンシャルを失効させれば PRF を評価できないので、残った封筒を開く経路が無い。2 段目は冪等（未知の credentialId でも 200）なので、やり直しは安全。
-
-逆向きの取りこぼし（クレデンシャルはあるが封筒が無い）は、クライアントが**自己修復**する: ログインの `get()` で評価済みの PRF があり、その credentialId の封筒が無ければ、パスフレーズ等で DEK が得られた直後に封筒を作る（`apps/web/src/client/db/bootstrap.ts`）。
-
-なお **コントロールプレーンを使わない単一ユーザ self-host 構成でも複数パスキーは効く**。パスキーは DEK アンロック専用になり、封筒の登録（`POST /api/crypto/envelopes/passkey`）だけで「スマホとノート PC の両方で開ける」が成立する。
-
-### パスキーの表示名（issue #118）
-
-`user.name` は「どのアカウントか」を見分ける識別子（`<accountId 先頭 8 文字>@<RP ID>`。同じアカウントのクレデンシャルでは常に一致する）、`user.displayName` は人間向けの名札（`label` 未指定なら `zakki (YYYY-MM-DD)`）。同じ値を入れない。options 発行時に決めた `displayName` は challenge 行に持ち、verify が通ったら `credentials.display_name` へ写す（OS の選択 UI に出る名前と一覧 API が返す名前を一致させるため）。
+E2E 暗号のパスキー（PRF 封筒）はログインと切り離して残してある。封筒の登録・失効は中継の `/api/crypto/envelopes/passkey*` だけで完結する（クレデンシャルの台帳はもう無い）。
 
 ### 接続先の切替は「中継の維持」を選んだ
 
@@ -134,7 +141,7 @@ group がアプリの責務なのは、Turso が IaC を提供も推奨もして
 
 1. 台帳（`account_databases`）から DB 名を引く。行が無ければ `accountId` から決定的に導く（プロビジョニングが「DB 作成 → 台帳書き込み」の順なので、台帳に載っていない DB が実在しうる）
 2. Turso Platform API で DB を削除する（`DELETE /v1/organizations/{org}/databases/{db}`。404 は「既に無い」として成功に畳む）
-3. `accounts` の行を削除する。`credentials` / `account_databases` は cascade で消える
+3. `accounts` の行と子行（`account_identities` / `login_handoffs` / `account_databases`）を 1 バッチで明示的に削除する（Turso は外部キー強制が OFF なので cascade に頼らない）
 
 **順序は「DB 削除 → 台帳削除」で固定**。逆順にすると台帳を消した時点で DB 名の出どころが失われ、誰も参照しない・誰も消せない孤児 DB が Turso に残る。DB 削除に失敗したら台帳を残したまま 502 を返す——この状態は「まだ退会していない」だけなので、同じリクエストの再送で続きから完了できる。
 
@@ -154,10 +161,10 @@ group がアプリの責務なのは、Turso が IaC を提供も推奨もして
 失効させると、そのアカウントが過去に発行したトークンが全て一斉に「古い世代」になる（＝全端末ログアウト）。
 
 - **セッションテーブルを持たない**のが要点。トークン 1 本ごとの行を書くとログインのたびに書き込みが増え、掃除も要る。世代番号ならアカウント 1 行の整数で「全部無効」を表現できる。
-- **アカウント存在確認（#116）と世代照合は同じ 1 行**なので、`requireActiveSession` が 1 クエリで両方見る（`requireLiveAccount` を置き換えた。適用先は `/auth/me`・`/auth/credentials{,/*}`・`/me/db`・`DELETE /me` で変わらない）。
+- **アカウント存在確認（#116）と世代照合は同じ 1 行**なので、`requireActiveSession` が 1 クエリで両方見る（`requireLiveAccount` を置き換えた。適用先は `/auth/me`・`/auth/logout`・`/me/db`・`DELETE /me`）。
 - 世代の加算は **SQL 側の `+ 1`**。現在値を読んでから書くと、2 台から同時にログアウトしたとき双方が同じ値を書いて世代が 1 つしか進まない（先に発行されたトークンが生き残る）。
 - `epoch` claim の**欠落は 401**。「無ければ 0 とみなす」にすると claim を落とすだけで失効を回避できてしまう。
-- ログアウトはアカウントもパスキーもデータも消さない。**再ログインすれば新しい世代のトークンが出て、同じ DB に戻れる**（退会 `DELETE /me` とは別物）。
+- ログアウトはアカウントもデータも消さない。**再ログインすれば新しい世代のトークンが出て、同じ DB に戻れる**（退会 `DELETE /me` とは別物）。
 
 > [!IMPORTANT]
 > **この機能を含むデプロイ時の手順**（既存デプロイがある場合のみ）
@@ -169,15 +176,15 @@ group がアプリの責務なのは、Turso が IaC を提供も推奨もして
 
 epoch は**アカウント単位の 1 整数**なので、端末ごとの失効は表現できない（+1 すれば全端末が落ちる）。端末単位を表現するにはトークン 1 本ごとの状態が要り、ステートレスなセッション設計そのものを覆すことになる。
 
-一方で実際に必要な「あの端末を切りたい」は**パスキー単位の失効**（`DELETE /auth/credentials/:credentialId`, #115）で表現できる——端末とパスキーは 1 対 1 に対応し、鍵を消せばその端末は二度とログインできない。残るのは「消した瞬間に生きていたトークン」（最長 12 時間）だけで、それは全端末ログアウトを併用すれば止まる。2 つの合成で目的が満たせるので、端末単位の失効機構は持たない。
+「あの端末を切りたい」は全端末ログアウトで代用する（トークンは最長 12 時間で切れ、再ログインは Google の同意 1 回で済む）。
 
 #### 実効的な失効遅延
 
-| 経路                                                                            | 失効までの遅延                                          |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| コントロールプレーン（`/auth/me`・`/me/db`・`/auth/credentials`・`DELETE /me`） | **即時**（次のリクエストから 401）                      |
-| 中継サーバ経由（`/api/replication/*`・`/api/crypto/envelopes`）                 | **最大 60 秒**                                          |
-| ブラウザが握ったままの DB トークン（Turso 直叩き）                              | 最大 60 分（`GET /me/db` の TTL。失効させる手段が無い） |
+| 経路                                                            | 失効までの遅延                                          |
+| --------------------------------------------------------------- | ------------------------------------------------------- |
+| コントロールプレーン（`/auth/me`・`/me/db`・`DELETE /me`）      | **即時**（次のリクエストから 401）                      |
+| 中継サーバ経由（`/api/replication/*`・`/api/crypto/envelopes`） | **最大 60 秒**                                          |
+| ブラウザが握ったままの DB トークン（Turso 直叩き）              | 最大 60 分（`GET /me/db` の TTL。失効させる手段が無い） |
 
 中継サーバのキャッシュ（`apps/web/src/server/identity/remote.ts`）はセッション JWT 単位で、ヒット時はコントロールプレーンへ問い合わせない。ここで取り得た選択肢は 3 つ:
 
@@ -195,7 +202,7 @@ epoch は**アカウント単位の 1 整数**なので、端末ごとの失効�
 | ------------------------- | -------------------------------------------------------------------------------- |
 | `ZAKKI_CONTROL_PLANE_URL` | 中継サーバをマルチユーザ構成にする（apps/api の base URL）。未設定なら単一ユーザ |
 
-コントロールプレーン側（`apps/api`）の設定は [`apps/api/src/env.ts`](../apps/api/src/env.ts) を参照（RP ID / origin・セッション鍵・Turso Platform API のトークンと group）。
+コントロールプレーン側（`apps/api`）の設定は [`apps/api/src/env.ts`](../apps/api/src/env.ts) を参照（APP_ORIGIN / API_ORIGIN・Google の client・セッション鍵・Turso Platform API のトークンと group）。
 
 ## コントロールプレーンの立ち上げ（issue #131）
 
@@ -269,7 +276,7 @@ Workers 版が node 依存へ到達しないことは depcruise の `web-worker-
 #    apps/api/.deploy.production.env:
 #      CONTROL_DB_URL / CONTROL_DB_TOKEN（just provision の出力）
 #      SESSION_SECRET / TURSO_API_TOKEN / TURSO_ORG / TURSO_GROUP
-#      RP_ID / RP_ORIGIN（下記「RP ID / origin」）
+#      APP_ORIGIN / API_ORIGIN / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET（下記）
 #    apps/web/.deploy.production.env:
 #      ZAKKI_CONTROL_PLANE_URL（apps/api の公開 URL）
 
@@ -281,29 +288,50 @@ just setup-web                        # vite build + anco wasm を dist/ へ
 bun run --cwd apps/web deploy         # → https://zakki-web.<account>.workers.dev
 ```
 
-**設定値は全て `--secrets-file` で渡す**（非機密の値も含む）。`RP_ID` / `RP_ORIGIN` / `ZAKKI_CONTROL_PLANE_URL` はアカウント固有の workers.dev サブドメインを含むので、公開リポジトリの `wrangler.jsonc` に書かない。そのため `env.production.vars` は空にしてあり、wrangler はトップレベルの vars が継承されない旨の警告を出すが意図どおり（同名の var があると secret と binding 名が衝突する）。secret はデプロイで消えないので、2 回目以降は値を変えるときだけファイルを更新すればよい。
+**設定値は全て `--secrets-file` で渡す**（非機密の値も含む）。`APP_ORIGIN` / `API_ORIGIN` / `ZAKKI_CONTROL_PLANE_URL` はアカウント固有の workers.dev サブドメインを含むので、公開リポジトリの `wrangler.jsonc` に書かない。そのため `env.production.vars` は空にしてあり、wrangler はトップレベルの vars が継承されない旨の警告を出すが意図どおり（同名の var があると secret と binding 名が衝突する）。secret はデプロイで消えないので、2 回目以降は値を変えるときだけファイルを更新すればよい。
 
-### RP ID / origin（独自ドメインが無い場合）
+### origin と Google の OAuth クライアント
 
-`workers.dev` は Public Suffix List に載っているため、**`<account>.workers.dev` が登録可能ドメイン**になる。したがって:
+- `APP_ORIGIN` = 中継サーバ（SPA）のオリジン（`https://zakki-web.<account>.workers.dev`）。CORS で許可する唯一のオリジンで、ログイン後の戻り先
+- `API_ORIGIN` = コントロールプレーンのオリジン（`https://zakki-api-prod.<account>.workers.dev`）。redirect_uri を `API_ORIGIN/auth/oidc/google/callback` として組む
 
-- `RP_ORIGIN` = 中継サーバのオリジン（`https://zakki-web.<account>.workers.dev`）。ブラウザで開くオリジンと完全一致でなければならない
-- `RP_ID` = `<account>.workers.dev`。こうすると同じアカウント配下の 2 つの Worker で同じパスキーが有効になる
+Google 側の準備（Google Cloud Console。ユーザが行う）:
 
-2 つの Worker は別オリジンなので、ブラウザ → コントロールプレーンの JSON POST は preflight を通る。`apps/api` は **RP origin ちょうど 1 つ**を許可する CORS を持つ（issue #112）。Cookie は使わない（セッションは Authorization ヘッダの JWT）ので credentials は許可しない。
+1. OAuth 同意画面を作る（外部・テストユーザに自分を追加。スコープは `openid` と `email` のみ）
+2. 「認証情報」→ OAuth クライアント ID（種類: ウェブ アプリケーション）を作る
+3. 承認済みのリダイレクト URI に `API_ORIGIN/auth/oidc/google/callback` を**完全一致で**登録する（ローカル確認用に `http://localhost:8787/auth/oidc/google/callback` も足してよい）
+4. 発行されたクライアント ID / シークレットを `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` に入れる
 
-### challenge 発行の流量制限（issue #112）
+2 つの Worker は別オリジンなので、ブラウザ → コントロールプレーンの JSON POST は preflight を通る。`apps/api` は **APP_ORIGIN ちょうど 1 つ**を許可する CORS を持つ（issue #112）。Cookie は使わない（セッションは Authorization ヘッダの JWT）ので credentials は許可しない。
 
-`/auth/register/options` と `/auth/login/options` は未認証で叩けて 1 回ごとに DB へ 1 行書く。本来は Worker の前段（Cloudflare Rate Limiting Rules）で止めるのが筋だが、**zone を持たない workers.dev 配備では zone ルールセットが適用されない**。そこでアプリ層で「生きている challenge の総数」に上限（200）を置き、超えたら 429 を返す。独自ドメイン（zone）を持つ構成にしたら前段へ寄せる。
+### パスキー時代のアカウントの移行
+
+パスキーで作ったアカウントには外部 ID が無いので、OIDC に切り替えた直後に Google でログインすると**別の新しいアカウント**ができる。既存の日記 DB に戻るには、その新しいアカウントの identity を既存アカウントへ付け替える（新しいアカウントは DB ごと消える）:
+
+```bash
+# 1) migration 0004 を当ててから新コードをデプロイする（credentials / auth_challenges が消える）
+just migrate-control
+# 2) ブラウザで Google ログインする（新しい accountId ができる）
+# 3) 付け替える（from = 新しい accountId、to = 既存の accountId）
+TURSO_API_TOKEN=<組織トークン> TURSO_ORG=<org> \
+CONTROL_DB_URL=<...> CONTROL_DB_TOKEN=<...> \
+  just relink-identity <from> <to>
+```
+
+accountId はコントロールプレーン DB の `accounts` / `account_identities` で確認できる。
+
+### ログイン開始の流量制限（issue #112）
+
+`/auth/oidc/:provider/start` は未認証で叩けて 1 回ごとに DB（`oidc_states`）へ 1 行書く。本来は Worker の前段（Cloudflare Rate Limiting Rules）で止めるのが筋だが、**zone を持たない workers.dev 配備では zone ルールセットが適用されない**。そこでアプリ層で「生きている state の総数」に上限（200）を置き、超えたら 429 を返す。独自ドメイン（zone）を持つ構成にしたら前段へ寄せる。
 
 ## TUI を同じ DB へ向ける（issue #135）
 
 マルチユーザ構成にすると、ブラウザは `GET /me/db` が返す per-user DB へ同期する。TUI は単一ユーザ経路（`LocalIdentity`）で環境変数の URL / トークンから DB を開くので、**放っておくと同じ日記が 2 つの DB に割れる**。
 
-TUI に WebAuthn は無い（ブラウザ前提）ので `/me/db` は通れず、返るトークンも TTL 60 分で常用には短い。そこで **長命トークンを CLI で発行して TUI の環境変数に置く**:
+TUI にはブラウザのログイン導線が無いので `/me/db` は通れず、返るトークンも TTL 60 分で常用には短い。そこで **長命トークンを CLI で発行して TUI の環境変数に置く**:
 
 ```bash
-# 1) ブラウザで一度パスキー登録 → ログインする（ここで per-user DB が作られ、台帳に載る）
+# 1) ブラウザで一度 Google ログインする（ここで per-user DB が作られ、台帳に載る）
 
 # 2) その DB の接続情報を発行する（accountId はアカウントが 1 つなら省略できる）
 TURSO_API_TOKEN=<組織トークン> TURSO_ORG=<org> \
@@ -359,38 +387,37 @@ turso db destroy zakki-prod
 bun test apps/web/src/client/api/control-plane.test.ts
 ```
 
-実物の `apps/api`（passkey 認証・プロビジョニング）と実物の `apps/web`（中継）をプロセス内で繋ぎ、登録 → ログイン → `/me/db` → RemoteIdentity → 自分の DB へ E2E 読み書き、までを通す。ローカルで再現できない依存だけを**プロトコルレベル**で差し替える:
+実物の `apps/api`（OIDC ログイン・プロビジョニング）と実物の `apps/web`（中継）をプロセス内で繋ぎ、ログイン → `/me/db` → RemoteIdentity → 自分の DB へ E2E 読み書き、までを通す。ローカルで再現できない依存だけを**プロトコルレベル**で差し替える:
 
 - Turso Platform API → fake（`packages/core/src/turso/test-fixtures.ts`。実 API と同じ経路・JSON）
-- 認証器 → WebCrypto ソフトウェア認証器（`apps/api/src/auth/test-fixtures.ts`）に PRF を足したもの
+- ID プロバイダ（Google）→ fake OIDC プロバイダ（`apps/api/src/auth/test-oidc.ts`。discovery・token エンドポイント・RS256 署名の id_token）
 - ユーザごとの Turso DB → 中継サーバが DB を開くアダプタにローカル libSQL を注入
 
-同時に「PRF 出力・DEK・平文がどのサーバの wire にも現れないこと」「セッションが永続ストレージへ書かれないこと」も検証している。
+同時に「平文がどのサーバの wire にも現れないこと」「handoff code が単回使用であること」「セッションが永続ストレージへ書かれないこと」も検証している。
 
 ### 2. 手で動かす（ローカル 2 プロセス）
 
-実ブラウザ・実認証器で触りたい場合。Turso の実アカウントが要る（無料枠で足りる）ので、**プロビジョニングまで含めた通し確認はクラウド接続が前提**になる点に注意。
+実ブラウザ・実 Google アカウントで触りたい場合。Turso の実アカウントが要る（無料枠で足りる）ので、**プロビジョニングまで含めた通し確認はクラウド接続が前提**になる点に注意。
 
 ```sh
 # 1) コントロールプレーン（apps/api）をローカルで起動
-#    RP ID / origin は Web UI を開くオリジンに合わせる（WebAuthn は完全一致で検証する）
+#    APP_ORIGIN は Web UI を開くオリジン、API_ORIGIN はこのプロセスのオリジンに合わせる
+#    （Google Console の redirect URI に API_ORIGIN/auth/oidc/google/callback を登録しておく）
 bun apps/api/src/index.ts   # wrangler dev でも可
 
 # 2) 中継サーバをマルチユーザ構成で起動
 ZAKKI_CONTROL_PLANE_URL=http://localhost:8787 just web
 ```
 
-- WebAuthn はセキュアコンテキストを要求するため、ブラウザは `http://localhost:3777` で開く（`127.0.0.1` ではない）。
-- コントロールプレーンを別ポート・別ホストで動かす場合、`apps/api` は `RP_ORIGIN` ちょうど 1 つを許可する CORS ヘッダを返す（issue #112）。ローカルで別ポートの中継から叩くときは `RP_ORIGIN` をそのオリジンに合わせる。なお **CSP 側は `ZAKKI_CONTROL_PLANE_URL` のオリジンを `connect-src` に自動で足す**ので、別オリジンでも CSP では塞がれない。
-- ログイン UI はまだ無い（`resolveRemoteSession` が起動時に自動でログインを試みる）。会員登録の UI 導線は別 issue。
+- コントロールプレーンを別ポート・別ホストで動かす場合、`apps/api` は `APP_ORIGIN` ちょうど 1 つを許可する CORS ヘッダを返す（issue #112）。ローカルで別ポートの中継から叩くときは `APP_ORIGIN` をそのオリジンに合わせる。なお **CSP 側は `ZAKKI_CONTROL_PLANE_URL` のオリジンを `connect-src` に自動で足す**ので、別オリジンでも CSP では塞がれない。
 
 ## 現時点の制約（将来 issue）
 
 - ブラウザ → Turso 直接接続（中継サーバを介さない）は未実装。
-- 会員登録・ログインの UI 導線が無い（未登録の状態ではローカルのみで起動する）。
+- セッション JWT はメモリのみなので、リロードすると未ログインに戻る（ボタンから入り直す。Google にログイン済みなら同意画面は出ない）。
 - 中継サーバのユーザ DB ハンドルはセッション単位のキャッシュで、失効まで保持する。多人数運用では上限・退避の設計が要る。**退避を入れるときは `openRemoteDb` の戻り値も見直しが要る**（現在は libsql の client を返さないので、開いたハンドルを閉じる手段が無い）。
 - **中継が通る実効的な窓は「セッション JWT の有効期限（12 時間）」+ 最大 60 秒**（[実効的な失効遅延](#実効的な失効遅延)）。ログアウト・退会・期限切れのいずれも、中継サーバが 60 秒ごとに `/auth/me` で再検証するところで止まる。アカウントを跨ぐことは無い（キャッシュキーが JWT そのもの）。
-- challenge 発行の流量制限はアプリ層の総数上限（200）だけで、**IP 単位ではない**（issue #112）。独自ドメイン（zone）を持つ構成にしたら Cloudflare の Rate Limiting Rules を前段に置く。
+- ログイン開始の流量制限はアプリ層の総数上限（200）だけで、**IP 単位ではない**（issue #112）。独自ドメイン（zone）を持つ構成にしたら Cloudflare の Rate Limiting Rules を前段に置く。
 - **`GET /me/db` が返した DB トークン（TTL 60 分）そのものは失効させられない**。ログアウト・退会の後も、その値を握ったクライアントは最長 60 分 Turso を直叩きできる（退会の場合は DB 自体が消えているので読めるものは無い）。Turso のトークンは発行時点で自己完結しているため、止めるには DB ごと作り直すか TTL を短くするしかない。
 - ログアウト・退会の UI 導線が無い（`POST /auth/logout` / `DELETE /me` を直接叩く）。
 - **TUI の長命トークンは個別に失効させられない**（issue #135）。漏れたときはその DB のトークンを一括ローテートし、`just db-token` で取り直す。TUI 側は依然として単一ユーザ経路（`LocalIdentity`）で、コントロールプレーンのセッションとは無関係に繋がる。
