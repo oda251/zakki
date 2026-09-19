@@ -6,7 +6,7 @@ import { createClient } from "@libsql/client";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { accountDatabases, accounts, credentials } from "./schema.ts";
+import { accountDatabases, accountIdentities, accounts, loginHandoffs } from "./schema.ts";
 
 /**
  * コントロールプレーン DB スキーマの検証（issue #99）。
@@ -23,7 +23,7 @@ async function openControlDb() {
   const path = join(mkdtempSync(join(tmpdir(), "zakki-control-")), "control.sqlite");
   const client = createClient({ url: `file:${path}` });
   await client.execute("PRAGMA foreign_keys = ON");
-  const db = drizzle(client, { schema: { accounts, credentials, accountDatabases } });
+  const db = drizzle(client, { schema: { accounts, accountIdentities, loginHandoffs, accountDatabases } });
   await migrate(db, { migrationsFolder: MIGRATIONS });
   return { client, db };
 }
@@ -31,15 +31,14 @@ async function openControlDb() {
 const NOW = "2026-07-26T00:00:00.000Z";
 
 describe("コントロールプレーン DB スキーマ", () => {
-  test("accounts / credentials / account_databases に書いて読める", async () => {
+  test("accounts / account_identities / account_databases に書いて読める", async () => {
     const { db } = await openControlDb();
     await db.insert(accounts).values({ id: "acc-1", createdAt: NOW });
-    await db.insert(credentials).values({
-      credentialId: "cred-1",
+    await db.insert(accountIdentities).values({
+      provider: "google",
+      subject: "sub-1",
       accountId: "acc-1",
-      publicKey: "pQECAyY", // COSE 公開鍵の base64url（形式のみ）
-      counter: 0,
-      transports: JSON.stringify(["internal"]),
+      email: null,
       createdAt: NOW,
     });
     await db.insert(accountDatabases).values({
@@ -49,34 +48,50 @@ describe("コントロールプレーン DB スキーマ", () => {
       createdAt: NOW,
     });
 
-    const cred = await db.select().from(credentials).where(eq(credentials.accountId, "acc-1"));
-    expect(cred).toEqual([
-      {
-        credentialId: "cred-1",
-        accountId: "acc-1",
-        publicKey: "pQECAyY",
-        counter: 0,
-        transports: JSON.stringify(["internal"]),
-        // 表示名（issue #118）は nullable。未設定でも行は成立する
-        displayName: null,
-        createdAt: NOW,
-      },
+    const identities = await db
+      .select()
+      .from(accountIdentities)
+      .where(eq(accountIdentities.accountId, "acc-1"));
+    expect(identities).toEqual([
+      { provider: "google", subject: "sub-1", accountId: "acc-1", email: null, createdAt: NOW },
     ]);
     const ledger = await db.select().from(accountDatabases);
     expect(ledger).toHaveLength(1);
     expect(ledger[0]?.dbHostname).toBe("zakki-user-acc-1.example.turso.io");
   });
 
-  test("アカウント削除で credentials / account_databases が cascade で消える", async () => {
+  test("(provider, subject) は一意（同じ外部 ID を 2 つのアカウントに結べない）", async () => {
+    const { db } = await openControlDb();
+    await db.insert(accounts).values([
+      { id: "acc-1", createdAt: NOW },
+      { id: "acc-2", createdAt: NOW },
+    ]);
+    const row = { provider: "google", subject: "sub-1", email: null, createdAt: NOW };
+    await db.insert(accountIdentities).values({ ...row, accountId: "acc-1" });
+    // drizzle のクエリは Promise ではない thenable なので rejects matcher が使えない
+    let rejected = false;
+    try {
+      await db.insert(accountIdentities).values({ ...row, accountId: "acc-2" });
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+    // 別プロバイダなら同じ subject 文字列でも別物
+    await db
+      .insert(accountIdentities)
+      .values({ ...row, provider: "github", accountId: "acc-2" });
+  });
+
+  test("アカウント削除で identity / handoff / account_databases が cascade で消える", async () => {
     const { db } = await openControlDb();
     await db.insert(accounts).values({ id: "acc-1", createdAt: NOW });
-    await db.insert(credentials).values({
-      credentialId: "cred-1",
+    await db.insert(accountIdentities).values({
+      provider: "google",
+      subject: "sub-1",
       accountId: "acc-1",
-      publicKey: "pQECAyY",
-      counter: 0,
       createdAt: NOW,
     });
+    await db.insert(loginHandoffs).values({ code: "c", accountId: "acc-1", expiresAt: 0 });
     await db.insert(accountDatabases).values({
       accountId: "acc-1",
       dbName: "db",
@@ -85,7 +100,8 @@ describe("コントロールプレーン DB スキーマ", () => {
     });
 
     await db.delete(accounts).where(eq(accounts.id, "acc-1"));
-    expect(await db.select().from(credentials)).toEqual([]);
+    expect(await db.select().from(accountIdentities)).toEqual([]);
+    expect(await db.select().from(loginHandoffs)).toEqual([]);
     expect(await db.select().from(accountDatabases)).toEqual([]);
   });
 

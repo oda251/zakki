@@ -14,12 +14,14 @@ const validEnv = {
   TURSO_API_TOKEN: "turso-api-token",
   TURSO_ORG: "example-org",
   TURSO_GROUP: "default",
-  RP_ID: "zakki.example.com",
-  RP_ORIGIN: "https://zakki.example.com",
+  APP_ORIGIN: "https://zakki.example.com",
+  API_ORIGIN: "https://api.zakki.example.com",
+  GOOGLE_CLIENT_ID: "google-client-id",
+  GOOGLE_CLIENT_SECRET: "google-client-secret",
 };
 
 describe("parseApiEnv", () => {
-  test("必須 8 変数が揃っていれば camelCase の設定に写す", () => {
+  test("必須 10 変数が揃っていれば camelCase の設定に写す", () => {
     const config = parseApiEnv(validEnv)._unsafeUnwrap();
     expect(config).toEqual({
       controlDbUrl: "libsql://control.example.turso.io",
@@ -28,8 +30,10 @@ describe("parseApiEnv", () => {
       tursoApiToken: "turso-api-token",
       tursoOrg: "example-org",
       tursoGroup: "default",
-      rpId: "zakki.example.com",
-      rpOrigin: "https://zakki.example.com",
+      appOrigin: "https://zakki.example.com",
+      apiOrigin: "https://api.zakki.example.com",
+      googleClientId: "google-client-id",
+      googleClientSecret: "google-client-secret",
     });
   });
 
@@ -41,9 +45,9 @@ describe("parseApiEnv", () => {
   });
 
   test("空文字列は不正（変数名を含むエラー）", () => {
-    const result = parseApiEnv({ ...validEnv, RP_ID: "" });
+    const result = parseApiEnv({ ...validEnv, GOOGLE_CLIENT_ID: "" });
     expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr()).toContain("RP_ID");
+    expect(result._unsafeUnwrapErr()).toContain("GOOGLE_CLIENT_ID");
   });
 
   test("未知のキー（Workers のバインディング等）は無視する", () => {

@@ -1,19 +1,22 @@
 /**
- * コントロールプレーン（apps/api）クライアント（issue #105）。
+ * コントロールプレーン（apps/api）クライアント（issue #105 / docs/MULTIUSER.md「ログイン（OIDC）」）。
  *
- * パスキーでの登録・ログイン（#100 の 4 エンドポイント）→ `GET /me/db`（#101）で
- * 「自分の Turso DB の所在と短命トークン」を得て、{@link RemoteDbConnection} /
- * {@link remoteIdentity} に写す。ここに現れるのは **どの DB を開くか** だけで、
- * DEK・PRF 出力・本文は一切通らない（E2E, docs/RESEARCH.md §6）。
+ * ログインは OIDC（Authorization Code + PKCE, Google）。ブラウザは
+ * `GET /auth/oidc/:provider/start` へ遷移して同意を済ませ、コールバックは
+ * `APP_ORIGIN/#login=<code>`（または `#login_error=<reason>`）で戻ってくる。
+ * その使い捨て handoff code を `POST /auth/login/exchange` に渡してセッション JWT を得る
+ * （{@link ControlPlaneClient.completeLogin}）。得たセッションで `GET /me/db`（#101）を叩き、
+ * 「自分の Turso DB の所在と短命トークン」を {@link RemoteDbConnection} / {@link remoteIdentity}
+ * に写す。ここに現れるのは **どの DB を開くか** だけで、DEK・本文は一切通らない
+ * （E2E, docs/RESEARCH.md §6）。
  *
  * 設計上の要点:
  * - **セッション JWT はメモリだけ**に持つ（localStorage / sessionStorage / Cookie に
- *   書かない）。リロードで消えるが、再ログインは passkey の生体認証 1 回なので UX 劣化は小。
- * - **ログインの `get()` は 1 回**。同じ assertion 取得で PRF も評価する
- *   （`extensions.prf.eval` を載せる）。サーバは未署名の `clientExtensionResults` を
- *   読まない・受け取らない（apps/api の routes/auth.ts）ので、PRF 出力は wire に出さない。
- * - WebAuthn のブラウザ呼び出しは #104 の adapter（{@link CredentialsApi}）を再利用し、
- *   テストは PublicKeyCredential 形状の fake を注入する。
+ *   書かない）。リロードで消えるが、再ログインは OIDC の同意 1 回なので UX 劣化は小。
+ * - handoff code は fragment（サーバへ送られない）で受け取り、読んだら即座に
+ *   `history.replaceState` で消す（履歴に残さない, {@link resolveRemoteSession}）。
+ * - E2E 暗号のパスキーアンロック（{@link import("@zakki/web/client/db/passkey.ts")}）は
+ *   ログインとは切り離した（docs/MULTIUSER.md「ログイン（OIDC）」）。この層は関与しない。
  */
 import * as v from "valibot";
 import type { RemoteDbConnection } from "@zakki/core/identity/remote.ts";
@@ -21,36 +24,13 @@ import { isConnectionExpiring, remoteIdentity } from "@zakki/core/identity/remot
 import type { Identity } from "@zakki/core/identity/types.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import { ApiRequestError, request } from "@zakki/web/client/api/client.ts";
-import type { CredentialsApi, PrfEvaluation } from "@zakki/web/client/db/passkey.ts";
-import { browserCredentials, PRF_SALT, readPrfEvaluation } from "@zakki/web/client/db/passkey.ts";
-
-// --- base64url（WebAuthn の wire 表現） -------------------------------------
-//
-// sodium.ready を待たずに使えるよう、ブラウザ標準の atob / btoa で書く
-// （ログインは DB オープン・暗号初期化より前に走る）。
-
-function toBytes(src: ArrayBuffer): Uint8Array {
-  return new Uint8Array(src);
-}
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
-
-function decodeBase64Url(text: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/")), (ch) =>
-    ch.charCodeAt(0),
-  );
-}
 
 // --- サーバ応答のスキーマ ---------------------------------------------------
 //
 // HTTP JSON は untyped の境界なので valibot で検証してから型を名乗る（issue #48 の流儀）。
 // 未知のキーは無視する（サーバが将来足すフィールドで壊れない）。
 
-/** register/verify・login/verify が返すセッション（#100） */
+/** `POST /auth/login/exchange` が返すセッション */
 const SessionSchema = v.object({
   accountId: v.string(),
   token: v.string(),
@@ -64,30 +44,9 @@ const DbConnectionSchema = v.object({
   expiresAt: v.number(),
 });
 
-/**
- * WebAuthn ceremony options（@simplewebauthn/server が返す JSON）。
- * クライアントが実際に使うフィールドだけを検証し、残りは passthrough で
- * `credentials.create/get` へ渡す（サーバが options を足しても壊れない）。
- */
-const CreationOptionsSchema = v.looseObject({
-  challenge: v.string(),
-  rp: v.looseObject({ id: v.optional(v.string()), name: v.string() }),
-  user: v.looseObject({ id: v.string(), name: v.string(), displayName: v.string() }),
-  pubKeyCredParams: v.array(v.looseObject({ type: v.literal("public-key"), alg: v.number() })),
-  timeout: v.optional(v.number()),
-  authenticatorSelection: v.optional(
-    v.looseObject({
-      residentKey: v.optional(v.string()),
-      userVerification: v.optional(v.string()),
-    }),
-  ),
-});
-
-const RequestOptionsSchema = v.looseObject({
-  challenge: v.string(),
-  rpId: v.optional(v.string()),
-  timeout: v.optional(v.number()),
-  userVerification: v.optional(v.string()),
+/** `GET /auth/providers` の応答 */
+const ProvidersSchema = v.object({
+  providers: v.array(v.object({ id: v.string(), name: v.string() })),
 });
 
 /** メモリ保持のセッション。永続化しない */
@@ -101,8 +60,6 @@ export interface ControlPlaneSession {
 export interface ControlPlaneOptions {
   /** apps/api の base URL（末尾スラッシュ無し。例 https://api.zakki.example.com） */
   readonly baseUrl: string;
-  /** WebAuthn adapter（#104）。未対応環境では null で、リモート構成は使えない */
-  readonly credentials: CredentialsApi;
   /** 省略時はグローバル fetch。テストは apps/api の Hono `app.request` を注入する */
   readonly fetchFn?: FetchLike;
   /** 現在時刻（ms）。トークン失効の先回り判定に使う。テストが固定する */
@@ -113,24 +70,11 @@ export interface ControlPlaneClient {
   /** 現在のセッション（未ログインなら null）。メモリのみ */
   readonly session: () => ControlPlaneSession | null;
   /**
-   * パスキーを新規登録してセッションを得る（会員登録）。
-   * 返す credentialId は、そのまま #104 の `savePasskeyEnvelope` に渡して
-   * 同じパスキーの PRF で DEK 封筒を作るためのもの。
+   * ログイン handoff code（`#login=<code>`）を交換してセッションを得る。
+   * 非 2xx は {@link ApiRequestError} を投げ、セッションは null のまま
+   * （呼び出し側はプロバイダ一覧を出し直せる）。
    */
-  readonly register: (label?: string) => Promise<{
-    session: ControlPlaneSession;
-    credentialId: string;
-  }>;
-  /**
-   * パスキーでログインする。**同じ 1 回の `get()`** で assertion と PRF 出力の
-   * 両方を得る（PRF 非対応の認証器では prf が null になるだけでログインは成功）。
-   * PRF 出力は「どのクレデンシャルで評価したか」と対で返す（封筒はクレデンシャル
-   * ごとにあるため, #120）。
-   */
-  readonly login: () => Promise<{
-    session: ControlPlaneSession;
-    prf: PrfEvaluation | null;
-  }>;
+  readonly completeLogin: (code: string) => Promise<ControlPlaneSession>;
   /** `GET /me/db`。失効が近いときだけ取り直す（それ以外はキャッシュを返す） */
   readonly connect: () => Promise<RemoteDbConnection>;
   /** 接続情報を Identity（RemoteIdentity）へ写して返す */
@@ -165,102 +109,6 @@ async function requestJson<T>(
   return v.parse(schema, await res.json());
 }
 
-/** 認証器レスポンスの必要面（`Credential` 基底型には無いので構造で判定する） */
-interface AttestationLike {
-  readonly clientDataJSON: ArrayBuffer;
-  readonly attestationObject: ArrayBuffer;
-  readonly getTransports?: () => string[];
-}
-
-interface AssertionLike {
-  readonly clientDataJSON: ArrayBuffer;
-  readonly authenticatorData: ArrayBuffer;
-  readonly signature: ArrayBuffer;
-  readonly userHandle: ArrayBuffer | null;
-}
-
-function responseOf(credential: Credential | null): unknown {
-  if (credential === null || !("response" in credential)) return null;
-  return credential.response;
-}
-
-function isAttestation(value: unknown): value is AttestationLike {
-  if (typeof value !== "object" || value === null) return false;
-  return (
-    "clientDataJSON" in value &&
-    value.clientDataJSON instanceof ArrayBuffer &&
-    "attestationObject" in value &&
-    value.attestationObject instanceof ArrayBuffer
-  );
-}
-
-function isAssertion(value: unknown): value is AssertionLike {
-  if (typeof value !== "object" || value === null) return false;
-  return (
-    "clientDataJSON" in value &&
-    value.clientDataJSON instanceof ArrayBuffer &&
-    "authenticatorData" in value &&
-    value.authenticatorData instanceof ArrayBuffer &&
-    "signature" in value &&
-    value.signature instanceof ArrayBuffer
-  );
-}
-
-/** ログイン・登録の失敗（キャンセル・応答不正）。メッセージは UI 表示用で秘密を含まない */
-export class ControlPlaneError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ControlPlaneError";
-  }
-}
-
-/**
- * 認証器の応答 → サーバへ送る JSON。
- * **`clientExtensionResults` は載せない**: そこには PRF 出力が入り得るのに、サーバは
- * 未署名の値として読まない（apps/api 側で空に潰す）ため、送る理由が無い。
- */
-function attestationJson(credential: Credential, response: AttestationLike): object {
-  const transports = response.getTransports?.();
-  return {
-    id: credential.id,
-    rawId: credential.id,
-    type: "public-key",
-    response: {
-      clientDataJSON: encodeBase64Url(toBytes(response.clientDataJSON)),
-      attestationObject: encodeBase64Url(toBytes(response.attestationObject)),
-      ...(transports === undefined ? {} : { transports }),
-    },
-  };
-}
-
-function assertionJson(credential: Credential, response: AssertionLike): object {
-  const userHandle = response.userHandle;
-  return {
-    id: credential.id,
-    rawId: credential.id,
-    type: "public-key",
-    response: {
-      clientDataJSON: encodeBase64Url(toBytes(response.clientDataJSON)),
-      authenticatorData: encodeBase64Url(toBytes(response.authenticatorData)),
-      signature: encodeBase64Url(toBytes(response.signature)),
-      ...(userHandle === null ? {} : { userHandle: encodeBase64Url(toBytes(userHandle)) }),
-    },
-  };
-}
-
-/** WebAuthn の userVerification / residentKey は文字列列挙。未知値はブラウザ既定に任せる */
-function verification(value: string | undefined): UserVerificationRequirement | undefined {
-  return value === "required" || value === "preferred" || value === "discouraged"
-    ? value
-    : undefined;
-}
-
-function residentKey(value: string | undefined): ResidentKeyRequirement | undefined {
-  return value === "required" || value === "preferred" || value === "discouraged"
-    ? value
-    : undefined;
-}
-
 export function createControlPlaneClient(options: ControlPlaneOptions): ControlPlaneClient {
   const fetchFn = options.fetchFn ?? fetch;
   const now = options.now ?? Date.now;
@@ -271,89 +119,20 @@ export function createControlPlaneClient(options: ControlPlaneOptions): ControlP
 
   const requireSession = (): ControlPlaneSession => {
     if (session === null) {
-      throw new ControlPlaneError("コントロールプレーンにログインしていません");
+      throw new ApiRequestError(401, "コントロールプレーンにログインしていません");
     }
     return session;
   };
 
-  const register = async (label?: string) => {
-    const ceremony = await requestJson(
-      fetchFn,
-      `${base}/auth/register/options`,
-      CreationOptionsSchema,
-      { method: "POST", body: JSON.stringify(label === undefined ? {} : { label }) },
-    );
-    const credential = await options.credentials.create({
-      publicKey: {
-        challenge: decodeBase64Url(ceremony.challenge),
-        rp: {
-          ...(ceremony.rp.id === undefined ? {} : { id: ceremony.rp.id }),
-          name: ceremony.rp.name,
-        },
-        user: {
-          id: decodeBase64Url(ceremony.user.id),
-          name: ceremony.user.name,
-          displayName: ceremony.user.displayName,
-        },
-        pubKeyCredParams: ceremony.pubKeyCredParams.map((p) => ({ type: p.type, alg: p.alg })),
-        ...(ceremony.timeout === undefined ? {} : { timeout: ceremony.timeout }),
-        authenticatorSelection: {
-          residentKey: residentKey(ceremony.authenticatorSelection?.residentKey) ?? "required",
-          requireResidentKey: true,
-          userVerification:
-            verification(ceremony.authenticatorSelection?.userVerification) ?? "required",
-        },
-        // PRF は登録時は有効化のみ（評価はログインの get で行う）
-        extensions: { prf: {} },
-      },
-    });
-    const response = responseOf(credential);
-    if (credential === null || !isAttestation(response)) {
-      throw new ControlPlaneError("パスキーの作成に失敗しました（キャンセル・未対応）");
-    }
-    session = await requestJson(fetchFn, `${base}/auth/register/verify`, SessionSchema, {
+  const completeLogin = async (code: string): Promise<ControlPlaneSession> => {
+    // 失敗時（使用済み・期限切れ）は例外が伝播し、session は書き換えない
+    const result = await requestJson(fetchFn, `${base}/auth/login/exchange`, SessionSchema, {
       method: "POST",
-      body: JSON.stringify(attestationJson(credential, response)),
+      body: JSON.stringify({ code }),
     });
+    session = result;
     connection = null;
-    return { session, credentialId: credential.id };
-  };
-
-  const login = async () => {
-    const ceremony = await requestJson(
-      fetchFn,
-      `${base}/auth/login/options`,
-      RequestOptionsSchema,
-      { method: "POST", body: "{}" },
-    );
-    // ここが「1 回に畳む」点: 同じ get で assertion（サーバ検証用）と PRF 出力
-    // （封筒アンロック用）の両方が返る。生体認証は 1 回で済む
-    const credential = await options.credentials.get({
-      publicKey: {
-        challenge: decodeBase64Url(ceremony.challenge),
-        ...(ceremony.rpId === undefined ? {} : { rpId: ceremony.rpId }),
-        ...(ceremony.timeout === undefined ? {} : { timeout: ceremony.timeout }),
-        userVerification: verification(ceremony.userVerification) ?? "required",
-        extensions: { prf: { eval: { first: PRF_SALT } } },
-      },
-    });
-    const response = responseOf(credential);
-    if (credential === null || !isAssertion(response)) {
-      throw new ControlPlaneError("パスキーでの認証に失敗しました（キャンセル・未対応）");
-    }
-    session = await requestJson(fetchFn, `${base}/auth/login/verify`, SessionSchema, {
-      method: "POST",
-      body: JSON.stringify(assertionJson(credential, response)),
-    });
-    connection = null;
-    // PRF 未対応の認証器でもログイン自体は成立させる（封筒はパスフレーズで開く）
-    let prf: PrfEvaluation | null;
-    try {
-      prf = readPrfEvaluation(credential);
-    } catch {
-      prf = null;
-    }
-    return { session, prf };
+    return result;
   };
 
   const connect = async (): Promise<RemoteDbConnection> => {
@@ -377,12 +156,33 @@ export function createControlPlaneClient(options: ControlPlaneOptions): ControlP
 
   return {
     session: () => session,
-    register,
-    login,
+    completeLogin,
     connect,
     identity: async () => remoteIdentity(await connect()),
     authorizedFetch,
   };
+}
+
+// --- ログイン fragment（`APP_ORIGIN/#login=<code>` / `#login_error=<reason>`） ----------
+
+/** URL fragment から読んだログインの結果 */
+export type LoginFragment =
+  | { readonly kind: "code"; readonly code: string }
+  | { readonly kind: "error"; readonly reason: string };
+
+/**
+ * ログイン後に apps/api がリダイレクトする URL fragment を読む（純関数）。
+ * `#login=<code>` は成功、`#login_error=<reason>` は失敗、それ以外
+ * （無関係な fragment・空・code/reason が空文字）は null。
+ */
+export function readLoginFragment(hash: string): LoginFragment | null {
+  if (!hash.startsWith("#")) return null;
+  const params = new URLSearchParams(hash.slice(1));
+  const code = params.get("login");
+  if (code !== null) return code === "" ? null : { kind: "code", code };
+  const reason = params.get("login_error");
+  if (reason !== null) return reason === "" ? null : { kind: "error", reason };
+  return null;
 }
 
 // --- 構成の選択（設定ベース） ----------------------------------------------
@@ -390,60 +190,108 @@ export function createControlPlaneClient(options: ControlPlaneOptions): ControlP
 /** `GET /api/config`（中継サーバが自分の設定から返す）。秘密は含まない */
 const ClientConfigSchema = v.object({ controlPlaneUrl: v.nullable(v.string()) });
 
-/**
- * ログイン済みのリモート構成一式。`fetchFn` をそのまま `bootstrapClientDb` に渡すと、
- * 封筒取得・replication が「自分の DB」へ向く（中継の宛先はサーバが解決する）。
- */
-export interface RemoteSession {
-  readonly identity: Identity;
-  readonly fetchFn: FetchLike;
-  /** ログインの get で一緒に得た PRF 評価（credentialId 付き。PRF 非対応なら null） */
-  readonly prf: PrfEvaluation | null;
-  readonly client: ControlPlaneClient;
+/** ログインボタン 1 個分（プロバイダ一覧 + 遷移先） */
+export interface RemoteProviderOption {
+  readonly id: string;
+  readonly name: string;
+  /** ここへ `window.location.assign` すれば OIDC 同意へ遷移する */
+  readonly loginUrl: string;
 }
+
+/** `GET /auth/providers` を読み、開始 URL を組んで返す */
+async function listProviders(
+  baseUrl: string,
+  fetchFn: FetchLike | undefined,
+): Promise<RemoteProviderOption[]> {
+  const base = baseUrl.replace(/\/+$/, "");
+  const body = await requestJson(fetchFn ?? fetch, `${base}/auth/providers`, ProvidersSchema, {
+    method: "GET",
+  });
+  return body.providers.map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    loginUrl: `${base}/auth/oidc/${provider.id}/start`,
+  }));
+}
+
+/**
+ * 起動時の構成選択の結果（issue #105 / docs/MULTIUSER.md「ログイン（OIDC）」）。
+ * `fetchFn` をそのまま `bootstrapClientDb` に渡すと、封筒取得・replication が
+ * 「自分の DB」へ向く（中継の宛先はサーバが解決する）。
+ */
+/** 未ログイン。ログインボタン（store/auth.ts）はこの形をそのまま持つ */
+export interface SignedOutSession {
+  readonly status: "signed-out";
+  readonly providers: readonly RemoteProviderOption[];
+  /** fragment のエラー理由、交換失敗なら `"exchange"`、それ以外は null */
+  readonly error: string | null;
+}
+
+export type RemoteSession =
+  | {
+      readonly status: "signed-in";
+      readonly identity: Identity;
+      readonly fetchFn: FetchLike;
+      readonly client: ControlPlaneClient;
+    }
+  | SignedOutSession;
 
 /**
  * 起動時の構成選択（issue #105）。**設定ベース**で、判断材料は中継サーバが返す
  * `controlPlaneUrl` だけ:
  * - 未設定 → null（従来の単一ユーザ構成。呼び出し側は何も変えずに起動する）
- * - 設定あり → パスキーでログインし、`GET /me/db` の接続情報を RemoteIdentity に写す
+ * - 設定あり → fragment にログイン handoff code があれば交換してセッションを得る。
+ *   無い・交換に失敗した場合は signed-out（プロバイダ一覧と開始 URL 付き）を返す
  *
- * ログインできない（未登録・キャンセル・WebAuthn 非対応）場合も null を返す。
- * 呼び出し側は従来経路で起動し、同期は始まらない（中継サーバが 401 を返すため、
- * 暗号文が別アカウントの DB へ紛れ込むことはない）。
+ * fragment（code・エラーいずれか）が有れば `clearHash` を 1 回だけ呼ぶ（code は
+ * 単回使用で、履歴に残しておく意味が無いため）。既定は `window.location.hash` /
+ * パス・クエリを保ったままの `history.replaceState`。
  */
 export async function resolveRemoteSession(
-  options: { fetchFn?: FetchLike; credentials?: CredentialsApi | null } = {},
+  options: {
+    fetchFn?: FetchLike;
+    hash?: string;
+    clearHash?: () => void;
+  } = {},
 ): Promise<RemoteSession | null> {
   const raw = await request<unknown>("/config", undefined, options.fetchFn).catch(() => null);
   const parsed = v.safeParse(ClientConfigSchema, raw);
   const baseUrl = parsed.success ? parsed.output.controlPlaneUrl : null;
   if (baseUrl === null) return null;
 
-  const credentials =
-    options.credentials === undefined ? browserCredentials() : options.credentials;
-  if (credentials === null) {
-    console.warn("zakki-control-plane: WebAuthn 非対応のためリモート構成を使えません");
-    return null;
-  }
-  const client = createControlPlaneClient({
-    baseUrl,
-    credentials,
-    ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
+  const hash = options.hash ?? window.location.hash;
+  const clearHash =
+    options.clearHash ??
+    (() => {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    });
+  const fragment = readLoginFragment(hash);
+  if (fragment !== null) clearHash();
+
+  const signedOut = async (error: string | null): Promise<RemoteSession> => ({
+    status: "signed-out",
+    providers: await listProviders(baseUrl, options.fetchFn),
+    error,
   });
-  try {
-    const { prf } = await client.login();
-    return {
-      identity: await client.identity(),
-      fetchFn: client.authorizedFetch,
-      prf,
-      client,
-    };
-  } catch (err: unknown) {
-    // 未登録・キャンセル・オフライン。秘密は載せずに種別だけ残す
-    console.warn(
-      `zakki-control-plane: ログインできませんでした（ローカルのみで起動）: ${err instanceof Error ? err.name : "unknown"}`,
-    );
-    return null;
+
+  if (fragment?.kind === "code") {
+    const client = createControlPlaneClient({
+      baseUrl,
+      ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
+    });
+    try {
+      await client.completeLogin(fragment.code);
+      return {
+        status: "signed-in",
+        identity: await client.identity(),
+        fetchFn: client.authorizedFetch,
+        client,
+      };
+    } catch {
+      // 使用済み・期限切れ（#login= が残ったままリロードした等）。秘密は載せない
+      return signedOut("exchange");
+    }
   }
+
+  return signedOut(fragment?.kind === "error" ? fragment.reason : null);
 }

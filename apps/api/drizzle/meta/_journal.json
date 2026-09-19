@@ -29,6 +29,13 @@
       "when": 1785098038908,
       "tag": "0003_thin_vance_astro",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789797559131,
+      "tag": "0004_clammy_hobgoblin",
+      "breakpoints": true
     }
   ]
 }

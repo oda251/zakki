@@ -55,6 +55,10 @@ migrate-control:
 db-token *args:
     bun run db-token {{args}}
 
+# OIDC 移行の一度きりの運用: パスキー時代のアカウント（to）へ新しい identity（from）を付け替え、from を削除する
+relink-identity *args:
+    bun run relink-identity {{args}}
+
 # ---- CLI ----
 
 # 当日のふりかえりを vault へ書き出し（--week で直近7日）

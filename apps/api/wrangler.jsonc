@@ -16,17 +16,19 @@
   "vars": {
     "TURSO_ORG": "",
     "TURSO_GROUP": "",
-    "RP_ID": "",
-    "RP_ORIGIN": "",
+    "APP_ORIGIN": "",
+    "API_ORIGIN": "",
+    "GOOGLE_CLIENT_ID": "",
   },
   // secrets（値はコミットしない。ローカルは .dev.vars）:
-  //   CONTROL_DB_URL    コントロールプレーン DB（Turso）の URL
-  //   CONTROL_DB_TOKEN  コントロールプレーン DB の認証トークン
-  //   SESSION_SECRET    セッション署名鍵（api-2）
-  //   TURSO_API_TOKEN   Turso Platform API トークン（api-3 のプロビジョニング）
+  //   CONTROL_DB_URL       コントロールプレーン DB（Turso）の URL
+  //   CONTROL_DB_TOKEN     コントロールプレーン DB の認証トークン
+  //   SESSION_SECRET       セッション署名鍵（api-2）
+  //   TURSO_API_TOKEN      Turso Platform API トークン（api-3 のプロビジョニング）
+  //   GOOGLE_CLIENT_SECRET Google OAuth クライアントシークレット（docs/MULTIUSER.md「ログイン（OIDC）」）
   "env": {
     // 本番。スクリプト名は apps/web の Service Binding（CONTROL_PLANE）の宛先と一致させる。
-    // **vars を空にしてある**のは意図的: RP_ID / RP_ORIGIN はアカウント固有の
+    // **vars を空にしてある**のは意図的: APP_ORIGIN / API_ORIGIN はアカウント固有の
     // workers.dev サブドメインを含むので公開リポジトリに置かず、全ての設定値を
     // gitignore された `.deploy.production.env` から `--secrets-file` で渡す。
     // 同名の var が残っていると secret と binding 名が衝突するため、ここは空のまま保つ

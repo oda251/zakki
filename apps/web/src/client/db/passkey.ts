@@ -181,8 +181,8 @@ export interface PrfEvaluation {
  * `credentials.get` の戻り値から PRF 評価結果（credential id + 32 バイト出力）を取り出す。
  *
  * 取り出しだけを切り出してあるのは、PRF 評価が **必ずしも専用の get** とは限らないため:
- * コントロールプレーンへのログイン（issue #105）は同じ 1 回の get で assertion と
- * PRF 出力の両方を受け取り、この関数で後者だけを読む。
+ * assertion（認証）と PRF 出力の両方を同じ 1 回の get で受け取る呼び出し元が
+ * この関数で後者だけを読む。
  *
  * @throws {PasskeyError} キャンセル・PRF 未対応・出力長が不正な場合
  */
@@ -235,31 +235,6 @@ export async function evaluatePrf(
 /** 封筒一覧から passkey 封筒だけを取り出す（複数ありうる, issue #120） */
 function passkeyEnvelopes(envelopes: readonly CryptoEnvelope[]): PasskeyCryptoEnvelope[] {
   return envelopes.filter((e): e is PasskeyCryptoEnvelope => e.kind === "passkey");
-}
-
-/**
- * **評価済みの** PRF で passkey 封筒を開く（issue #105）。
- *
- * コントロールプレーンへのログインは assertion と PRF 出力を 1 回の `get()` で得るので、
- * その結果をここへ渡せば **生体認証をもう一度求めずに**アンロックできる。開けるのは
- * 「ログインに使ったクレデンシャルの封筒」だけ（PRF 出力はクレデンシャル固有なので、
- * 他のパスキーの封筒はそもそも開かない, #120）。該当封筒が無い・評価結果が無い・
- * 開けない場合は null で、呼び出し側は従来の経路へ落ちる。
- */
-export function unlockWithEvaluatedPrf(
-  envelopes: readonly CryptoEnvelope[],
-  prf: PrfEvaluation | null | undefined,
-): Uint8Array | null {
-  if (prf === null || prf === undefined) return null;
-  const envelope = passkeyEnvelopes(envelopes).find((e) => e.credentialId === prf.credentialId);
-  if (envelope === undefined) return null;
-  try {
-    return openPasskeyEnvelope(envelope, prf.prfOutput);
-  } catch {
-    // 封筒の改竄・別 rpId での再登録等で AEAD 認証に失敗。秘密は出さない
-    console.warn("zakki-passkey: ログイン時の PRF 出力では封筒を開けませんでした");
-    return null;
-  }
 }
 
 /**
@@ -324,7 +299,7 @@ export async function savePasskeyEnvelope(
   await postPasskeyEnvelope(dek, await evaluatePrf(api, [credentialId]), options);
 }
 
-/** 評価済みの PRF で DEK を wrap して保存する（登録・自己修復の共通部）。 */
+/** 評価済みの PRF で DEK を wrap して保存する */
 async function postPasskeyEnvelope(
   dek: Uint8Array,
   prf: PrfEvaluation,
@@ -345,44 +320,12 @@ async function postPasskeyEnvelope(
 }
 
 /**
- * **自己修復**（issue #120）: いま使っているクレデンシャルの封筒が無ければ、その場で作る。
+ * passkey 封筒を 1 本消す（issue #120）。
  *
- * ログインの `get()` で PRF を評価済み（#105）なのに、その credentialId の封筒が無い
- * ＝「パスキーは使えるが記録は読めない」状態。原因は登録の 2 段目（封筒 POST）だけが
- * 失敗した取りこぼしや、#115 で追加したパスキーに封筒を作り損ねた場合。DEK が他の手段
- * （パスフレーズ等）で得られた直後なら、**生体認証を追加で求めずに** 封筒を埋められる。
- *
- * 起動を止めないため、保存の失敗は警告に畳んで false を返す（次回また試みる）。
- *
- * @returns 封筒を新しく作ったら true
- */
-export async function healPasskeyEnvelope(
-  dek: Uint8Array,
-  prf: PrfEvaluation | null | undefined,
-  envelopes: readonly CryptoEnvelope[],
-  options: { fetchFn?: FetchLike } = {},
-): Promise<boolean> {
-  if (prf === null || prf === undefined) return false;
-  if (passkeyEnvelopes(envelopes).some((e) => e.credentialId === prf.credentialId)) return false;
-  try {
-    await postPasskeyEnvelope(dek, prf, options);
-    return true;
-  } catch (err: unknown) {
-    console.warn(
-      `zakki-passkey: 封筒の自己修復に失敗しました（次回再試行）: ${err instanceof Error ? err.name : "unknown"}`,
-    );
-    return false;
-  }
-}
-
-/**
- * passkey 封筒を 1 本消す（失効の 2 段階目, issue #120）。
- *
- * パスキーの失効は **2 つの DB に跨る**: クレデンシャル（公開鍵）はコントロールプレーン
- * DB（`DELETE /auth/credentials/:id`, #115）、封筒はユーザ自身のジャーナル DB。サーバは
- * 互いの DB を触らないので、両方消すのは **クライアントの責務**。順序はクレデンシャル →
- * 封筒（先に封筒だけ消えるとアンロック手段を失うため）。片方だけ成功しても致命的では
- * ないが、封筒が残るとバックアップに無意味な行が残るので掃除する。
+ * ログインが OIDC に替わり（docs/MULTIUSER.md「ログイン（OIDC）」）コントロールプレーンは
+ * この WebAuthn クレデンシャル（公開鍵）を管理しなくなったため、失効は**封筒を消す
+ * だけ**でよい: クレデンシャル自体は認証器の中に残るが、対応する封筒が無ければ
+ * DEK を開けないので実質失効する。
  */
 export async function revokePasskeyEnvelope(
   credentialId: string,

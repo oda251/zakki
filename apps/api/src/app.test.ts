@@ -14,7 +14,9 @@ function makeApp() {
   const db = drizzle(createClient({ url: ":memory:" }), { schema });
   return createApp({
     db,
-    auth: { rpId: "zakki.test", rpOrigin: "https://zakki.test", sessionSecret: "test-secret" },
+    auth: { appOrigin: "https://zakki.test", sessionSecret: "test-secret" },
+    // このスイートはログインしないのでプロバイダは不要
+    providers: [],
     // このスイートは /me/db を叩かないので、到達不能な base URL でよい
     // （プロビジョニング本体の検証は routes/me.test.ts）
     turso: createTursoPlatform({
@@ -41,10 +43,10 @@ describe("createApp", () => {
 
 /**
  * CORS（issue #112 / #134）。Worker は中継サーバとは別オリジンに置くので、
- * ブラウザの JSON POST は preflight を通る。許可は RP origin ちょうど 1 つ。
+ * ブラウザの JSON POST は preflight を通る。許可は APP_ORIGIN ちょうど 1 つ。
  */
 describe("CORS", () => {
-  test("RP origin からの preflight は許可される", async () => {
+  test("APP_ORIGIN からの preflight は許可される", async () => {
     const res = await makeApp().fetch(
       new Request("http://control.test/auth/login/options", {
         method: "OPTIONS",

@@ -6,9 +6,14 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { createApp } from "@zakki/api/app.ts";
-import { createSoftAuthenticator, type SoftAuthenticator } from "@zakki/api/auth/test-fixtures.ts";
+import {
+  createTestGoogleProvider,
+  loginWithIdp,
+  TEST_APP_ORIGIN,
+} from "@zakki/api/auth/test-login.ts";
+import { createFakeIdp, type FakeIdp } from "@zakki/api/auth/test-oidc.ts";
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import { accountDatabases, accounts, credentials } from "@zakki/api/db/schema.ts";
+import { accountDatabases, accountIdentities, accounts } from "@zakki/api/db/schema.ts";
 import * as schema from "@zakki/api/db/schema.ts";
 import { createTursoPlatform } from "@zakki/core/turso/platform.ts";
 import { databaseNameForAccount } from "@zakki/api/turso/provision.ts";
@@ -17,15 +22,13 @@ import { createFakePlatformApi } from "@zakki/core/turso/test-fixtures.ts";
 /**
  * ユーザごと Turso DB のプロビジョニング（issue #101）と退会（issue #116）の統合検証。
  *
- * fetch ハンドラを直叩きし、コントロールプレーン DB は本物の libsql、認証は #100 の
- * ソフトウェア認証器で実際に登録してセッションを得る。ローカルで再現できないのは
+ * fetch ハンドラを直叩きし、コントロールプレーン DB は本物の libsql、認証は fake IdP
+ * （auth/test-oidc.ts）相手に OIDC ログインを実際に通してセッションを得る。ローカルで再現できないのは
  * Turso Platform API だけなので、そこだけを**プロトコルレベル**で差し替える:
  * fake（turso/test-fixtures.ts）を Bun.serve で立て、クライアントの base URL を
  * そこへ向ける。クライアントのメソッドは mock しない。
  */
 
-const RP_ID = "zakki.test";
-const RP_ORIGIN = "https://zakki.test";
 const SESSION_SECRET = "test-session-secret";
 const ORG = "zakki-org";
 const GROUP = "zakki-group";
@@ -53,11 +56,13 @@ afterAll(() => {
 
 let db: ControlDb;
 let app: ReturnType<typeof createApp>;
+let idp: FakeIdp;
 
 function makeApp(platformBaseUrl: string): ReturnType<typeof createApp> {
   return createApp({
     db,
-    auth: { rpId: RP_ID, rpOrigin: RP_ORIGIN, sessionSecret: SESSION_SECRET },
+    auth: { appOrigin: TEST_APP_ORIGIN, sessionSecret: SESSION_SECRET },
+    providers: [createTestGoogleProvider(idp)],
     turso: createTursoPlatform({
       baseUrl: platformBaseUrl,
       apiToken: API_TOKEN,
@@ -79,6 +84,7 @@ beforeEach(async () => {
   // （切らないと cascade 頼みの削除が「テストでだけ通る」ことになる）。
   // migrate はこの pragma を ON に戻すため、必ず migrate の後に実行する
   await client.execute("PRAGMA foreign_keys = OFF");
+  idp = await createFakeIdp();
 
   fake.state.groups.clear();
   fake.state.createGroupRequests.length = 0;
@@ -97,55 +103,17 @@ beforeEach(async () => {
   app = makeApp(baseUrl);
 });
 
-/** パスキーを登録してセッションを得る（#100 の経路をそのまま通す） */
-async function login(): Promise<{
-  accountId: string;
-  token: string;
-  authenticator: SoftAuthenticator;
-}> {
-  const authenticator = await createSoftAuthenticator(RP_ID);
-  const optionsRes = await app.fetch(
-    new Request("https://control.test/auth/register/options", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    }),
-  );
-  const { challenge } = (await optionsRes.json()) as { challenge: string };
-  const payload = await authenticator.attest({ challenge, origin: RP_ORIGIN });
-  const res = await app.fetch(
-    new Request("https://control.test/auth/register/verify", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  );
-  expect(res.status).toBe(200);
-  return { ...((await res.json()) as { accountId: string; token: string }), authenticator };
+/** OIDC でログインしてセッションを得る。呼ぶたびに別の利用者（subject）になる */
+let subjects = 0;
+async function login(): Promise<{ accountId: string; token: string; subject: string }> {
+  subjects += 1;
+  const subject = `sub-${subjects}`;
+  return { ...(await loginWithIdp(app, idp, { subject })), subject };
 }
 
-/** 同じパスキーでログインし直す（ログアウト後の再ログイン検証, issue #117） */
-async function reLogin(
-  authenticator: SoftAuthenticator,
-): Promise<{ accountId: string; token: string }> {
-  const optionsRes = await app.fetch(
-    new Request("https://control.test/auth/login/options", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    }),
-  );
-  const { challenge } = (await optionsRes.json()) as { challenge: string };
-  const assertion = await authenticator.assert({ challenge, origin: RP_ORIGIN, counter: 1 });
-  const res = await app.fetch(
-    new Request("https://control.test/auth/login/verify", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(assertion),
-    }),
-  );
-  expect(res.status).toBe(200);
-  return (await res.json()) as { accountId: string; token: string };
+/** 同じ利用者でログインし直す（ログアウト後の再ログイン検証, issue #117） */
+async function reLogin(subject: string): Promise<{ accountId: string; token: string }> {
+  return loginWithIdp(app, idp, { subject });
 }
 
 async function getDb(token?: string): Promise<Response> {
@@ -389,7 +357,8 @@ describe("GET /me/db の異常系", () => {
     const session = await login();
     app = createApp({
       db,
-      auth: { rpId: RP_ID, rpOrigin: RP_ORIGIN, sessionSecret: SESSION_SECRET },
+      auth: { appOrigin: TEST_APP_ORIGIN, sessionSecret: SESSION_SECRET },
+    providers: [createTestGoogleProvider(idp)],
       turso: createTursoPlatform({
         baseUrl,
         apiToken: "wrong-token",
@@ -405,13 +374,13 @@ describe("GET /me/db の異常系", () => {
 });
 
 describe("DELETE /me（退会, issue #116）", () => {
-  test("Turso の DB・台帳・アカウント・クレデンシャルがすべて消える", async () => {
+  test("Turso の DB・台帳・アカウント・identity がすべて消える", async () => {
     const session = await login();
     expect((await getDb(session.token)).status).toBe(200);
     const name = await databaseNameForAccount(session.accountId);
-    // 消す前: DB も台帳もクレデンシャルも在る
+    // 消す前: DB も台帳も identity も在る
     expect(fake.state.databases.has(name)).toBe(true);
-    expect(await db.select().from(credentials)).toHaveLength(1);
+    expect(await db.select().from(accountIdentities)).toHaveLength(1);
 
     const res = await deleteMe(session.token);
     expect(res.status).toBe(204);
@@ -422,7 +391,7 @@ describe("DELETE /me（退会, issue #116）", () => {
     expect(fake.state.databases.size).toBe(0);
     // コントロールプレーン側は cascade に頼らず明示的に消す（FK 強制は OFF）
     expect(await db.select().from(accounts)).toEqual([]);
-    expect(await db.select().from(credentials)).toEqual([]);
+    expect(await db.select().from(accountIdentities)).toEqual([]);
     expect(await db.select().from(accountDatabases)).toEqual([]);
   });
 
@@ -474,7 +443,7 @@ describe("DELETE /me の異常系（孤児 DB を作らない）", () => {
     expect(fake.state.deleteRequests).toEqual([name, name]);
     expect(fake.state.databases.size).toBe(0);
     expect(await db.select().from(accounts)).toEqual([]);
-    expect(await db.select().from(credentials)).toEqual([]);
+    expect(await db.select().from(accountIdentities)).toEqual([]);
     expect(await db.select().from(accountDatabases)).toEqual([]);
   });
 
@@ -574,10 +543,13 @@ describe("退会後の生き残りセッション（issue #116。恒久的な失
     expect(fake.state.deleteRequests).toHaveLength(1);
   });
 
-  test("退会済みアカウントのパスキーは残らない（クレデンシャルごと消えている）", async () => {
+  test("退会済みアカウントの identity は残らない（同じ Google アカウントで入り直すと新規になる）", async () => {
     const session = await login();
     expect((await deleteMe(session.token)).status).toBe(204);
-    expect(await db.select().from(credentials)).toEqual([]);
+    expect(await db.select().from(accountIdentities)).toEqual([]);
+
+    const again = await reLogin(session.subject);
+    expect(again.accountId).not.toBe(session.accountId);
   });
 });
 
@@ -605,7 +577,7 @@ describe("ログアウト後の生き残りセッション（issue #117）", () 
     const first = (await (await getDb(session.token)).json()) as DbResponse;
     expect((await logout(session.token)).status).toBe(204);
 
-    const again = await reLogin(session.authenticator);
+    const again = await reLogin(session.subject);
     expect(again.accountId).toBe(session.accountId);
     const res = await getDb(again.token);
     expect(res.status).toBe(200);

@@ -15,14 +15,14 @@ export function createApp(deps: AppDeps): Hono<ApiEnv> {
 
   // CORS（issue #112 / #134）。Worker は中継サーバとは別オリジンに置く構成なので、
   // ブラウザからの `content-type: application/json` の POST は preflight を通る。
-  // 許可するのは **RP origin ちょうど 1 つ**——WebAuthn の origin 検証と同じ値で、
-  // ここを緩めるとパスキーの前段だけが別サイトから叩けることになる。
+  // 許可するのは **SPA の origin（APP_ORIGIN）ちょうど 1 つ**——ここを緩めると
+  // ログインの前段だけが別サイトから叩けることになる。
   // credentials（Cookie）は使わない（セッションは Authorization ヘッダの JWT）ので
   // 許可しない。同一オリジン配備でも付いていて害は無い（preflight が来ないだけ）。
   app.use(
     "*",
     cors({
-      origin: deps.auth.rpOrigin,
+      origin: deps.auth.appOrigin,
       allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
       allowHeaders: ["authorization", "content-type"],
       maxAge: 86400,
@@ -39,7 +39,7 @@ export function createApp(deps: AppDeps): Hono<ApiEnv> {
   // 死活監視のみ（DB ping なしの静的 200）
   app.get("/healthz", (c) => c.json({ ok: true }));
 
-  // パスキー認証（issue #100）
+  // OIDC ログイン（docs/MULTIUSER.md「ログイン（OIDC）」）
   app.route("/auth", authRoutes(deps));
 
   // ユーザごと DB のプロビジョニング（issue #101、要セッション）
