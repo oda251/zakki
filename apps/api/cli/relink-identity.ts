@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { err, ok, type Result } from "neverthrow";
 import type { ControlDb } from "@zakki/api/db/client.ts";
@@ -58,13 +58,21 @@ export async function relinkIdentities(
   if (fromAccount === undefined) return err({ kind: "unknown-source", accountId: from });
   if (toAccount === undefined) return err({ kind: "unknown-target", accountId: to });
 
-  const moved = (
-    await db
+  // to が既に主 identity を持つと、from の主を移した時点で部分一意インデックス
+  // （account ごとに主は高々 1 つ, issue #159）へ衝突する。先に to の主を外し、
+  // 移動と一緒に 1 バッチで行う（部分一意チェックは文単位なので demote が先に効く）。
+  const [, movedRows] = await db.batch([
+    db
+      .update(accountIdentities)
+      .set({ isPrimary: 0 })
+      .where(and(eq(accountIdentities.accountId, to), eq(accountIdentities.isPrimary, 1))),
+    db
       .update(accountIdentities)
       .set({ accountId: to })
       .where(eq(accountIdentities.accountId, from))
-      .returning({ subject: accountIdentities.subject })
-  ).length;
+      .returning({ subject: accountIdentities.subject }),
+  ]);
+  const moved = movedRows.length;
 
   const deleted = await deleteAccount(db, platform, from);
   if (deleted.isErr()) return err({ kind: "delete-failed", cause: deleted.error });

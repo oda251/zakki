@@ -590,3 +590,48 @@ describe("resolveRemoteSession（設定ベースの構成選択）", () => {
     expect(session.providers.map((p) => p.id)).toEqual(["google"]);
   });
 });
+
+describe("アカウント表示とログアウト（issue #159）", () => {
+  test("R18: logout() は POST /auth/logout を呼び、セッションを捨てる", async () => {
+    const { client } = await signUp();
+    const session = client.session();
+    if (session === null) throw new Error("ログイン済みのはず");
+    const before = cp.requests.length;
+
+    await client.logout();
+
+    // サーバへはログアウトの 1 往復だけ（認証ヘッダ付き）
+    expect(cp.requests.length).toBe(before + 1);
+    expect(cp.requests[before]?.url).toBe(`${cp.baseUrl}/auth/logout`);
+    // メモリのセッションは消え、以後 connect() は 401（requireSession）
+    expect(client.session()).toBeNull();
+  });
+
+  test("R19: 未ログインの logout() は no-op（fetch を発行しない）", async () => {
+    const client = createControlPlaneClient({ baseUrl: cp.baseUrl, fetchFn: routedFetch });
+    const before = cp.requests.length;
+    await client.logout();
+    expect(cp.requests.length).toBe(before);
+  });
+
+  test("R20: ログインの全経路（completeLogin → resolveRemoteSession）で表示用の account が届く", async () => {
+    // 直接の client.completeLogin の戻り値にも、起動フロー（resolveRemoteSession が
+    // 内部で completeLogin を呼ぶ）の結果にも account が載る。main.tsx は後者を使う
+    const { client, subject } = await signUp();
+    expect(client.session()?.account).toEqual({
+      email: `${subject}@example.com`,
+      provider: { id: "google", name: "Google" },
+    });
+    const hash = await cp.authorize("sub-r20");
+    const session = await resolveRemoteSession({
+      fetchFn: routedFetch,
+      hash,
+      clearHash: () => undefined,
+    });
+    if (session?.status !== "signed-in") throw new Error("signed-in のはず");
+    expect(session.client.session()?.account).toEqual({
+      email: "sub-r20@example.com",
+      provider: { id: "google", name: "Google" },
+    });
+  });
+});

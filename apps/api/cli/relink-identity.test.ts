@@ -151,4 +151,31 @@ describe("relinkIdentities", () => {
     expect(retried._unsafeUnwrap()).toEqual({ moved: 0 });
     expect(await db.select().from(accounts).where(eq(accounts.id, fresh))).toEqual([]);
   });
+
+  test("to が既に主 identity を持つ場合も、移行後の主は 1 つに収まる（issue #159）", async () => {
+    const legacy = await seedLegacyAccount();
+    // 既存アカウントが既に identity（主）を持つケース
+    await db.insert(accountIdentities).values({
+      provider: "google",
+      subject: "sub-legacy",
+      accountId: legacy,
+      email: "legacy@example.com",
+      isPrimary: 1,
+      createdAt: NOW,
+    });
+    // 移行側の新アカウントも主 identity を持つ
+    const fresh = await seedFreshOidcAccount("sub-fresh");
+    await db
+      .update(accountIdentities)
+      .set({ isPrimary: 1 })
+      .where(eq(accountIdentities.accountId, fresh));
+
+    const result = await relinkIdentities(db, platform, { from: fresh, to: legacy });
+
+    expect(result._unsafeUnwrap()).toEqual({ moved: 1 });
+    const identities = await db.select().from(accountIdentities);
+    expect(identities).toHaveLength(2);
+    // 主は高々 1 つ（部分一意インデックスに違反せず、どこかに 1 つだけ）
+    expect(identities.filter((i) => i.isPrimary === 1)).toHaveLength(1);
+  });
 });

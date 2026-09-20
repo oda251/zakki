@@ -3,6 +3,7 @@ import { Breadcrumb } from "@zakki/web/client/graph/Breadcrumb.tsx";
 import { GraphViewErrorBoundary } from "@zakki/web/client/GraphViewErrorBoundary.tsx";
 import { LeftSidebar } from "@zakki/web/client/layout/LeftSidebar.tsx";
 import { RightPanel } from "@zakki/web/client/layout/RightPanel.tsx";
+import { SettingsPanel } from "@zakki/web/client/layout/SettingsPanel.tsx";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 // react-force-graph-2d（d3 一式）が重いため、グラフ描画は初期チャンクから分離する
@@ -33,6 +34,7 @@ export function App() {
         )}
       </div>
       <RightPanel />
+      <SettingsPanel />
     </div>
   );
 }

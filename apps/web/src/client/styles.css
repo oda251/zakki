@@ -85,7 +85,7 @@ body,
   @apply flex-1 overflow-y-auto px-2 pb-2;
 }
 
-/* 左メニュー下部の設定行（パスキー登録・アンロック, #104） */
+/* 左メニュー下部のフッター行（ログイン / アカウントメニュー / 設定入口, issue #159） */
 .sidebar__footer {
   @apply flex shrink-0 flex-col gap-1 border-t px-2 py-2;
   border-color: var(--hairline);
@@ -224,6 +224,99 @@ body,
 
 .empty-note {
   @apply px-2 py-4 text-sm text-ink-muted;
+}
+
+/* ---- アカウントメニュー（issue #159: サイドバー下部の signed-in 表示） ---- */
+
+.account-menu {
+  @apply relative flex flex-col gap-1;
+}
+
+.account-menu__trigger {
+  @apply flex w-full cursor-pointer flex-col gap-0.5 rounded border px-2 py-1.5 text-left;
+  border-color: var(--hairline);
+  background: rgba(255, 255, 255, 0.06);
+}
+.account-menu__trigger:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--accent);
+}
+
+.account-menu__name {
+  @apply text-xs text-ink-secondary;
+}
+
+.account-menu__email {
+  @apply truncate text-xs font-medium text-ink;
+}
+
+.account-menu__caret {
+  @apply ml-auto shrink-0 text-xs text-ink-muted;
+}
+
+/* 外側クリックでメニューを閉じるための透過 backdrop（指の届く範囲を広く覆う） */
+.account-menu__backdrop {
+  @apply fixed inset-0 z-20 cursor-default border-0 bg-transparent p-0;
+}
+
+/* フッターの上（メニュー下方向へ伸ばすと画面外に出るため）に重ねる */
+.account-menu__popover {
+  @apply absolute bottom-full left-0 right-0 z-30 mb-1 flex flex-col gap-0.5 rounded border p-1;
+  border-color: var(--baseline);
+  background: var(--surface-1);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.account-menu__item {
+  @apply w-full cursor-pointer rounded border-0 bg-transparent px-2 py-1.5 text-left text-sm text-ink;
+}
+.account-menu__item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.account-menu__item--danger {
+  color: var(--series-6);
+}
+.account-menu__item--danger:hover {
+  background: rgba(230, 103, 103, 0.15);
+}
+
+/* ---- 設定パネル（モーダル, issue #159） ---- */
+
+.settings-overlay {
+  @apply fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4;
+}
+
+.settings-panel {
+  @apply flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-lg border bg-surface;
+  border-color: var(--baseline);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.settings-panel__header {
+  @apply flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3;
+  border-color: var(--hairline);
+}
+
+.settings-panel__title {
+  @apply text-sm font-semibold text-ink;
+}
+
+.settings-panel__close {
+  @apply cursor-pointer rounded border-0 bg-transparent px-2 py-1 text-sm text-ink-secondary;
+}
+.settings-panel__close:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.settings-panel__body {
+  @apply overflow-y-auto px-4 py-4;
+}
+
+/* パスキー操作（設定パネル内, #104 / issue #159） */
+.passkey-settings {
+  @apply flex flex-col gap-1;
 }
 
 /* ---- Composer.Web（docs/COMPOSER.md） ---- */

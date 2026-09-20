@@ -35,6 +35,11 @@ const SessionSchema = v.object({
   accountId: v.string(),
   token: v.string(),
   expiresAt: v.number(),
+  // サイドバー下部のアカウント表示用（issue #159）。メールと OIDC プロバイダ
+  account: v.object({
+    email: v.nullable(v.string()),
+    provider: v.object({ id: v.string(), name: v.string() }),
+  }),
 });
 
 /** `GET /me/db` の応答（#101） */
@@ -55,6 +60,11 @@ export interface ControlPlaneSession {
   readonly token: string;
   /** epoch 秒 */
   readonly expiresAt: number;
+  /** 表示用アカウント（メール + OIDC プロバイダ, issue #159） */
+  readonly account: {
+    readonly email: string | null;
+    readonly provider: { readonly id: string; readonly name: string };
+  };
 }
 
 export interface ControlPlaneOptions {
@@ -79,6 +89,11 @@ export interface ControlPlaneClient {
   readonly connect: () => Promise<RemoteDbConnection>;
   /** 接続情報を Identity（RemoteIdentity）へ写して返す */
   readonly identity: () => Promise<Identity>;
+  /**
+   * 全端末ログアウト（`POST /auth/logout`, issue #117 / #159）。
+   * 成功したらメモリ上のセッション・接続情報を捨てる。未ログインは何もしない。
+   */
+  readonly logout: () => Promise<void>;
   /**
    * 中継サーバ（apps/web）向けの fetch。セッション JWT を Authorization ヘッダで
    * 添える。replication / 封筒配布はこれを `fetchFn` として使うことで、
@@ -154,12 +169,26 @@ export function createControlPlaneClient(options: ControlPlaneOptions): ControlP
     return fetchFn(input, { ...init, headers });
   };
 
+  const logout = async (): Promise<void> => {
+    // ログインしていないときは何もしない（二重呼び出し等で fetch を発行しない, R20）
+    if (session === null) return;
+    const res = await fetchFn(`${base}/auth/logout`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    if (!res.ok) throw new ApiRequestError(res.status, "ログアウトに失敗しました");
+    // サーバがセッション世代を進めたので、メモリ上のセッションも捨てて signed-out に戻す
+    session = null;
+    connection = null;
+  };
+
   return {
     session: () => session,
     completeLogin,
     connect,
     identity: async () => remoteIdentity(await connect()),
     authorizedFetch,
+    logout,
   };
 }
 

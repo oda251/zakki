@@ -31,7 +31,7 @@ export function LoginButton() {
   if (signedOut === null) return null;
 
   return (
-    <div className="sidebar__footer">
+    <>
       {signedOut.providers.map((provider) => (
         <button
           key={provider.id}
@@ -45,6 +45,6 @@ export function LoginButton() {
       {signedOut.error !== null && (
         <div className="empty-note">{describeError(signedOut.error)}</div>
       )}
-    </div>
+    </>
   );
 }

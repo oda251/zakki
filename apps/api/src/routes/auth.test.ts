@@ -177,10 +177,12 @@ describe("GET /auth/oidc/:provider/callback", () => {
 
     const identities = await db.select().from(accountIdentities);
     expect(identities).toHaveLength(1);
+    // 新規アカウントの最初（今は唯一）の identity が主（issue #159）
     expect(identities[0]).toMatchObject({
       provider: "google",
       subject: "sub-1",
       email: "me@example.com",
+      isPrimary: 1,
     });
     expect(await db.select().from(accounts)).toHaveLength(1);
     const handoffs = await db.select().from(loginHandoffs);
@@ -274,14 +276,30 @@ describe("GET /auth/oidc/:provider/callback", () => {
 describe("POST /auth/login/exchange", () => {
   test("handoff code をセッションに換える。トークンで /auth/me に到達できる", async () => {
     const started = await startLogin(app);
-    const cb = await callback(app, idp, started, { subject: "sub-1" });
+    const cb = await callback(app, idp, started, { subject: "sub-1", email: "me@example.com" });
     const res = await exchange(app, handoffCodeOf(cb));
     expect(res.status).toBe(200);
-    const session = (await res.json()) as { accountId: string; token: string; expiresAt: number };
+    const session = (await res.json()) as {
+      accountId: string;
+      token: string;
+      expiresAt: number;
+    };
     expect(typeof session.expiresAt).toBe("number");
     const me = await get("/auth/me", session.token);
     expect(me.status).toBe(200);
     expect(await me.json()).toEqual({ accountId: session.accountId });
+  });
+
+  test("応答にアカウント表示用の account（主 identity の email と provider）が載る（issue #159）", async () => {
+    const started = await startLogin(app);
+    const cb = await callback(app, idp, started, { subject: "sub-1", email: "me@example.com" });
+    const res = await exchange(app, handoffCodeOf(cb));
+    expect(res.status).toBe(200);
+    const session = (await res.json()) as { account: unknown };
+    expect(session.account).toEqual({
+      email: "me@example.com",
+      provider: { id: "google", name: "Google" },
+    });
   });
 
   test("同じ code は二度使えない（単回使用）", async () => {

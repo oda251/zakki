@@ -53,7 +53,14 @@ describe("コントロールプレーン DB スキーマ", () => {
       .from(accountIdentities)
       .where(eq(accountIdentities.accountId, "acc-1"));
     expect(identities).toEqual([
-      { provider: "google", subject: "sub-1", accountId: "acc-1", email: null, createdAt: NOW },
+      {
+        provider: "google",
+        subject: "sub-1",
+        accountId: "acc-1",
+        email: null,
+        createdAt: NOW,
+        isPrimary: 0,
+      },
     ]);
     const ledger = await db.select().from(accountDatabases);
     expect(ledger).toHaveLength(1);
@@ -80,6 +87,49 @@ describe("コントロールプレーン DB スキーマ", () => {
     await db
       .insert(accountIdentities)
       .values({ ...row, provider: "github", accountId: "acc-2" });
+  });
+
+  test("is_primary（issue #159）: アカウントに主 identity は高々 1 つ", async () => {
+    const { db } = await openControlDb();
+    await db.insert(accounts).values([{ id: "acc-1", createdAt: NOW }]);
+    await db.insert(accountIdentities).values({
+      provider: "google",
+      subject: "sub-a",
+      accountId: "acc-1",
+      isPrimary: 1,
+      createdAt: NOW,
+    });
+
+    // 同じ account へ主を 2 つ書けない（部分一意インデックス）
+    let rejected = false;
+    try {
+      await db.insert(accountIdentities).values({
+        provider: "github",
+        subject: "sub-b",
+        accountId: "acc-1",
+        isPrimary: 1,
+        createdAt: NOW,
+      });
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+
+    // 別アカウントなら主は独立に持てる（部分一意インデックスは account ごと）
+    await db.insert(accounts).values([{ id: "acc-2", createdAt: NOW }]);
+    await db.insert(accountIdentities).values({
+      provider: "google",
+      subject: "sub-c",
+      accountId: "acc-2",
+      isPrimary: 1,
+      createdAt: NOW,
+    });
+
+    // 主を外した（0 にした）状態は書ける（主が 0 件は DB では防げない, issue #159）
+    await db
+      .update(accountIdentities)
+      .set({ isPrimary: 0 })
+      .where(eq(accountIdentities.accountId, "acc-2"));
   });
 
   test("アカウント削除で identity / handoff / account_databases が cascade で消える", async () => {
