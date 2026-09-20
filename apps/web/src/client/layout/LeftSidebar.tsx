@@ -90,11 +90,17 @@ export function LeftSidebar() {
       )}
       {!collapsed && (
         <div className="sidebar__footer">
-          {account !== null ? <AccountMenu account={account} /> : <LoginButton />}
-          {/* 設定は未ログイン・単一ユーザ構成でも開ける（パスキー登録アンロック, #104, issue #159） */}
-          <button type="button" className="sidebar__action" onClick={openSettings}>
-            ⚙ 設定
-          </button>
+          {account !== null ? (
+            <AccountMenu account={account} />
+          ) : (
+            <>
+              <LoginButton />
+              {/* 設定は未ログイン・単一ユーザ構成でも開ける。ログイン中は AccountMenu の中だけ（issue #159） */}
+              <button type="button" className="sidebar__action" onClick={openSettings}>
+                ⚙ 設定
+              </button>
+            </>
+          )}
         </div>
       )}
     </nav>
