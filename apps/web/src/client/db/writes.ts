@@ -66,7 +66,11 @@ async function removeSubtrees(db: ZakkiDatabase, rootIds: readonly string[]): Pr
   // サーバの FK cascade に相当: 消えたチャンクの userTags・links も落とす
   const tags = await db.chunkUserTags.find({ selector: { chunkId: { $in: ids } } }).exec();
   const links = await db.links
-    .find({ selector: { $or: [{ fromChunkId: { $in: ids } }, { toChunkId: { $in: ids } }] } })
+    .find({
+      selector: {
+        $or: [{ fromChunkId: { $in: ids } }, { toChunkId: { $in: ids } }],
+      },
+    })
     .exec();
   await Promise.all([
     db.chunkUserTags.bulkRemove(tags.map((t) => t.id)),
@@ -100,13 +104,20 @@ async function removeBlobFiles(
   chunkIds: string[],
   fetchFn: FetchLike,
 ): Promise<void> {
-  const blobs = await db.chunks
-    .find({ selector: { id: { $in: chunkIds }, kind: "blob" } })
-    .exec();
+  const blobs = await db.chunks.find({ selector: { id: { $in: chunkIds }, kind: "blob" } }).exec();
   if (blobs.length === 0) return;
   const fileIds = [...new Set(blobs.map((b) => b.fileId).filter((f): f is string => f !== null))];
-  await Promise.all(fileIds.map((fileId) => fetchFn(`/api/files/${fileId}`, { method: "DELETE" })));
-  await db.files.bulkRemove(fileIds);
+  const deletedFileIds = (
+    await Promise.all(
+      fileIds.map(async (fileId) => {
+        const response = await fetchFn(`/api/files/${fileId}`, {
+          method: "DELETE",
+        });
+        return response.ok ? fileId : null;
+      }),
+    )
+  ).filter((fileId): fileId is string => fileId !== null);
+  await db.files.bulkRemove(deletedFileIds);
 }
 
 /**
@@ -124,9 +135,7 @@ export async function saveChildrenDocs(
   drafts: readonly ChunkDraft[],
   now: string = nowIso(),
 ): Promise<ChunkDoc[]> {
-  const existingDocs = await db.chunks
-    .find({ selector: { parentId, kind: "text" } })
-    .exec();
+  const existingDocs = await db.chunks.find({ selector: { parentId, kind: "text" } }).exec();
   const existing = existingDocs.map(toChunkDoc).toSorted(byPosition);
 
   // 突き合わせはサーバ（repository.saveChildren）と共有する純カーネルに委譲する

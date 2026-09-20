@@ -5,7 +5,11 @@ import { makeFieldCrypto, plaintextFieldCrypto } from "@zakki/web/client/db/cryp
 import type { FileDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { filePull, filePush } from "@zakki/web/client/db/modifiers.ts";
 import { openTestDb } from "@zakki/web/client/db/test-db.ts";
-import { getOrCreateDateChunkDoc, saveChildrenDocs } from "@zakki/web/client/db/writes.ts";
+import {
+  getOrCreateDateChunkDoc,
+  removeChunkTree,
+  saveChildrenDocs,
+} from "@zakki/web/client/db/writes.ts";
 
 /** issue #157: files コレクションの wire 変換と、テキスト投影の blob 保護 */
 let db: ZakkiDatabase;
@@ -71,5 +75,29 @@ describe("F6: テキスト投影は blob チャンク doc を消さない", () =
     expect(saved).toHaveLength(1);
     expect(saved[0]?.position).toBe(0);
     expect(await db.chunks.findOne("1758000000000009").exec()).not.toBeNull();
+  });
+});
+
+describe("blob cleanup", () => {
+  test("R2 削除が失敗したとき files doc は残す", async () => {
+    const root = await getOrCreateDateChunkDoc(db, "2026-09-20");
+    await db.files.insert(doc());
+    await db.chunks.insert({
+      id: "1758000000000009",
+      parentId: root.id,
+      position: 1_000_000,
+      kind: "blob",
+      fileId: "1758000000000001",
+      content: "",
+      date: null,
+      polarity: null,
+      updatedAt: "2026-09-20T00:00:00.000Z",
+    });
+
+    await removeChunkTree(db, root.id, {
+      fetchFn: () => Promise.resolve(new Response(null, { status: 503 })),
+    });
+
+    expect(await db.files.findOne("1758000000000001").exec()).not.toBeNull();
   });
 });

@@ -11,7 +11,14 @@
  */
 import { createRxDatabase } from "rxdb";
 import type { RxCollection, RxConflictHandler, RxDatabase, RxJsonSchema, RxStorage } from "rxdb";
-import type { Chunk, ChunkUserTag, Correction, Link, Tag, ZakkiFile } from "@zakki/web/shared/api-types.ts";
+import type {
+  Chunk,
+  ChunkUserTag,
+  Correction,
+  Link,
+  Tag,
+  ZakkiFile,
+} from "@zakki/web/shared/api-types.ts";
 
 /**
  * RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ。
@@ -33,6 +40,7 @@ export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string }
   "name"
 >;
 export type TagDoc = { id: string; updatedAt: string } & Pick<Tag, "name">;
+export type CorrectionDoc = Correction;
 /**
  * アップロードファイル（issue #157）のメタデータ doc。実体（バイト列）はサーバ側
  * (R2) にあり、objectKey がその所在。encryption は「クライアントの FEK（#157 §5）
@@ -42,6 +50,7 @@ export type TagDoc = { id: string; updatedAt: string } & Pick<Tag, "name">;
 export type FileDoc = { id: string } & Omit<ZakkiFile, "id" | "createdAt">;
 /**
  * chunk 間リンク（数珠繋ぎ・意味リンク, #77）。サーバ links 表と同じく
+ * from < to 正規化のペア一意で、id はペアから決定的に導出する（ids.ts の
  * {@link import("@zakki/web/client/db/ids.ts").linkDocId}）。
  */
 export type LinkDoc = {
@@ -151,6 +160,8 @@ const filesSchema = {
     updatedAt: { type: "string" },
   },
   required: ["id", "name", "extension", "encryption", "objectKey", "size", "partSize", "updatedAt"],
+} as const satisfies RxJsonSchema<FileDoc>;
+
 /**
  * DB-per-user 前提の単純衝突方針（#43）: (updatedAt, _deleted) の一致で同一視し、
  * 差異はサーバ（realMasterState）を常に採る。deepEqual を避けた軽量版。
@@ -180,6 +191,7 @@ export async function createZakkiDb(
       schema: correctionsSchema,
       conflictHandler: serverWinsConflictHandler<CorrectionDoc>(),
     },
+    files: { schema: filesSchema, conflictHandler: serverWinsConflictHandler<FileDoc>() },
   });
   return db;
 }
