@@ -8,7 +8,6 @@ import {
   renameChunkDoc,
   saveChildrenDocs,
   setUserTagDocs,
-  upsertCorrection,
 } from "@zakki/web/client/db/writes.ts";
 
 /**
@@ -212,16 +211,5 @@ describe("addLinkDocs", () => {
 
     await removeChunkTree(db, String(b));
     expect(await db.links.find().exec()).toEqual([]);
-  });
-});
-
-describe("upsertCorrection", () => {
-  test("kana キーで upsert する", async () => {
-    const db = await open();
-    await upsertCorrection(db, "きろく", "記録", T1);
-    await upsertCorrection(db, "きろく", "起録", T2);
-    const docs = await db.corrections.find().exec();
-    expect(docs.length).toBe(1);
-    expect(docs[0]?.chosen).toBe("起録");
   });
 });

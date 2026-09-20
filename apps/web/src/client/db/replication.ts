@@ -51,19 +51,17 @@ export interface StartReplicationOptions {
 }
 
 /**
- * 全コレクションの replication 方針の SSOT（#77。#43 レビュー指摘
- * 「corrections がサイレント除外」の解消）。ZakkiCollections にコレクションを
- * 追加すると satisfies が型エラーになり、ここでの replicated / local の明示宣言と
- * {@link startReplication} の配線（{@link ZakkiReplicationStates} が本表から派生）が
- * 強制される。local にする場合は理由をコメントで残す。
+ * 全コレクションの replication 方針の SSOT（#77。#43 レビュー指摘「コレクションの
+ * サイレント除外」の解消）。ZakkiCollections にコレクションを追加すると satisfies が
+ * 型エラーになり、ここでの replicated / local の明示宣言と {@link startReplication} の
+ * 配線（{@link ZakkiReplicationStates} が本表から派生）が強制される。
+ * local にする場合は理由をコメントで残す。
  */
 export const REPLICATION_POLICY = {
   chunks: "replicated",
   tags: "replicated",
   chunkUserTags: "replicated",
   links: "replicated",
-  // 変換学習はデバイスローカル運用（暗号 modifier 未定義。同期化は将来 issue）
-  corrections: "local",
 } as const satisfies Record<keyof ZakkiCollections, "replicated" | "local">;
 
 /** REPLICATION_POLICY で "replicated" と宣言されたコレクション名 */

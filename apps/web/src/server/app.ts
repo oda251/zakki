@@ -51,7 +51,7 @@ export function createApp(deps: AppDeps): Hono {
   );
 
   // chunk / graph の読み書き・SSE は RxDB replication（+ liveQuery）へ移行済みで
-  // 撤去された（#44 → #45）。かな漢字変換もクライアント wasm 実行へ移設（#26）。
+  // 撤去された（#44 → #45）。かな漢字変換も web では撤去（変換は OS の IME に委任, #149）。
   // 残るのは replication で代替できないサーバ機能のみ: 封筒配布・replication 中継。
   const api = new Hono();
 

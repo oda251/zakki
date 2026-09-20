@@ -11,7 +11,7 @@
  */
 import { createRxDatabase } from "rxdb";
 import type { RxCollection, RxConflictHandler, RxDatabase, RxJsonSchema, RxStorage } from "rxdb";
-import type { Chunk, ChunkUserTag, Correction, Link, Tag } from "@zakki/web/shared/api-types.ts";
+import type { Chunk, ChunkUserTag, Link, Tag } from "@zakki/web/shared/api-types.ts";
 
 /**
  * RxDB は string primaryKey 必須。サーバ数値 id を文字列化して持つ。
@@ -27,10 +27,9 @@ export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string }
   "name"
 >;
 export type TagDoc = { id: string; updatedAt: string } & Pick<Tag, "name">;
-export type CorrectionDoc = Correction;
 /**
- * chunk 間リンク（数珠繋ぎ・意味リンク, #77）。サーバ links 表と同じく
- * from < to 正規化のペア一意で、id はペアから決定的に導出する（ids.ts の
+ * chunk 間リンク（数珠繋ぎ・意味リンク, #77）。サーバ links 表と同じく from < to 正規化の
+ * ペア一意で、id はペアから決定的に導出する（ids.ts の
  * {@link import("@zakki/web/client/db/ids.ts").linkDocId}）。
  */
 export type LinkDoc = {
@@ -45,7 +44,6 @@ export type ZakkiCollections = {
   chunkUserTags: RxCollection<ChunkUserTagDoc>;
   tags: RxCollection<TagDoc>;
   links: RxCollection<LinkDoc>;
-  corrections: RxCollection<CorrectionDoc>;
 };
 export type ZakkiDatabase = RxDatabase<ZakkiCollections>;
 
@@ -106,18 +104,6 @@ const linksSchema = {
   required: ["id", "fromChunkId", "toChunkId", "score", "origin", "updatedAt"],
 } as const satisfies RxJsonSchema<LinkDoc>;
 
-const correctionsSchema = {
-  version: 0,
-  primaryKey: "kana",
-  type: "object",
-  properties: {
-    kana: { type: "string", maxLength: 128 },
-    chosen: { type: "string" },
-    updatedAt: { type: "string" },
-  },
-  required: ["kana", "chosen", "updatedAt"],
-} as const satisfies RxJsonSchema<CorrectionDoc>;
-
 /**
  * DB-per-user 前提の単純衝突方針（#43）: (updatedAt, _deleted) の一致で同一視し、
  * 差異はサーバ（realMasterState）を常に採る。deepEqual を避けた軽量版。
@@ -143,10 +129,6 @@ export async function createZakkiDb(
     },
     tags: { schema: tagsSchema, conflictHandler: serverWinsConflictHandler<TagDoc>() },
     links: { schema: linksSchema, conflictHandler: serverWinsConflictHandler<LinkDoc>() },
-    corrections: {
-      schema: correctionsSchema,
-      conflictHandler: serverWinsConflictHandler<CorrectionDoc>(),
-    },
   });
   return db;
 }
