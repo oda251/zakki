@@ -15,7 +15,7 @@ export interface AccountInfo {
 /**
  * OIDC ログイン UI の状態（docs/MULTIUSER.md「ログイン（OIDC）」）。main.tsx の合成点が
  * `resolveRemoteSession()` の結果を一度だけ渡す: signed-out は `signedOut`、signed-in は
- * `account`。単一ユーザ構成では両方 null のままで、LoginButton は何も表示しない。
+ * `account`。単一ユーザ構成では両方 null のままで、UserMenu は「ローカルユーザ」を出す。
  * ログアウトは UI から何を呼ぶか（client.logout → db.remove → reload の実体）を
  * handler として登録し、`logout()` がそれを呼ぶ（issue #159 の合成点）。
  */

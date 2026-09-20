@@ -226,59 +226,65 @@ body,
   @apply px-2 py-4 text-sm text-ink-muted;
 }
 
-/* ---- アカウントメニュー（issue #159: サイドバー下部の signed-in 表示） ---- */
+/* ---- ユーザーメニュー（issue #159: サイドバー下部の単一ボタン。ログイン/ローカル共通） ---- */
 
-.account-menu {
+.user-menu {
   @apply relative flex flex-col gap-1;
 }
 
-.account-menu__trigger {
+.user-menu__trigger {
   @apply flex w-full cursor-pointer flex-col gap-0.5 rounded border px-2 py-1.5 text-left;
   border-color: var(--hairline);
   background: rgba(255, 255, 255, 0.06);
 }
-.account-menu__trigger:hover {
+.user-menu__trigger:hover {
   background: rgba(255, 255, 255, 0.12);
   border-color: var(--accent);
 }
 
-.account-menu__name {
+.user-menu__name {
   @apply text-xs text-ink-secondary;
 }
 
-.account-menu__email {
+.user-menu__email {
   @apply truncate text-xs font-medium text-ink;
 }
 
-.account-menu__caret {
+/* 右下の歯車アイコン（= 設定入口。旧 caret の位置を流用して右寄せ） */
+.user-menu__icon {
   @apply ml-auto shrink-0 text-xs text-ink-muted;
 }
 
 /* 外側クリックでメニューを閉じるための透過 backdrop（指の届く範囲を広く覆う） */
-.account-menu__backdrop {
+.user-menu__backdrop {
   @apply fixed inset-0 z-20 cursor-default border-0 bg-transparent p-0;
 }
 
 /* フッターの上（メニュー下方向へ伸ばすと画面外に出るため）に重ねる */
-.account-menu__popover {
+.user-menu__popover {
   @apply absolute bottom-full left-0 right-0 z-30 mb-1 flex flex-col gap-0.5 rounded border p-1;
   border-color: var(--baseline);
   background: var(--surface-1);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
 }
 
-.account-menu__item {
+.user-menu__item {
   @apply w-full cursor-pointer rounded border-0 bg-transparent px-2 py-1.5 text-left text-sm text-ink;
 }
-.account-menu__item:hover {
+.user-menu__item:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.account-menu__item--danger {
+.user-menu__item--danger {
   color: var(--series-6);
 }
-.account-menu__item--danger:hover {
+.user-menu__item--danger:hover {
   background: rgba(230, 103, 103, 0.15);
+}
+
+/* ログイン失敗などの注意文（メニュー内の改行不可メッセージ） */
+.user-menu__note {
+  @apply px-2 py-1 text-xs text-ink-muted;
 }
 
 /* ---- 設定パネル（モーダル, issue #159） ---- */
