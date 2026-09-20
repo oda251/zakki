@@ -81,6 +81,7 @@ style とは独立。実値は cell/px で別物のため共有しない）。`a
 機能単位の純粋モジュールを `packages/core` に置き、**各機能を interface 化して DI で差し替え**。
 
 - 変換: `KanaKanjiEngine` interface（`identity` / `anco` を差し替え, 既存）＋ `ConversionPipeline`。
+  **TUI 専用**（issue #149 で Web から撤去）。
 - records（raw 模型）/ 論理カーソル・intent（`controller`）/ keymap / 検索。
 - 永続化・解析・埋め込み・export は `AppProps`（`db`/`engine`/`embedder`/`sync`）で注入済み＝
   既にこの DI パターン。新機能も同じ流儀で port を切る。
@@ -93,24 +94,30 @@ style とは独立。実値は cell/px で別物のため共有しない）。`a
 （`Chunk.<platform>` / `Composer.<platform>`）に、**機能は注入された port**に委譲する。
 合成点（`apps/tui` の entry / `apps/web` の entry）で platform デザインと機能実装を束ねる。
 
-### 自動変換は「ライブ末尾」だけの現象 → 汎用 IME は不要
+### 自動変換は「ライブ末尾」だけの現象 → Web は OS の IME に委ねる（2026-09-20 更新, issue #149）
 
 変換は**常に追記点（ライブ末尾）でのみ**走り、修正（correct）は変換しないプレーン編集
 （`controller.ts` コメント「バッファ途中の非同期変換ができない」）。「文の途中で IME 変換」は
-**存在しない**ので、Web でもブラウザ内に汎用 IME を実装する必要はない。追記面はカーソル
-末尾固定で `変換済み + 淡色 pending + 末尾キャレット` を描くだけ。
+**存在しない**。
 
-Web の変換エンジンは `identityEngine`（変換しない）。漢字は OS の IME（composition）で入力し、
-凍結リテラルとして入る。IME オフの ASCII 打鍵はローマ字 → かなまで。以前はブラウザ内で
-anco を wasm 実行していたが、配信サイズ（reactor ~13MB + 辞書 ~7MB）と Cloudflare Workers
-上の配信の壊れやすさ（brotli の二重圧縮で `WebAssembly.compile` が落ちる）から撤去した。
+当初はここから「Web でもブラウザ内に汎用 IME を実装する必要はない（追記面だけ自前変換すればよい）」
+と結論し、anco を wasm 化してクライアントで動かした（issue #26）。**これを撤回する**（issue #149）:
+必要なのが「末尾に文字を足す」ことだけなら、それは OS の IME が既に提供している機能そのもので、
+自前で持つ理由が無い。撤回の直接の動機は重さ（初回ロードで over-the-wire 約 20 MiB）と、
+Cloudflare Workers でそのアセットが配れないこと。スマホでは学習済み辞書・ユーザ辞書・
+フリック入力がそのまま効く利点もある。
+
+したがって **Web の Composer は変換を持たない**。追記面は末尾キャレット固定で素のテキストを
+描くだけになり、淡色 pending（打鍵途中ローマ字）は無くなる。TUI は端末が IME プリエディットを
+扱えない（`CONCEPT.md` §形態）ため自前変換を継続する。
 
 ### New と Edit を `Composer` に統合
 
 現在の `Chunk.New`（追記・IME あり）と `Chunk.Edit`（修正・プレーン）の分裂は端末の都合。
 1 つの `Composer`（唯一の編集面）に統合し `mode` で分岐する。
 
-- `append` … 変換パイプラインを通す。末尾固定・pending あり。
+- `append` … 末尾固定。TUI は変換パイプラインを通し pending を描く。Web は OS の IME 任せで
+  変換もパイプラインも通さない（issue #149）。
 - `correct` … プレーン編集。可動カーソル。変換なし。**両 platform 共通**（一貫性優先で
   Web も途中変換しない）。
 
@@ -126,16 +133,20 @@ anco を wasm 実行していたが、配信サイズ（reactor ~13MB + 辞書 ~
 `width.ts`/`native-cursor.ts` は **Web からは不要**。`Composer.Tui` の内側に封印し、
 ロジック層・`App` からは参照しない。
 
-### raw 模型は不変。Web 入力はゲートでルート分岐
+### raw 模型は不変。Web 入力は 2 ルートとも確定済みテキスト（issue #149）
 
-raw には既に「変換対象のローマ字ライブ末尾」と「verbatim な凍結リテラル（ペースト）」の
-2 種がある。Web 入力はこれに乗せる:
+raw には「ライブ末尾」と「verbatim な凍結リテラル（ペースト）」の 2 種がある。この模型は
+Web でも変えない。変わるのは**ライブ末尾の解釈**だけで、Web ではローマ字打鍵ログではなく
+**確定済みの素のテキスト**になる:
 
-- OS IME 入力（既に日本語）→ “打鍵ペースト”扱いで凍結リテラル直行。
-- ローマ字入力（ASCII）→ ライブ末尾で自動変換。
+- OS IME 確定（`compositionend`）・ペースト → “打鍵ペースト”扱いで凍結リテラル直行。
+- 直接打鍵（ASCII）→ ライブ末尾へそのまま追記（変換しない）。
 
-ゲート（`Composer.Web` 内）: **UA 等で「PC（非モバイル）」かつ「本文が ASCII ローマ字のみ」の
-ときだけ自動変換**。それ以外は OS IME → 凍結リテラル直行。モデル変更は不要。
+当初案の「UA で PC 判定して ASCII のときだけ自動変換する」ゲートは**不要になった**
+（変換そのものが無いので分岐する対象が無い）。入力はネイティブの textarea に任せ
+（打鍵・IME composition・ペースト・キャレットは OS / ブラウザが処理）、Enter で確定した
+行を `freezePlainTail`（`apps/web/src/client/composer/plain-input.ts`）が凍結リテラルとして
+raw に畳む。core の `applyKey` / `freezeLiveTail` はローマ字前提のまま TUI が使い続ける。
 
 ### 状態管理を zustand へ（軸2 の一部・headless）
 
@@ -168,6 +179,7 @@ useState の山＋ref 二重持ちを **platform 非依存の zustand store** �
   `Composer.Tui`）、`native-cursor`/`width` を `Composer.Tui` 内へ封印。`App` を
   「platform 一式＋port を受け取る headless オーケストレーション」に整理。
 - **D.（後日）`Composer.Web` + `Chunk.web` + `apps/web`**。ゲート（上記）を実装。
+  → 実装済み。その後 issue #149 で Web の変換を撤去し、ゲートも不要になった（上記）。
 
 A→B→C の順は、store/Composer が core の純関数に乗るため。
 

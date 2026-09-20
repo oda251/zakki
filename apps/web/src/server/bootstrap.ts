@@ -14,8 +14,9 @@ import { createRemoteDbResolver } from "./identity/remote.ts";
  * web サーバは DEK を一切持たない（#45 / #28 項目1）:
  * - 暗号アンロック（keyfile unlock）・assertCryptoReady は撤去。復号・平文の
  *   読み書きはクライアント（RxDB replication + FieldCrypto）と TUI の責務で、
- *   サーバは **payload を不透明に扱う中継**（replication / 封筒配布）と変換
- *   エンジンのみを提供する。ZAKKI_ENCRYPTION はサーバでは参照しない
+ *   サーバは **payload を不透明に扱う中継**（replication / 封筒配布）のみを提供する。
+ *   かな漢字変換は web では OS の IME に委ね、サーバ側の変換 API も無い（#149）。
+ *   ZAKKI_ENCRYPTION はサーバでは参照しない
  *   （TUI 専用。暗号 ON かどうかはクライアントが封筒の有無で判定する）。
  * - **payload が暗号化されているかに関心を持たない**（issue #133）。暗号は
  *   opt-in で既定 OFF なので、wire に流れる doc は平文のこともある。それでも

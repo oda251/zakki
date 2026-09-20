@@ -5,7 +5,7 @@ import type { Hono } from "hono";
 import { createApp } from "./app.ts";
 
 // chunk / graph の読み書き・SSE、およびかな漢字変換のテストは撤去された
-// （#44 → #45 で読み書き移行、#26 で変換をクライアント wasm 実行へ移設）。
+// （#44 → #45 で読み書き移行、#149 で web の変換自体を撤去）。
 // 残るサーバ面（封筒・replication・セキュリティヘッダ）のうち、封筒は
 // routes/crypto.test.ts、replication は routes/replication.test.ts が担う。
 
@@ -31,7 +31,7 @@ function post(path: string, body: unknown): Request {
 }
 
 describe("GET /api/health", () => {
-  test("ok を返す（変換エンジンはサーバから撤去済み #26）", async () => {
+  test("ok を返す（サーバは変換エンジンを持たない #149）", async () => {
     const health = await json<{ ok: boolean }>(await app.request("/api/health"));
     expect(health).toEqual({ ok: true });
   });
@@ -48,7 +48,7 @@ describe("撤去済みのレガシー読取・書込みルート（#45）", () =
   });
 });
 
-describe("変換 API は撤去済み（#26 でクライアント wasm 実行へ移設）", () => {
+describe("変換 API は撤去済み（#26 でクライアントへ移設し、#149 で変換自体を撤去）", () => {
   test("convert / conversion 系ルートは 404", async () => {
     expect((await app.request(post("/api/convert", { kana: "きょう" }))).status).toBe(404);
     expect((await app.request("/api/conversion/state")).status).toBe(404);

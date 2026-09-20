@@ -4,6 +4,9 @@
 
 ## 変換エンジン（かな漢字変換）
 
+> 2026-09-20 追記（issue #149）: 本節は **TUI のみ**が対象。Web 版は変換を持たず、
+> 日本語入力を OS の IME に委ねる（`COMPOSER.md` 軸2）。
+
 採用: **[AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter) の公式 CLI `anco` を常駐外部プロセス化**（比較・深掘り根拠は `RESEARCH.md` §1）。
 
 | 段       | エンジン                                                                                                                            | 役割                                                            |

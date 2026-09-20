@@ -208,13 +208,3 @@ export async function addLinkDocs(
     throw new Error(`リンクの保存に失敗しました: ${failure.status}`);
   }
 }
-
-/** 変換学習（かな → 確定）の保存。correction は local のみ（replication 対象外） */
-export async function upsertCorrection(
-  db: ZakkiDatabase,
-  kana: string,
-  chosen: string,
-  now: string = nowIso(),
-): Promise<void> {
-  await db.corrections.upsert({ kana, chosen, updatedAt: now });
-}

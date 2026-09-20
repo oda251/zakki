@@ -25,7 +25,7 @@ just tags        # タグの統合提案（--apply で適用）
 
 ## Web UI
 
-グラフビュー（ノード=チャンク、エッジ=関連リンク）を中心にした Web 版。右に TUI と同じ入力欄と関連表示、左に日付チャンク一覧・タグフィルタを持つ（データモデルは [docs/CHUNKS.md](docs/CHUNKS.md)）。Web 版はかな漢字変換エンジンを持たない。日本語は OS の IME で入力する（IME オフのローマ字はかなまで変換する）。
+グラフビュー（ノード=チャンク、エッジ=関連リンク）を中心にした Web 版。右に TUI と同じ入力欄と関連表示、左に日付チャンク一覧・タグフィルタを持つ（データモデルは [docs/CHUNKS.md](docs/CHUNKS.md)）。**Web 版はかな漢字変換を持たず、日本語入力は OS の IME に委ねる**（issue #149。学習済み辞書・ユーザ辞書・フリック入力がそのまま効く）。
 
 ```sh
 just setup-web   # クライアント（Vite）をビルドして dist に置く
@@ -41,6 +41,7 @@ docker compose up --build
 
 留意:
 
+- **かな漢字変換は TUI だけが持つ**。Web は OS の IME に委ねるため、`just setup` / `just setup-zenz` で入れる anco・zenz は Web には要らない。
 - **TUI と Web サーバの同時起動は非推奨**（同一 SQLite への複数ライターとなり、解析パスが競合しうる）。どちらか一方を使う。
 - Web サーバは DEK を持たず復号しない（暗号文の中継・封筒配布・静的配信のみ）。E2E 暗号のアンロックはブラウザ側、初回セットアップ・パスフレーズ操作は TUI（`just tui` / `just passphrase`）で行う。
 - `ZAKKI_CONTROL_PLANE_URL` を設定すると、Google（OIDC）でログインして**ユーザごとの Turso DB**へ E2E 同期するマルチユーザ構成になる（未設定なら上記の単一ユーザ self-host のまま）。全体図と未デプロイでの検証手順は [docs/MULTIUSER.md](docs/MULTIUSER.md)。
@@ -61,7 +62,7 @@ TUI・Web とも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.c
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ランタイム   | Bun + TypeScript                                                                                                                                               |
 | TUI          | [OpenTUI](https://github.com/sst/opentui)                                                                                                                      |
-| かな漢字変換 | [AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter)（anco）+ [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf) |
+| かな漢字変換 | TUI のみ: [AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter)（anco）+ [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)。Web は OS の IME |
 | 形態素解析   | [lindera-wasm](https://github.com/lindera/lindera)                                                                                                             |
 | 感情分析     | [negaposi](https://github.com/hata6502/negaposi)（日本語評価極性辞書 / 東北大 乾・岡崎研）                                                                     |
 | DB           | bun:sqlite（+ [sqlite-vec](https://github.com/asg017/sqlite-vec)）                                                                                             |

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { firstValueFrom } from "rxjs";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { openTestDb } from "@zakki/web/client/db/test-db.ts";
-import { childrenView, correctionsView } from "@zakki/web/client/db/live.ts";
+import { childrenView } from "@zakki/web/client/db/live.ts";
 
 /**
  * Phase 4（#40）: RxDB を UI 購読用 Observable に変換する reactive view。
@@ -54,26 +54,5 @@ describe("reactive views (Phase 4)", () => {
     sub.unsubscribe();
     expect(seen.at(0)).toEqual(["a"]);
     expect(seen.at(-1)).toEqual(["new-head", "a"]);
-  });
-
-  test("correctionsView は Map を emit し insert で再 emit する", async () => {
-    const db = await open();
-    await db.corrections.insert({
-      kana: "きろく",
-      chosen: "記録",
-      updatedAt: "2026-07-06T00:00:00.000Z",
-    });
-    const seen: Array<Map<string, string>> = [];
-    const sub = correctionsView(db).subscribe((m) => seen.push(m));
-    await tick();
-    await db.corrections.insert({
-      kana: "かんじ",
-      chosen: "漢字",
-      updatedAt: "2026-07-06T00:00:00.000Z",
-    });
-    await tick();
-    sub.unsubscribe();
-    expect(seen.at(0)?.get("きろく")).toBe("記録");
-    expect(seen.at(-1)?.get("かんじ")).toBe("漢字");
   });
 });

@@ -149,14 +149,22 @@ module.exports = {
       },
     },
     {
-      name: "web-no-server-conversion",
+      name: "web-no-conversion",
       comment:
-        "web は（client/server とも）サーバ側かな漢字変換エンジン（backend/anco = AncoEngine）へ" +
-        "推移的にも到達しない（issue #26）。変換はクライアント wasm 実行に移設済み。" +
-        "AncoEngine 自体は TUI が使い続けるため撤去しない（web からの到達だけを断つ）",
+        "web は（client/server とも）かな漢字変換へ推移的にも到達しない（issue #149）。" +
+        "web の変換は OS の IME に委ねたので、入力は確定済みテキストとして raw に載る。" +
+        "エンジン（backend/anco）とパイプライン（core/conversion の engine/pipeline/compose/segment）が対象。" +
+        "同じ core/conversion にある paste.ts は名前が紛らわしいがペースト塊のチャンク境界マーカーで、" +
+        "変換とは独立のため対象外（records.ts 経由で web も使う）。" +
+        "これらは TUI が使い続けるため撤去しない（web からの到達だけを断つ）",
       severity: "error",
       from: { path: "^apps/web/src", pathNot: "\\.test\\.(ts|tsx)$" },
-      to: { path: "^packages/backend/src/anco/", reachable: true },
+      to: {
+        path:
+          "^packages/backend/src/anco/|" +
+          "^packages/core/src/conversion/(engine|pipeline|compose|segment)\\.ts$",
+        reachable: true,
+      },
     },
     {
       name: "web-no-api-runtime",

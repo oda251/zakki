@@ -4,6 +4,9 @@
 
 ## 1. かな漢字変換エンジン
 
+> 2026-09-20 追記（issue #149）: 本節の採否は **TUI についてのみ有効**。Web 版は
+> 変換を持たず OS の IME に委ねることにしたため、ここで選んだエンジンは Web には載らない。
+
 ### 主要候補
 
 | 名称                                                                                             | 形態                                                   | ライセンス   | 文脈考慮       | Bun/Node                                                | 所見                                                                                                                                                                                                                                                                                                                        |
@@ -195,7 +198,7 @@ packages/
 Cloudflare Workers は Node/Bun と別ランタイム（Web 標準 API のみ、`node:fs`/`Bun.spawn` 不可）。core を Worker・Web・TUI で共有するため、**core 内で `node:*`/`Bun.*` を禁止し、Web 標準（fetch / Web Crypto）＋ wasm のみ**に限定する。
 
 - 暗号（Argon2id / libsodium）は **Workers で動く wasm ビルド**を選ぶ。
-- `anco` 変換（subprocess）は Workers/ブラウザ不可 ＝ **TUI/サーバ専用 adapter** に隔離（Web は将来バックエンド or wasm 経由）。
+- `anco` 変換（subprocess）は Workers/ブラウザ不可 ＝ **TUI 専用 adapter** に隔離。Web は wasm 経由を試したが撤回し（issue #26 → #149）、変換そのものを持たず OS の IME に委ねる。
 
 ### バックエンド（将来のコントロールプレーン）
 

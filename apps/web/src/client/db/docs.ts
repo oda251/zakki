@@ -55,9 +55,3 @@ export async function childrenQuery(db: ZakkiDatabase, parentId: string): Promis
   const docs = await db.chunks.find({ selector: { parentId } }).exec();
   return docs.map(toChunkDoc).toSorted(byPosition);
 }
-
-/** kana→chosen の Map（変換シード） */
-export async function correctionsMap(db: ZakkiDatabase): Promise<Map<string, string>> {
-  const docs = await db.corrections.find().exec();
-  return new Map(docs.map((d) => [d.kana, d.chosen]));
-}

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
-import { childrenQuery, correctionsMap } from "@zakki/web/client/db/docs.ts";
+import { childrenQuery } from "@zakki/web/client/db/docs.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 
 /**
@@ -32,10 +32,10 @@ afterEach(async () => {
 const tick = () => new Promise((r) => setTimeout(r, 30));
 
 describe("rxdb database (Phase 1)", () => {
-  test("createZakkiDb は 5 コレクションを持つ", async () => {
+  test("createZakkiDb は 4 コレクションを持つ", async () => {
     const db = await open();
     expect(Object.keys(db.collections).toSorted()).toEqual(
-      ["chunkUserTags", "chunks", "corrections", "links", "tags"].toSorted(),
+      ["chunkUserTags", "chunks", "links", "tags"].toSorted(),
     );
   });
 
@@ -56,17 +56,6 @@ describe("rxdb database (Phase 1)", () => {
     ]);
     const kids = await childrenQuery(db, "100");
     expect(kids.map((k) => k.content)).toEqual(["a", "b", "c"]);
-  });
-
-  test("correctionsMap は kana→chosen の Map を返す", async () => {
-    const db = await open();
-    await db.corrections.bulkInsert([
-      { kana: "きろく", chosen: "記録", updatedAt: "2026-07-06T00:00:00.000Z" },
-      { kana: "かんじ", chosen: "漢字", updatedAt: "2026-07-06T00:00:00.000Z" },
-    ]);
-    const map = await correctionsMap(db);
-    expect(map.get("きろく")).toBe("記録");
-    expect(map.get("かんじ")).toBe("漢字");
   });
 
   test("reactive: find().$ は insert 後に再度 emit する", async () => {

@@ -32,8 +32,3 @@ export function childrenView(db: ZakkiDatabase, parentId: string): Observable<Ch
     .find({ selector: { parentId } })
     .$.pipe(map((docs) => docs.map(toChunkDoc).toSorted(byPosition)));
 }
-
-/** kana→chosen の Map を流す reactive view（変換シード） */
-export function correctionsView(db: ZakkiDatabase): Observable<Map<string, string>> {
-  return db.corrections.find().$.pipe(map((docs) => new Map(docs.map((d) => [d.kana, d.chosen]))));
-}
