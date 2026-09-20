@@ -284,8 +284,13 @@ Workers 版が node 依存へ到達しないことは depcruise の `web-worker-
 # 1) コントロールプレーン Worker（apps/api）
 bun run --cwd apps/api deploy         # → https://zakki-api-prod.<account>.workers.dev
 
-# 2) 中継サーバ Worker（apps/web）
+# 2) ファイルアップロード用の R2 バケット（issue #157）
+ wrangler r2 bucket create zakki-files-prod
+ #    別名にする場合は apps/web/wrangler.jsonc の r2_buckets[].bucket_name も合わせる
+
+# 3) 中継サーバ Worker（apps/web）
 just setup-web                        # vite build を dist/ へ
+#    wrangler.jsonc の vars に apps/api の URL を入れる
 bun run --cwd apps/web deploy         # → https://zakki-web.<account>.workers.dev
 ```
 

@@ -37,6 +37,8 @@ export interface AppProps {
   /** 起動時に解決済みの当日の日付チャンク（トップレベル）id。保存のたびの再解決を省く */
   dateChunkId: number;
   initialRaw: string;
+  /** blob チャンク（issue #157）の表示行（ファイル名のみ）。buildRaw の対象外なので別枠で渡す */
+  initialBlobLines?: { id: number; text: string }[];
   vaultDir: string;
   engine: KanaKanjiEngine;
   /** 学習済みの手動修正（かな → 確定表記）。起動時に corrections テーブルから読む */
@@ -78,6 +80,7 @@ export function App({
   date,
   dateChunkId,
   initialRaw,
+  initialBlobLines = [],
   vaultDir,
   engine,
   corrections,
@@ -362,6 +365,12 @@ export function App({
               />
             );
           })}
+          {/* blob チャンク（issue #157）: ファイル名のみの読み取り専用表示。編集手段が
+              無いためクリック・カーソル選択の対象にしない（onClick/selected を渡さない）。
+              key/id は chunk id で安定させる（`chunk-<raw offset>` の位置空間と衝突しない）。 */}
+          {initialBlobLines.map((line) => (
+            <Chunk.View key={`blob-${line.id}`} id={`blob-${line.id}`} text={line.text} />
+          ))}
           {/* 入力中チャンク（ライブ）。id/key は固定（確定数で変えない）。 */}
           <Chunk.New
             key="chunk-new"

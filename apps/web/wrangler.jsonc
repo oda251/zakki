@@ -27,6 +27,10 @@
   // サーバ側の問い合わせは必ずこの binding を通す。service 名は apps/api の
   // env.production.name と一致させる。
   "services": [{ "binding": "CONTROL_PLANE", "service": "zakki-api-prod" }],
+  // アップロードファイルの実体置き場（issue #157）。バケットはデプロイ前に
+  // `wrangler r2 bucket create zakki-files-prod` で作る。ここはその名前を束ねるだけ。
+  // binding が無い配備では /api/files/* が 503 を返す（単一ユーザ self-host と同じ扱い）。
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "zakki-files-prod" }],
   // 非機密の設定。値は空にしてある: 埋めずに `wrangler dev` すると env 検証が
   // 即座に落ちて設定漏れに気づける（apps/api/wrangler.jsonc と同じ方針）。
   //   ZAKKI_CONTROL_PLANE_URL  apps/api の base URL。**ブラウザが直接叩く**ための公開 URL で、
