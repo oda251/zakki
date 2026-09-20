@@ -25,6 +25,10 @@ import { AAD } from "@zakki/core/crypto/aad.ts";
  * - `content` が本文の唯一の保持者（raw / converted は廃止）。E2E 暗号 ON では
  *   暗号化する（AAD ラベルは {@link AAD.chunkContent}）。ただし日付チャンクの content は date と
  *   同値の平文（date が平文である方針の帰結。復号もスキップする）
+ * - `kind='blob'` はアップロードファイル（issue #157）を指す特殊行。`content` は空文字で、
+ *   表示名・実体は `file_id` が指す {@link files} 行が持つ。CHECK で
+ *   `kind` と `file_id` の対応を強制する（テキスト行に file_id が付く／blob 行が
+ *   file_id 無しで作られる、をどちらも DB レベルで防ぐ）
  */
 export const chunks = sqliteTable(
   "chunks",
@@ -41,6 +45,17 @@ export const chunks = sqliteTable(
     date: text("date"),
     /** ネガポジ極性 [-1,+1]（解析パスで算出・永続化）。未解析・日付チャンクは null */
     polarity: real("polarity"),
+    /** 'text' = 本文チャンク（従来どおり）。'blob' = アップロードファイルを指す（issue #157） */
+    kind: text("kind", { enum: ["text", "blob"] })
+      .notNull()
+      .default("text"),
+    /**
+     * kind='blob' の実体（files.id）。cascade を付けない: チャンク削除時は
+     * R2 の object_key を読んでから file 行・R2 オブジェクトを消す必要があり、
+     * その順序（チャンク → file 行）をリポジトリ（deleteChunk）が制御するため
+     * （cascade で先に消えると object_key が読めなくなる）
+     */
+    fileId: integer("file_id").references((): AnySQLiteColumn => files.id),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -52,8 +67,32 @@ export const chunks = sqliteTable(
     uniqueIndex("chunks_date_unique")
       .on(t.date)
       .where(sql`"date" IS NOT NULL`),
+    check("chunks_file_id_only_blob", sql`("kind" = 'blob') = ("file_id" IS NOT NULL)`),
   ],
 );
+
+/**
+ * アップロードファイルのメタデータ（issue #157）。実バイト列は R2 に置き、
+ * ここには表示・削除・復号に要る情報だけを持つ（`object_key` で R2 側を指す）。
+ *
+ * `extension` は暗号 ON でも平文（画像かどうかの弁別に使う。`chunks.date` を
+ * 平文にしているのと同じ受容, docs/tmp/157-file-upload.md）。`name`（拡張子を
+ * 除くファイル名）は暗号 ON なら AEAD 暗号文（AAD {@link AAD.fileName}）。
+ *
+ * `size` / `part_size` は平文（復号後）のバイト数。暗号化すると part ごとに
+ * 40 バイト（nonce 24 + tag 16）伸びるため、R2 上の実サイズとは異なる。
+ */
+export const files = sqliteTable("files", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  extension: text("extension").notNull(),
+  encryption: text("encryption", { enum: ["none", "password"] }).notNull(),
+  objectKey: text("object_key").notNull(),
+  size: integer("size").notNull(),
+  partSize: integer("part_size").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
 
 /**
  * チャンクへのユーザ明示タグ（旧 session_tags の一般化）。自動付与タグ
@@ -286,6 +325,8 @@ export const replDocs = sqliteTable(
 );
 
 export type Chunk = typeof chunks.$inferSelect;
+/** DOM の File 型と名前が衝突するため ZakkiFile とする */
+export type ZakkiFile = typeof files.$inferSelect;
 export type ChunkTag = typeof chunkTags.$inferSelect;
 export type ChunkUserTag = typeof chunkUserTags.$inferSelect;
 export type Correction = typeof corrections.$inferSelect;

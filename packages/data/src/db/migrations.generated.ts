@@ -164,4 +164,20 @@ export const EMBEDDED_MIGRATIONS: readonly EmbeddedMigration[] = [
       "\nCREATE UNIQUE INDEX `key_envelopes_passkey_credential_unique` ON `key_envelopes` (`credential_id`) WHERE \"kind\" = 'passkey';",
     ],
   },
+  {
+    tag: "0014_files",
+    folderMillis: 1789866956316,
+    hash: "d29636b62b650fb33bea29bb636fc5b1086caf72b2213ba39202daef546e2f29",
+    sql: [
+      "-- issue #157: chunks に kind / file_id を追加（CHECK 制約付き）するため drizzle-kit が\n-- テーブル再構築を生成する。0013 と同じ理由で 1 箇所だけ手を入れている: 新設の\n-- kind / file_id は旧表に存在しないので INSERT ... SELECT の列一覧から外す\n-- （生成のままだと \"no such column: kind\" で落ちる）。列を外すと kind は DEFAULT\n-- 'text' に採番され、file_id は NULL になる（既存行はすべてテキストチャンクなので\n-- 要件どおり: A1「migration 適用後、既存チャンク行の kind は 'text' になる」）。\n-- id は列一覧から外していない: links / chunk_tags / embeddings / chunk_user_tags が\n-- chunks.id を FK 参照しており、id が変わると全部壊れるため必ず移送する。\nCREATE TABLE `files` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`name` text NOT NULL,\n\t`extension` text NOT NULL,\n\t`encryption` text NOT NULL,\n\t`object_key` text NOT NULL,\n\t`size` integer NOT NULL,\n\t`part_size` integer NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n);\n",
+      "\nPRAGMA foreign_keys=OFF;",
+      '\nCREATE TABLE `__new_chunks` (\n\t`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,\n\t`parent_id` integer,\n\t`position` integer NOT NULL,\n\t`content` text NOT NULL,\n\t`date` text,\n\t`polarity` real,\n\t`kind` text DEFAULT \'text\' NOT NULL,\n\t`file_id` integer,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tFOREIGN KEY (`parent_id`) REFERENCES `chunks`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`file_id`) REFERENCES `files`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT "chunks_file_id_only_blob" CHECK(("kind" = \'blob\') = ("file_id" IS NOT NULL))\n);\n',
+      '\nINSERT INTO `__new_chunks`("id", "parent_id", "position", "content", "date", "polarity", "created_at", "updated_at") SELECT "id", "parent_id", "position", "content", "date", "polarity", "created_at", "updated_at" FROM `chunks`;',
+      "\nDROP TABLE `chunks`;",
+      "\nALTER TABLE `__new_chunks` RENAME TO `chunks`;",
+      "\nPRAGMA foreign_keys=ON;",
+      "\nCREATE UNIQUE INDEX `chunks_parent_position` ON `chunks` (`parent_id`,`position`);",
+      '\nCREATE UNIQUE INDEX `chunks_date_unique` ON `chunks` (`date`) WHERE "date" IS NOT NULL;',
+    ],
+  },
 ];

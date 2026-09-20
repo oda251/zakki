@@ -145,6 +145,12 @@ describe("0010_chunk_tree", () => {
 
     // 新規 id は既存 id と衝突しない（AUTOINCREMENT 続き）
     expect(Math.min(dc0701.id, dc0703.id, container.id)).toBeGreaterThan(4);
+
+    // 0014_files: 既存行はすべてテキストチャンク（issue #157 A1）。テーブル再構築を
+    // 挟んでも id・親子関係・links が保たれることは上の検証がそのまま担保する
+    const kinds = (await db.run(sql`SELECT kind, file_id AS fileId FROM chunks`))
+      .rows as unknown as { kind: string; fileId: number | null }[];
+    expect(kinds.every((k) => k.kind === "text" && k.fileId === null)).toBe(true);
   });
 
   test("空 DB（新規）にも適用できる", async () => {
