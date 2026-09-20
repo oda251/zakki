@@ -112,8 +112,9 @@ RxDB replication + liveQuery への移行で撤去された（#44 → #45）。w
 ローカル RxDB（IndexedDB レプリカ）へ読み書きし、`POST /api/replication/:collection/pull|push`
 で暗号文の wire doc を同期する。グラフのノード・派生値（childCount / descendantCount /
 root date 継承）はクライアントがレプリカから導出する（`client/store/graph-docs.ts`）。
-サーバに残る API は変換（/api/convert・/api/conversion/\*）・封筒配布
-（/api/crypto/envelopes）・replication 中継のみで、サーバは chunk 平文を一切復号しない。
+サーバに残る API は封筒配布（/api/crypto/envelopes）・replication 中継・設定配布
+（/api/config）だけで、サーバは chunk 平文を一切復号しない。変換 API（/api/convert・
+/api/conversion/\*）は #26 でクライアントへ移り、#149 で web の変換自体が無くなった。
 
 ## 解析・E2E への影響
 

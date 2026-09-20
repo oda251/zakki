@@ -263,6 +263,8 @@ Workers 版が node 依存へ到達しないことは depcruise の `web-worker-
 
 ブラウザ → コントロールプレーンは従来どおり公開 URL の直叩き（`GET /api/config` が返す `controlPlaneUrl`）で、そちらは CORS が要る。**サーバ側の呼び出しだけ**が binding を通る。
 
+**かな漢字変換の wasm アセットは配らない（issue #149）。** かつては brotli 済みの reactor wasm と辞書（over-the-wire 約 20 MiB）を Worker から配っていたが、**Cloudflare が既に brotli の中身をさらに転送圧縮する**ためブラウザが `WebAssembly.compile` で落ち、非圧縮で置く手も使えなかった（展開後 53.6 MiB / 26.9 MiB で Assets の 25 MiB 上限超え）。Web の変換は OS の IME に委ねることにしたので、この配信ごと消えた。
+
 **サーバは libsodium を読み込まない。** Workers では `ready()` が解決せずリクエストがハングする（例外ではなく無応答）。base64 変換と封筒の長さ定数は sodium 非依存の `packages/core/src/crypto/wire.ts` にある（depcruise `web-server-no-sodium`）。
 
 **単一ユーザ self-host（bun / docker）はそのまま残る。** Workers 版はマルチユーザ専用で、`ZAKKI_CONTROL_PLANE_URL` を必須にしてある（未設定なら起動失敗）。
