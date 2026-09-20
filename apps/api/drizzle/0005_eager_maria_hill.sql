@@ -1,0 +1,2 @@
+ALTER TABLE `account_identities` ADD `is_primary` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX `account_identities_primary_unique` ON `account_identities` (`account_id`) WHERE "is_primary" = 1;

@@ -1,4 +1,5 @@
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 /**
  * コントロールプレーン DB スキーマ（issue #99, docs/RESEARCH.md §7）。
@@ -50,11 +51,20 @@ export const accountIdentities = sqliteTable(
       .references(() => accounts.id, { onDelete: "cascade" }),
     /** 連絡・表示用。プロバイダが返さなければ NULL（同定には使わない） */
     email: text("email"),
+    /**
+     * アカウント表示用の「主 identity」（issue #159）。アカウントごとに高々 1 つ
+     * （部分一意インデックスで強制）。主が 0 件は DB では防げないので、表示時は
+     * 最古の identity へフォールバックする（auth/identities.ts）。
+     */
+    isPrimary: integer("is_primary").notNull().default(0),
     createdAt: text("created_at").notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.provider, t.subject] }),
     index("account_identities_account").on(t.accountId),
+    uniqueIndex("account_identities_primary_unique")
+      .on(t.accountId)
+      .where(sql`"is_primary" = 1`),
   ],
 );
 

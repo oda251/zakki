@@ -10,6 +10,7 @@ import * as v from "valibot";
 import type { ApiEnv, SessionEnv } from "@zakki/api/context.ts";
 import type { ExternalIdentity, IdentityProvider } from "@zakki/api/auth/providers/types.ts";
 import { consumeLoginHandoff, issueLoginHandoff } from "@zakki/api/auth/handoffs.ts";
+import { findPrimaryIdentity } from "@zakki/api/auth/identities.ts";
 import { consumeOidcState, issueOidcState } from "@zakki/api/auth/oidc-states.ts";
 import {
   issueSession,
@@ -113,6 +114,8 @@ async function findOrCreateAccount(
         subject: identity.subject,
         accountId,
         email: identity.email,
+        // 最初に作った identity を主とする（issue #159）
+        isPrimary: 1,
         createdAt,
       }),
     ]);
@@ -220,7 +223,20 @@ export function authRoutes(deps: AppDeps): Hono<ApiEnv> {
     const sessionEpoch = await currentSessionEpoch(db, accountId);
     if (sessionEpoch === null) return c.json({ error: "アカウントが見つかりません" }, 401);
 
-    return c.json(await sessionResponse(accountId, auth, now, sessionEpoch));
+    // アカウント表示用に主 identity を載せる（issue #159）
+    const primary = await findPrimaryIdentity(db, accountId);
+    const provider = primary === null ? undefined : findProvider(primary.providerId);
+    return c.json({
+      ...(await sessionResponse(accountId, auth, now, sessionEpoch)),
+      account: {
+        email: primary?.email ?? null,
+        provider: {
+          id: primary?.providerId ?? "",
+          // 未登録のプロバイダ id は表示名にそのまま使う（探索の手掛かりを増やさない）
+          name: provider?.displayName ?? primary?.providerId ?? "",
+        },
+      },
+    });
   });
 
   // --- セッション確認 -----------------------------------------------------
