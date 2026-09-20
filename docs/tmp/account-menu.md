@@ -51,34 +51,38 @@ flowchart LR
 
 ### API（apps/api）
 
-- [ ] R1: migration 適用後 `account_identities` に `is_primary`（not null, default 0）と
+- [x] R1: migration 適用後 `account_identities` に `is_primary`（not null, default 0）と
   部分一意インデックスが在る。同一 account へ `is_primary=1` を 2 行書くと衝突する
   （`src/db/schema.test.ts`）
-- [ ] R2: 新規アカウントの最初の identity は `is_primary=1`（`src/routes/auth.test.ts`）
-- [ ] R3: `POST /auth/login/exchange` 応答に `account`（主 identity の email と
+- [x] R2: 新規アカウントの最初の identity は `is_primary=1`（`src/routes/auth.test.ts`）
+- [x] R3: `POST /auth/login/exchange` 応答に `account`（主 identity の email と
   provider `{ id, name }`）が載る（`src/routes/auth.test.ts`）
-- [ ] R4: 主 identity が無い（`is_primary=1` が無い）ときは最も古く作られた identity の
+- [x] R4: 主 identity が無い（`is_primary=1` が無い）ときは最も古く作られた identity の
   email を主として返す（`src/auth/identities.test.ts`）
-- [ ] R5: relink（`cli/relink-identity.ts`）で targets が既に主を持つ場合も部分一意インデックス
+- [x] R5: relink（`cli/relink-identity.ts`）で targets が既に主を持つ場合も部分一意インデックス
   違反にならず、主は高々 1 つに収まる（`cli/relink-identity.test.ts`）
 
 ### Web クライアント（apps/web/src/client）
 
-- [ ] R6: `completeLogin` の結果（`ControlPlaneSession`）から email / provider（id, name）が
+- [x] R6: `completeLogin` の結果（`ControlPlaneSession`）から email / provider（id, name）が
   取れる（`api/control-plane.test.ts`）
-- [ ] R7: `ControlPlaneClient.logout()` は `POST /auth/logout` を Authorization 付きで呼び、
+- [x] R7: `ControlPlaneClient.logout()` は `POST /auth/logout` を Authorization 付きで呼び、
   204 後に `session()` が null になり `connect()` が 401 を投げる（`api/control-plane.test.ts`）
-- [ ] R8: 未ログインの `logout()` は no-op（fetch を発行しない）（`api/control-plane.test.ts`）
-- [ ] R9: `resolveRemoteSession` の signed-in 結果が account 情報を運ぶ
+- [x] R8: 未ログインの `logout()` は no-op（fetch を発行しない）（`api/control-plane.test.ts`）
+- [x] R9: `resolveRemoteSession` の signed-in 結果が account 情報を運ぶ
   （`api/control-plane.test.ts`）
-- [ ] R10: auth store は `setSignedIn` で account を持ち、`logout` で登録済み handler を
+- [x] R10: auth store は `setSignedIn` で account を持ち、`logout` で登録済み handler を
   呼ぶ（`store/auth.test.ts`）
-- [ ] R11: ログアウト オーケストレーション `logoutSession`（`store/logout.ts`）は
+- [x] R11: ログアウト オーケストレーション `logoutSession`（`store/logout.ts`）は
   client.logout → db.remove → reload の順に実行する（`store/logout.test.ts`）
 
 ### UI（agent-browser で E2E 確認 — 自動テストの対象外）
 
+- [x] U4: 設定パネル（モーダル）が ⚙ 設定から開き、✕ / Escape / バックドロップで閉じる
+  （単一ユーザ構成で agent-browser 実ブラウザ確認済み）。折り畳み時はフッターごと非表示
 - [ ] U1: 展開時、signed-in のサイドバー下部に email + プロバイダ名が出る。折り畳み時は出ない
-- [ ] U2: アカウント表示クリックでメニュー（ログアウト / 設定）が開く
+  （要 実環境: Google OIDC + Turso。統合テスト R6/R9/R20 と web クライアントの
+  completeLogin→account 経路で等価を検証済み）
+- [ ] U2: アカウント表示クリックでメニュー（ログアウト / 設定）が開く（同上）
 - [ ] U3: ログアウト後 signed-out に戻り「Google でログイン」が出る
 - [ ] U4: 設定からパスキー設定（モーダル）が開く。signed-out / 単一ユーザでも ⚙ 設定から開ける
