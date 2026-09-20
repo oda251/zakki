@@ -5,6 +5,7 @@ import { connectRouter } from "@zakki/web/client/router/controller.ts";
 import { useAuthStore } from "@zakki/web/client/store/auth.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
+import { logoutSession } from "@zakki/web/client/store/logout.ts";
 import { usePasskeyStore } from "@zakki/web/client/store/passkey.ts";
 import "@zakki/web/client/styles.css";
 
@@ -37,6 +38,27 @@ void Promise.all([
         ? { fetchFn: remote.fetchFn, dbName: `zakki-${remote.identity.userId}` }
         : {},
     );
+    // サイドバー下部のアカウント表示（メール + プロバイダ, issue #159）。セッション
+    // JWT はメモリのみなので、起動直後の resolveRemoteSession のレスポンスが唯一の供給源。
+    // ログアウトは「サーバへ 1 往復（最善努力）→ ローカルレプリカを消す → リロード」
+    // （リロード後の起動フローが signed-out を出し直す）。
+    if (remote?.status === "signed-in") {
+      const session = remote.client.session();
+      useAuthStore.getState().setSignedIn({
+        email: session !== null ? session.account.email : null,
+        providerId: session !== null ? session.account.provider.id : "",
+        providerName: session !== null ? session.account.provider.name : "",
+        userId: remote.identity.userId,
+      });
+      useAuthStore.getState().setLogoutHandler(() => {
+        void logoutSession({
+          logout: () => remote.client.logout(),
+          // RxDB の remove() は消えた DB 名の配列を返すが、deps には完了だけが必要
+          removeDb: () => db.remove().then(() => undefined),
+          reload: () => window.location.reload(),
+        });
+      });
+    }
     useGraphStore.getState().connect(db);
     useBufferStore.getState().connect(db);
     // パスキー登録 UI（#104）。DEK は bootstrap のクロージャに閉じたまま渡らない。

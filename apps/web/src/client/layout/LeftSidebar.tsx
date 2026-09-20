@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { AccountMenu } from "@zakki/web/client/layout/AccountMenu.tsx";
 import { LoginButton } from "@zakki/web/client/layout/LoginButton.tsx";
-import { PasskeySettings } from "@zakki/web/client/layout/PasskeySettings.tsx";
 import { gotoChunk, setTagFilter, setUserTagFilter } from "@zakki/web/client/router/navigate.ts";
 import { useDrillId, useRoute } from "@zakki/web/client/router/use-route.ts";
+import { useAuthStore } from "@zakki/web/client/store/auth.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
+import { useSettingsStore } from "@zakki/web/client/store/settings.ts";
 
 /** 折り畳み状態は URL でも導出でもない UI 設定なので localStorage へ永続化する（#52） */
 const COLLAPSED_KEY = "zakki.sidebar.collapsed";
@@ -28,6 +30,8 @@ export function LeftSidebar() {
   const data = useGraphStore((s) => s.data);
   const { filter } = useRoute();
   const drillId = useDrillId();
+  const account = useAuthStore((s) => s.account);
+  const openSettings = useSettingsStore((s) => s.open);
 
   // 新しい日付が上（date 降順）
   const dateChunks = useMemo(
@@ -84,8 +88,15 @@ export function LeftSidebar() {
           {dateChunks.length === 0 && <div className="empty-note">まだ記録がありません</div>}
         </div>
       )}
-      {!collapsed && <LoginButton />}
-      {!collapsed && <PasskeySettings />}
+      {!collapsed && (
+        <div className="sidebar__footer">
+          {account !== null ? <AccountMenu account={account} /> : <LoginButton />}
+          {/* 設定は未ログイン・単一ユーザ構成でも開ける（パスキー登録アンロック, #104, issue #159） */}
+          <button type="button" className="sidebar__action" onClick={openSettings}>
+            ⚙ 設定
+          </button>
+        </div>
+      )}
     </nav>
   );
 }

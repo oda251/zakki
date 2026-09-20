@@ -22,12 +22,12 @@ export function PasskeySettings() {
 
   if (controls === null) return null;
   if (!controls.available) {
-    return <div className="sidebar__footer empty-note">この環境ではパスキーを利用できません</div>;
+    return <div className="passkey-settings empty-note">この環境ではパスキーを利用できません</div>;
   }
 
   const running = status === "running";
   return (
-    <div className="sidebar__footer">
+    <div className="passkey-settings">
       {controls.unlock !== null && (
         <button
           type="button"

@@ -98,7 +98,7 @@ sequenceDiagram
   A->>A: (google, sub) で account を引く／無ければ作る
   A-->>B: 302 → APP_ORIGIN/#login=<handoff code>
   B->>A: POST /auth/login/exchange { code }
-  A-->>B: { accountId, token, expiresAt }
+  A-->>B: { accountId, token, expiresAt, account }
 ```
 
 | エンドポイント                      | 役割                                                                    |
@@ -113,6 +113,7 @@ sequenceDiagram
 - **セッション JWT を URL に載せない**。コールバックは使い捨ての handoff code だけを fragment（サーバへ送られない）に載せ、SPA は読んだ直後に `history.replaceState` で消してから POST で交換する。
 - state・PKCE verifier・nonce は Workers がリクエスト間で状態を持てないので DB（`oidc_states`, TTL 10 分）に置く。
 - 失敗は `APP_ORIGIN/#login_error=<state|denied|provider>` で SPA へ戻す。
+- **サイドバー下部のアカウント表示・ログアウト**（issue #159）: exchange の応答に `account`（表示用メールとプロバイダ表示名）が載る。値は主 identity（`account_identities.is_primary`。0 件なら最古の作成）で、内部の `accountId` はブラウザに出さない。SPA はサイドバー（展開時のみ）のフッターに「プロバイダ名 + メール」として表示し、クリックで開くメニューから**ログアウト**（`POST /auth/logout` → ローカルレプリカ `zakki-{userId}` を削除 → リロード。全端末ログアウト, 後述）と**設定**（パスキー登録・アンロックのモーダル, #104）を選べる。未ログイン・単一ユーザ構成でも ⚙ 設定からパスキー操作を開ける。
 
 E2E 暗号のパスキー（PRF 封筒）はログインと切り離して残してある。封筒の登録・失効は中継の `/api/crypto/envelopes/passkey*` だけで完結する（クレデンシャルの台帳はもう無い）。
 
@@ -419,5 +420,5 @@ ZAKKI_CONTROL_PLANE_URL=http://localhost:8787 just web
 - **中継が通る実効的な窓は「セッション JWT の有効期限（12 時間）」+ 最大 60 秒**（[実効的な失効遅延](#実効的な失効遅延)）。ログアウト・退会・期限切れのいずれも、中継サーバが 60 秒ごとに `/auth/me` で再検証するところで止まる。アカウントを跨ぐことは無い（キャッシュキーが JWT そのもの）。
 - ログイン開始の流量制限はアプリ層の総数上限（200）だけで、**IP 単位ではない**（issue #112）。独自ドメイン（zone）を持つ構成にしたら Cloudflare の Rate Limiting Rules を前段に置く。
 - **`GET /me/db` が返した DB トークン（TTL 60 分）そのものは失効させられない**。ログアウト・退会の後も、その値を握ったクライアントは最長 60 分 Turso を直叩きできる（退会の場合は DB 自体が消えているので読めるものは無い）。Turso のトークンは発行時点で自己完結しているため、止めるには DB ごと作り直すか TTL を短くするしかない。
-- ログアウト・退会の UI 導線が無い（`POST /auth/logout` / `DELETE /me` を直接叩く）。
+- 退会（`DELETE /me`）の UI 導線はまだ無い（ログアウトの導線は issue #159 で追加済み。`POST /auth/logout` はアカウントメニューから）。
 - **TUI の長命トークンは個別に失効させられない**（issue #135）。漏れたときはその DB のトークンを一括ローテートし、`just db-token` で取り直す。TUI 側は依然として単一ユーザ経路（`LocalIdentity`）で、コントロールプレーンのセッションとは無関係に繋がる。
