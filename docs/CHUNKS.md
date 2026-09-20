@@ -22,6 +22,8 @@ chunks(
   id            integer PK
   parent_id     integer? → chunks.id (cascade)   -- NULL = トップレベル（日付チャンク）
   position      integer                          -- 親バッファ内の出現順
+  kind          text                             -- 'text' | 'blob'（issue #157）
+  file_id       integer? → files.id              -- kind='blob' のときだけ非 NULL
   content       text                             -- 変換後テキスト（本文の唯一の保持者）
   date          text?                            -- 日付チャンクのみ YYYY-MM-DD（平文）
   polarity      real?
@@ -29,8 +31,25 @@ chunks(
 )
 -- unique (parent_id, position)
 -- unique (date) where parent_id is null        -- 日付チャンクは 1 日 1 件
+-- check ((kind = 'blob') = (file_id IS NOT NULL))
+files(id, name, extension, encryption, object_key, size, part_size, created_at, updated_at)
 links(from_chunk_id, to_chunk_id, score, origin) -- 変更なし。任意階層で張れる
 ```
+
+### blob チャンク（アップロードファイル, issue #157）
+
+- `kind='blob'` はアップロードしたファイル 1 件を指す行。`content` は空文字で、
+  表示名（ファイル名）と実体の所在は `files` 行が持つ。実バイト列は Cloudflare R2
+- **position はテキストと別の帯**（`BLOB_POSITION_BASE = 1,000,000` 以上）に置く。
+  `saveChildren`（テキスト草稿の投影）は「どの草稿にも対応しない行」を消すため、
+  同じ帯に置くとテキスト保存のたびに消える。投影対象を `kind='text'` に絞り、
+  position 帯を分けることで `unique(parent_id, position)` を壊さずに共存させる
+- 編集バッファ（`buildRaw` の復元元）にも入れない（打ち直しで二重化するため）
+- `files.name` はチャンク content と同じく暗号 ON で AEAD（AAD `file.name`）。
+  さらにアップロードごとの opt-in で **ファイル本体とファイル名をクライアント側で
+  暗号化**できる（チャンク E2E 暗号とは独立の FEK。`file_key_envelopes`）
+- `files.extension` / `size` は暗号 ON でも平文（画像かどうかの弁別に使う。
+  `date` を平文にしているのと同じ受容）
 
 - **entries / sessions テーブルは削除**。`raw` / `converted` 列も削除する
   - 打ちかけ行（Enter 前のライブ末尾ローマ字）はリロードで失われる。受容（2026-07-06 決定）

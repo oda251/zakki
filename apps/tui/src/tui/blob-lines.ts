@@ -11,7 +11,10 @@ import type { Chunk, ZakkiFile } from "@zakki/data/db/schema.ts";
  */
 
 /** kind ごとにチャンクを分ける。入力順を保つ（表示順の基準になる）。 */
-export function splitChunksByKind(children: readonly Chunk[]): { text: Chunk[]; blob: Chunk[] } {
+export function splitChunksByKind(children: readonly Chunk[]): {
+  text: Chunk[];
+  blob: Chunk[];
+} {
   const text: Chunk[] = [];
   const blob: Chunk[] = [];
   for (const c of children) {

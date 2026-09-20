@@ -293,7 +293,10 @@ export function App({
     [search.searchOpen, dialog, menu, editing, clamped.index, newFocused, live.text, live.pending],
   );
 
-  useBarCursor(renderer, barTarget, { main: mainScrollRef, detail: detailScrollRef });
+  useBarCursor(renderer, barTarget, {
+    main: mainScrollRef,
+    detail: detailScrollRef,
+  });
 
   // メインは「表示窓」をそのまま上詰めで描く。scrollbox に内部スクロールが残ると
   // 先頭（1 件手前）が画面外へ隠れてしまうため、毎レンダーで先頭固定に戻す。
@@ -406,7 +409,14 @@ export function App({
               ))}
             </box>
             {expandedChunkId !== null && (
-              <box style={{ flexDirection: "column", flexGrow: 1, minHeight: 0, marginTop: 1 }}>
+              <box
+                style={{
+                  flexDirection: "column",
+                  flexGrow: 1,
+                  minHeight: 0,
+                  marginTop: 1,
+                }}
+              >
                 <box style={{ flexShrink: 0 }} onMouseDown={closeExpand}>
                   <text style={{ fg: "#666666" }}>── 詳細（Esc で閉じる） ──</text>
                 </box>
@@ -429,7 +439,13 @@ export function App({
                         id={`detail-${idx}`}
                         text={c.content}
                         selected={selected}
-                        onClick={() => moveCursor({ pane: "detail", index: idx, mode: "select" })}
+                        onClick={() =>
+                          moveCursor({
+                            pane: "detail",
+                            index: idx,
+                            mode: "select",
+                          })
+                        }
                       />
                     );
                   })}
@@ -440,7 +456,13 @@ export function App({
         )}
       </box>
       {editing !== null && <Chunk.Status>←→ で移動 ｜ Enter で確定 ｜ Esc で取消</Chunk.Status>}
-      <box style={{ height: 1, flexDirection: "row", justifyContent: "space-between" }}>
+      <box
+        style={{
+          height: 1,
+          flexDirection: "row",
+          justifyContent: "space-between",
+        }}
+      >
         <text style={{ fg: "#888888" }}>
           {date} ｜ チャンク {chunkCount} ｜{" "}
           {entryMood !== null && (
