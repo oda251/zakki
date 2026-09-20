@@ -73,8 +73,8 @@ flowchart LR
   （`api/control-plane.test.ts`）
 - [ ] R10: auth store は `setSignedIn` で account を持ち、`logout` で登録済み handler を
   呼ぶ（`store/auth.test.ts`）
-- [ ] R11: ログアウト オーケストレーション `logoutRemoteSession` は client.logout →
-  db.remove → reload の順に実行する（`client/auth/logout.ts` + `logout.test.ts`）
+- [ ] R11: ログアウト オーケストレーション `logoutSession`（`store/logout.ts`）は
+  client.logout → db.remove → reload の順に実行する（`store/logout.test.ts`）
 
 ### UI（agent-browser で E2E 確認 — 自動テストの対象外）
 
