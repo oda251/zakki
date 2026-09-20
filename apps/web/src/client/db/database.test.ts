@@ -11,6 +11,8 @@ import { testStorage } from "@zakki/web/client/db/test-db.ts";
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "0",
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "本文",
   date: null,
   polarity: null,
@@ -32,10 +34,10 @@ afterEach(async () => {
 const tick = () => new Promise((r) => setTimeout(r, 30));
 
 describe("rxdb database (Phase 1)", () => {
-  test("createZakkiDb は 4 コレクションを持つ", async () => {
+  test("createZakkiDb は 6 コレクションを持つ", async () => {
     const db = await open();
     expect(Object.keys(db.collections).toSorted()).toEqual(
-      ["chunkUserTags", "chunks", "links", "tags"].toSorted(),
+      ["chunkUserTags", "chunks", "corrections", "files", "links", "tags"].toSorted(),
     );
   });
 

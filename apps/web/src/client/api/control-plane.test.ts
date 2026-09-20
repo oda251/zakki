@@ -21,7 +21,7 @@ import type { ClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { bootstrapClientDb } from "@zakki/web/client/db/bootstrap.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { createApp } from "@zakki/web/server/app.ts";
-import { createRemoteDbResolver } from "@zakki/web/server/identity/remote.ts";
+import { createRemoteUserResolver } from "@zakki/web/server/identity/remote.ts";
 
 /**
  * issue #105: コントロールプレーン統合（RemoteIdentity）の受け入れ検証。
@@ -72,7 +72,7 @@ beforeEach(async () => {
   webApp = createApp({
     db: selfHostDb,
     controlPlaneUrl: cp.baseUrl,
-    resolveDb: createRemoteDbResolver({
+    resolveUser: createRemoteUserResolver({
       controlPlaneUrl: cp.baseUrl,
       // 上流の一時障害を差し込めるようにする（既定は素通し）
       fetchFn: (input, init) =>
@@ -470,6 +470,8 @@ describe("RemoteIdentity（コントロールプレーン統合）", () => {
       id: "r8",
       parentId: null,
       position: 0,
+      kind: "text",
+      fileId: null,
       content: plaintext,
       date: null,
       polarity: null,

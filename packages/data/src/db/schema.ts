@@ -247,6 +247,27 @@ export const keyEnvelopes = sqliteTable(
   ],
 );
 
+/**
+ * ファイル暗号鍵（FEK）を開くための封筒（issue #157）。`key_envelopes` とは
+ * **別テーブル**にする: FEK はチャンク E2E 暗号の DEK とは独立した別の鍵で
+ * （`packages/core/src/crypto/file-key.ts`）、`key_envelopes` は「同一 DEK への
+ * 複数の封筒」を表す表だから、DEK と無関係な FEK の封筒を混ぜられない。
+ * 混ぜてしまうと TUI の `unlockOrSetup` の初回判定（DEK 封筒が 0 件か）が
+ * FEK 封筒の有無に引きずられて壊れる。
+ *
+ * FEK は封筒 1 本のみ（パスワード変更は再 wrap の上書き。issue #157 決定表）なので、
+ * `key_envelopes` の kind 分岐は要らず単一行（id=1）で足りる。
+ */
+export const fileKeyEnvelopes = sqliteTable("file_key_envelopes", {
+  id: integer("id").primaryKey(),
+  /** パスワード由来の KEK で AEAD した FEK 封筒（`nonce || ciphertext`） */
+  wrappedFek: blob("wrapped_fek", { mode: "buffer" }).notNull(),
+  kdfSalt: blob("kdf_salt", { mode: "buffer" }).notNull(),
+  kdfOps: integer("kdf_ops").notNull(),
+  kdfMem: integer("kdf_mem").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const chunkTags = sqliteTable(
   "chunk_tags",
   {

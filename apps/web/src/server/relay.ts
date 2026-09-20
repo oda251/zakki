@@ -1,10 +1,10 @@
 import type { Hono } from "hono";
 import { createApp } from "./app.ts";
-import type { RemoteDbResolverOptions, ServerFetchLike } from "./identity/remote.ts";
-import { createRemoteDbResolver } from "./identity/remote.ts";
+import type { RemoteUserResolverOptions, ServerFetchLike } from "./identity/remote.ts";
+import { createRemoteUserResolver } from "./identity/remote.ts";
 
 /** 接続情報から DB を開くアダプタ（ランタイムごとに差し替える点） */
-type OpenUserDb = RemoteDbResolverOptions["openUserDb"];
+type OpenUserDb = RemoteUserResolverOptions["openUserDb"];
 
 /**
  * マルチユーザ専用の中継アプリを組む（issue #134）。ローカル DB を開かない。
@@ -25,6 +25,6 @@ export function composeRelayApp(options: {
   const { controlPlaneUrl, openUserDb, fetchFn } = options;
   return createApp({
     controlPlaneUrl,
-    resolveDb: createRemoteDbResolver({ controlPlaneUrl, openUserDb, fetchFn }),
+    resolveUser: createRemoteUserResolver({ controlPlaneUrl, openUserDb, fetchFn }),
   });
 }

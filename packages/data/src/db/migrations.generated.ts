@@ -180,4 +180,12 @@ export const EMBEDDED_MIGRATIONS: readonly EmbeddedMigration[] = [
       '\nCREATE UNIQUE INDEX `chunks_date_unique` ON `chunks` (`date`) WHERE "date" IS NOT NULL;',
     ],
   },
+  {
+    tag: "0015_file_key_envelopes",
+    folderMillis: 1789870171622,
+    hash: "d5a47f037312a57b3855fe0471e95fad1946eca92922e42fa9d73c91091a5ca9",
+    sql: [
+      "CREATE TABLE `file_key_envelopes` (\n\t`id` integer PRIMARY KEY NOT NULL,\n\t`wrapped_fek` blob NOT NULL,\n\t`kdf_salt` blob NOT NULL,\n\t`kdf_ops` integer NOT NULL,\n\t`kdf_mem` integer NOT NULL,\n\t`created_at` text NOT NULL\n);\n",
+    ],
+  },
 ];

@@ -10,6 +10,7 @@ import type { RxDocument } from "rxdb";
 import type {
   ChunkDoc,
   ChunkUserTagDoc,
+  FileDoc,
   LinkDoc,
   ZakkiDatabase,
 } from "@zakki/web/client/db/database.ts";
@@ -21,9 +22,26 @@ export function toChunkDoc(d: RxDocument<ChunkDoc>): ChunkDoc {
     id: json.id,
     parentId: json.parentId,
     position: json.position,
+    kind: json.kind,
+    fileId: json.fileId,
     content: json.content,
     date: json.date,
     polarity: json.polarity,
+    updatedAt: json.updatedAt,
+  };
+}
+
+/** RxDocument<FileDoc> → FileDoc への field コピー */
+export function toFileDoc(d: RxDocument<FileDoc>): FileDoc {
+  const json = d.toJSON();
+  return {
+    id: json.id,
+    name: json.name,
+    extension: json.extension,
+    encryption: json.encryption,
+    objectKey: json.objectKey,
+    size: json.size,
+    partSize: json.partSize,
     updatedAt: json.updatedAt,
   };
 }

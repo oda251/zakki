@@ -11,6 +11,8 @@ import { childrenView } from "@zakki/web/client/db/live.ts";
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "100",
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "本文",
   date: null,
   polarity: null,

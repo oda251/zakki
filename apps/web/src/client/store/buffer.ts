@@ -42,11 +42,15 @@ export const useBufferStore = create<BufferState>((set, get) => {
 
   const openDoc = async (db: ZakkiDatabase, chunk: ChunkDoc, ticket: number): Promise<void> => {
     const children = await childrenQuery(db, chunk.id);
+    // blob チャンク（添付ファイル, issue #157）は content="" の特殊行なので、
+    // Composer の raw 再構成（buildRaw）から除外する（TUI と同じ扱い）。
+    // 一覧の表示順（childrenQuery = position 昇順）自体はテキスト末尾に置かれる。
+    const textLines = children.filter((c) => c.kind === "text");
     if (ticket !== generation) return;
     set({
       currentId: numId(chunk.id),
-      initialRaw: buildRaw(children.map((c) => c.content)),
-      initialChunkIds: children.map((c) => numId(c.id)),
+      initialRaw: buildRaw(textLines.map((c) => c.content)),
+      initialChunkIds: textLines.map((c) => numId(c.id)),
       error: null,
     });
   };

@@ -10,6 +10,8 @@ import { nodesFromDocs } from "@zakki/web/client/store/graph-docs.ts";
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: null,
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "本文",
   date: null,
   polarity: null,

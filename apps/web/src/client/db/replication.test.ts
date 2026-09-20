@@ -57,6 +57,8 @@ async function sync(db: ZakkiDatabase): Promise<void> {
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "0",
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "秘密の本文",
   date: null,
   polarity: null,

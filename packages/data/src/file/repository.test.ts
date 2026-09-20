@@ -20,6 +20,17 @@ beforeEach(async () => {
 
 const DATE = "2026-09-20";
 
+/** 失敗を **await して** 検証する。bun の型では `.rejects.toThrow()` を await できない */
+async function expectRejects(promise: Promise<unknown>): Promise<void> {
+  let error: unknown = null;
+  try {
+    await promise;
+  } catch (err: unknown) {
+    error = err;
+  }
+  expect(error).not.toBeNull();
+}
+
 const input = (over: Partial<Parameters<typeof insertFile>[1]> = {}) => ({
   name: "写真",
   extension: "png",
@@ -65,7 +76,7 @@ describe("blob チャンク", () => {
 
   test("kind='blob' なのに file_id が NULL の行は CHECK 制約で入らない", async () => {
     const root = (await getOrCreateDateChunk(db, DATE))._unsafeUnwrap();
-    await expect(
+    await expectRejects(
       db
         .insert(chunks)
         .values({
@@ -78,13 +89,13 @@ describe("blob チャンク", () => {
           updatedAt: "2026-09-20T00:00:00.000Z",
         })
         .execute(),
-    ).rejects.toThrow();
+    );
   });
 
   test("kind='text' なのに file_id を持つ行は CHECK 制約で入らない", async () => {
     const root = (await getOrCreateDateChunk(db, DATE))._unsafeUnwrap();
     const file = (await insertFile(db, input()))._unsafeUnwrap();
-    await expect(
+    await expectRejects(
       db
         .insert(chunks)
         .values({
@@ -97,7 +108,7 @@ describe("blob チャンク", () => {
           updatedAt: "2026-09-20T00:00:00.000Z",
         })
         .execute(),
-    ).rejects.toThrow();
+    );
   });
 
   test("既存のテキストチャンクは kind='text' になる", async () => {

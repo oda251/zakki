@@ -27,6 +27,18 @@ export const MAX_PART_BYTES = 100 * 1024 ** 2;
  */
 export const DEFAULT_PART_BYTES = 32 * 1024 ** 2;
 
+/**
+ * blob チャンク（アップロードファイル, issue #157）の position 帯の下限。
+ *
+ * テキスト草稿は 0 始まりの position 空間に住み、`saveChildren`（テキスト保存の
+ * 投影）は「どの草稿にも対応しない行」を消し去る。blob チャンクを同じ空間に置くと
+ * テキストを保存するたびに消えてしまうため、専用の帯に置き、投影からは kind で
+ * 除外する（`unique(parent_id, position)` を壊さず共存する。docs/tmp/157-file-upload.md）。
+ *
+ * 表示は「テキスト行の後ろに並ぶ」（受容）。
+ */
+export const BLOB_POSITION_BASE = 1_000_000;
+
 export interface UploadSizeError {
   readonly type: "upload-size-error";
   readonly message: string;

@@ -3,6 +3,8 @@ import { secureHeaders } from "hono/secure-headers";
 import { API_BASE } from "@zakki/web/shared/api-base.ts";
 import type { AppDeps } from "./deps.ts";
 import { cryptoRoutes } from "./routes/crypto.ts";
+import { fileRoutes } from "./routes/files.ts";
+import { fileEnvelopeRoutes } from "./routes/file-envelope.ts";
 import { replicationRoutes } from "./routes/replication.ts";
 
 /**
@@ -62,6 +64,10 @@ export function createApp(deps: AppDeps): Hono {
   api.get("/config", (c) => c.json({ controlPlaneUrl: deps.controlPlaneUrl ?? null }));
   api.route("/replication", replicationRoutes(deps));
   api.route("/crypto", cryptoRoutes(deps));
+  // FEK 封筒（issue #157）は crypto 配下に同居するが、鍵・テーブルが DEK と別のため
+  // 別ルータに分けた（file-envelope.ts の注記）
+  api.route("/crypto", fileEnvelopeRoutes(deps));
+  api.route("/files", fileRoutes(deps));
 
   app.route(API_BASE, api);
   return app;

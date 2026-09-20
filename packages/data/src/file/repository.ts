@@ -1,6 +1,7 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import { AAD } from "@zakki/core/crypto/aad.ts";
+import { BLOB_POSITION_BASE } from "@zakki/core/file/upload.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
@@ -14,15 +15,13 @@ import { chunks, files } from "@zakki/data/db/schema.ts";
  *
  * `files` 行はアップロードのメタデータ、実体（blob チャンクとの結びつけ）は
  * `chunks.kind='blob'` 行が `file_id` で参照する（docs/tmp/157-file-upload.md）。
+ *
+ * blob チャンクの position は `BLOB_POSITION_BASE`（SSOT は
+ * `@zakki/core/file/upload.ts`）以上の専用帯で、テキスト草稿（`saveChildren` の
+ * 投影対象、0 始まり）と同じ position 空間を共有すると、テキスト保存のたびに
+ * 「どの草稿にも対応しない行」として blob チャンクが消えてしまうため帯を分けて
+ * 衝突を避ける。
  */
-
-/**
- * blob チャンクの position 帯の下限。テキスト草稿（`saveChildren` の投影対象、
- * 0 始まり）と同じ position 空間を共有すると、テキスト保存のたびに「どの草稿にも
- * 対応しない行」として blob チャンクが消えてしまう。帯を分けて衝突を避ける
- * （docs/tmp/157-file-upload.md「blob チャンクの position」）。
- */
-export const BLOB_POSITION_BASE = 1_000_000;
 
 export interface FileInsertInput {
   name: string;
