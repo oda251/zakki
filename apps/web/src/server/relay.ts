@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { createApp } from "./app.ts";
+import type { FileStore } from "./files/store.ts";
 import type { RemoteUserResolverOptions, ServerFetchLike } from "./identity/remote.ts";
 import { createRemoteUserResolver } from "./identity/remote.ts";
 
@@ -21,10 +22,12 @@ export function composeRelayApp(options: {
   controlPlaneUrl: string;
   openUserDb: OpenUserDb;
   fetchFn?: ServerFetchLike;
+  files?: FileStore;
 }): Hono {
-  const { controlPlaneUrl, openUserDb, fetchFn } = options;
+  const { controlPlaneUrl, openUserDb, fetchFn, files } = options;
   return createApp({
     controlPlaneUrl,
     resolveUser: createRemoteUserResolver({ controlPlaneUrl, openUserDb, fetchFn }),
+    files,
   });
 }

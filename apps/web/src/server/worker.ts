@@ -1,7 +1,8 @@
 import type { Hono } from "hono";
 import { openRemoteWebDb } from "@zakki/data/db/connect-web.ts";
+import { r2FileStore } from "./files/store.ts";
 import { composeRelayApp } from "./relay.ts";
-import { parseRelayEnv, serviceBinding } from "./worker-env.ts";
+import { parseRelayEnv, r2BucketBindings, serviceBinding } from "./worker-env.ts";
 
 /**
  * Cloudflare Workers 用起動アダプタ（issue #134）。
@@ -45,10 +46,17 @@ function composeApp(env: Record<string, unknown>): Hono {
       "zakki-web: Service Binding CONTROL_PLANE がありません（wrangler.jsonc の services を確認してください）",
     );
   }
+  const buckets = r2BucketBindings(env);
+  if (buckets === null) {
+    throw new Error(
+      "zakki-web: R2 bindings FILES_PERMANENT, FILES_1D, FILES_7D, FILES_30D がすべて必要です（wrangler.jsonc の r2_buckets を確認してください）",
+    );
+  }
   const app = composeRelayApp({
     controlPlaneUrl: config.controlPlaneUrl,
     openUserDb: openRemoteWebDb,
     fetchFn: (input, init) => controlPlane.fetch(input, init),
+    files: r2FileStore(buckets),
   });
   apps.set(env, app);
   return app;
