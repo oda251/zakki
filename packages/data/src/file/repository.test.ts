@@ -36,6 +36,7 @@ const input = (over: Partial<Parameters<typeof insertFile>[1]> = {}) => ({
   extension: "png",
   encryption: "none" as const,
   objectKey: "accounts/acc1/1001",
+  retention: "7d" as const,
   size: 1234,
   partSize: 33_554_432,
   ...over,
@@ -50,6 +51,7 @@ describe("files テーブル", () => {
     expect(loaded?.extension).toBe("png");
     expect(loaded?.encryption).toBe("none");
     expect(loaded?.objectKey).toBe("accounts/acc1/1001");
+    expect(loaded?.retention).toBe("7d");
   });
 
   test("暗号 ON では name が平文で保存されず、読み出しで復号される", async () => {
@@ -60,6 +62,7 @@ describe("files テーブル", () => {
     expect(raw?.name).not.toBe("秘密のメモ");
     // 拡張子は弁別に使うため平文のまま（docs/tmp/157-file-upload.md の決定）
     expect(raw?.extension).toBe("png");
+    expect(raw?.retention).toBe("7d");
 
     expect((await getFile(db, created.id))._unsafeUnwrap()?.name).toBe("秘密のメモ");
   });

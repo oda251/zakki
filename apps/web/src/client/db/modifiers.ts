@@ -70,6 +70,7 @@ export interface FileWire {
   name: string;
   extension: string;
   encryption: FileDoc["encryption"];
+  retention: FileDoc["retention"];
   objectKey: string;
   size: number;
   partSize: number;

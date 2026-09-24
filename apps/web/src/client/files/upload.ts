@@ -11,7 +11,12 @@
  * FEK はこのモジュールを呼ぶ側（password.ts の unlockFek / setFilePassword）が
  * 持つ。メモリだけに載せ、永続化しない（#157 §5）。
  */
-import { BLOB_POSITION_BASE, partRanges, validateUploadSize } from "@zakki/core/file/upload.ts";
+import {
+  BLOB_POSITION_BASE,
+  partRanges,
+  validateUpload,
+  type FileRetention,
+} from "@zakki/core/file/upload.ts";
 import { decryptPart, encryptPart, PART_OVERHEAD_BYTES } from "@zakki/core/crypto/file-key.ts";
 import { splitFilename } from "@zakki/core/file/name.ts";
 import type { ChunkDoc, FileDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
@@ -32,6 +37,7 @@ export interface UploadFileOptions {
   file: FileLike;
   /** 非 null なら part をこの FEK で暗号化する（encryption="password"） */
   fek: Uint8Array | null;
+  retention: FileRetention;
   fetchFn?: FetchLike;
 }
 
@@ -53,6 +59,7 @@ async function nextBlobPosition(db: ZakkiDatabase, parentId: string): Promise<nu
 interface BeginResponse {
   uploadId: string;
   partSize: number;
+  retention: FileRetention;
   objectKey: string;
 }
 
@@ -66,9 +73,13 @@ async function jsonOrThrow<T>(res: Response, message: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+function retentionQuery(retention: FileRetention): string {
+  return `?retention=${encodeURIComponent(retention)}`;
+}
+
 export async function uploadFile(opts: UploadFileOptions): Promise<UploadedFile> {
   const fetchFn = opts.fetchFn ?? fetch;
-  const size = validateUploadSize(opts.file.size).match(
+  const size = validateUpload(opts.file.size, opts.retention).match(
     (s) => s,
     (e) => {
       throw new Error(e.message);
@@ -76,70 +87,109 @@ export async function uploadFile(opts: UploadFileOptions): Promise<UploadedFile>
   );
   const { name, extension } = splitFilename(opts.file.name);
   const fileId = newDocId();
+  let begin: BeginResponse;
+  let uploadId: string | undefined;
 
-  const begin = await jsonOrThrow<BeginResponse>(
-    await fetchFn(`${API_BASE}/files/${fileId}/multipart`, { method: "POST" }),
-    "multipart の開始に失敗しました",
-  );
-
-  const uploadBody = async (): Promise<{ partNumber: number; etag: string }[]> => {
-    const parts: { partNumber: number; etag: string }[] = [];
-    for (const range of partRanges(size, begin.partSize)) {
-      const plaintext = new Uint8Array(
-        await opts.file.slice(range.start, range.end).arrayBuffer(),
-      );
-      const payload =
-        opts.fek === null ? plaintext : encryptPart(opts.fek, range.index, plaintext);
-      const p = await jsonOrThrow<PartResponse>(
-        await fetchFn(
-          `${API_BASE}/files/${fileId}/multipart/${begin.uploadId}/parts/${range.index}`,
-          { method: "PUT", body: Uint8Array.from(payload) },
-        ),
-        "part のアップロードに失敗しました",
-      );
-      parts.push({ partNumber: range.index, etag: p.etag });
-    }
-    return parts;
-  };
-  const uploaded = await uploadBody();
-  await jsonOrThrow<{ ok: boolean }>(
-    await fetchFn(`${API_BASE}/files/${fileId}/multipart/${begin.uploadId}/complete`, {
+  try {
+    const response = await fetchFn(`${API_BASE}/files/${fileId}/multipart`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        parts: uploaded.map((p) => ({ partNumber: p.partNumber, etag: p.etag })),
+      body: JSON.stringify({ retention: opts.retention, size }),
+    });
+    const started = await jsonOrThrow<BeginResponse>(response, "multipart の開始に失敗しました");
+    begin = started;
+    uploadId = started.uploadId;
+    if (started.retention !== opts.retention) {
+      throw new Error("multipart の retention が一致しません");
+    }
+    const query = retentionQuery(started.retention);
+
+    const uploadBody = async (): Promise<{ partNumber: number; etag: string }[]> => {
+      const parts: { partNumber: number; etag: string }[] = [];
+      for (const range of partRanges(size, started.partSize)) {
+        const plaintext = new Uint8Array(
+          await opts.file.slice(range.start, range.end).arrayBuffer(),
+        );
+        const payload =
+          opts.fek === null ? plaintext : encryptPart(opts.fek, range.index, plaintext);
+        const p = await jsonOrThrow<PartResponse>(
+          await fetchFn(
+            `${API_BASE}/files/${fileId}/multipart/${started.uploadId}/parts/${range.index}${query}`,
+            { method: "PUT", body: Uint8Array.from(payload) },
+          ),
+          "part のアップロードに失敗しました",
+        );
+        parts.push({ partNumber: range.index, etag: p.etag });
+      }
+      return parts;
+    };
+    const uploaded = await uploadBody();
+    await jsonOrThrow<{ ok: boolean }>(
+      await fetchFn(`${API_BASE}/files/${fileId}/multipart/${started.uploadId}/complete${query}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          parts: uploaded.map((p) => ({ partNumber: p.partNumber, etag: p.etag })),
+        }),
       }),
-    }),
-    "multipart の完了に失敗しました",
-  );
+      "multipart の完了に失敗しました",
+    );
+  } catch (error) {
+    if (uploadId !== undefined && uploadId !== "") {
+      try {
+        await fetchFn(
+          `${API_BASE}/files/${fileId}/multipart/${uploadId}${retentionQuery(opts.retention)}`,
+          { method: "DELETE" },
+        );
+      } catch {}
+    }
+    throw error;
+  }
 
-  const now = nowIso();
-  const fileDoc: FileDoc = {
-    id: fileId,
-    name,
-    extension,
-    encryption: opts.fek === null ? "none" : "password",
-    objectKey: begin.objectKey,
-    size,
-    partSize: begin.partSize,
-    updatedAt: now,
-  };
-  await opts.db.files.insert(fileDoc);
+  let fileInserted = false;
+  try {
+    const now = nowIso();
+    const fileDoc: FileDoc = {
+      id: fileId,
+      name,
+      extension,
+      encryption: opts.fek === null ? "none" : "password",
+      retention: begin.retention,
+      objectKey: begin.objectKey,
+      size,
+      partSize: begin.partSize,
+      updatedAt: now,
+    };
+    await opts.db.files.insert(fileDoc);
+    fileInserted = true;
 
-  const chunkDoc: ChunkDoc = {
-    id: newDocId(),
-    parentId: opts.parentId,
-    position: await nextBlobPosition(opts.db, opts.parentId),
-    kind: "blob",
-    fileId: fileId,
-    content: "",
-    date: null,
-    polarity: null,
-    updatedAt: now,
-  };
-  await opts.db.chunks.insert(chunkDoc);
+    const chunkDoc: ChunkDoc = {
+      id: newDocId(),
+      parentId: opts.parentId,
+      position: await nextBlobPosition(opts.db, opts.parentId),
+      kind: "blob",
+      fileId: fileId,
+      content: "",
+      date: null,
+      polarity: null,
+      updatedAt: now,
+    };
+    await opts.db.chunks.insert(chunkDoc);
 
-  return { file: fileDoc, chunk: chunkDoc };
+    return { file: fileDoc, chunk: chunkDoc };
+  } catch (error) {
+    try {
+      await fetchFn(`${API_BASE}/files/${fileId}${retentionQuery(begin.retention)}`, {
+        method: "DELETE",
+      });
+    } catch {}
+    if (fileInserted) {
+      try {
+        await opts.db.files.bulkRemove([fileId]);
+      } catch {}
+    }
+    throw error;
+  }
 }
 
 export interface DownloadFileOptions {
@@ -151,7 +201,9 @@ export interface DownloadFileOptions {
 
 export async function downloadFile(opts: DownloadFileOptions): Promise<Uint8Array> {
   const fetchFn = opts.fetchFn ?? fetch;
-  const res = await fetchFn(`${API_BASE}/files/${opts.file.id}`);
+  const res = await fetchFn(
+    `${API_BASE}/files/${opts.file.id}${retentionQuery(opts.file.retention)}`,
+  );
   if (!res.ok) throw new Error("ファイルの取得に失敗しました");
   const stored = new Uint8Array(await res.arrayBuffer());
   if (opts.fek === null) return stored;

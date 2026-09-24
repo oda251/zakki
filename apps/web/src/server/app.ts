@@ -40,7 +40,7 @@ export function createApp(deps: AppDeps): Hono {
         scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
         // React の style 属性（inline style）用。外部スタイルは 'self' のみ
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:"],
+        imgSrc: ["'self'", "data:", "blob:"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         frameAncestors: ["'none'"],

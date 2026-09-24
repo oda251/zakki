@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import type { Hono } from "hono";
 import { generateFek } from "@zakki/core/crypto/file-key.ts";
+import { PERMANENT_MAX_BYTES, type FileRetention } from "@zakki/core/file/upload.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
@@ -62,13 +63,19 @@ async function expectRejects(promise: Promise<unknown>): Promise<void> {
   expect(error).not.toBeNull();
 }
 
-async function upload(content: Uint8Array, fek: Uint8Array | null, name = "写真.png") {
+async function upload(
+  content: Uint8Array,
+  fek: Uint8Array | null,
+  name = "写真.png",
+  retention: FileRetention = "7d",
+) {
   const root = await getOrCreateDateChunkDoc(db, DATE);
   return uploadFile({
     db,
     parentId: root.id,
     file: new File([Uint8Array.from(content)], name),
     fek,
+    retention,
     fetchFn,
   });
 }
@@ -81,13 +88,14 @@ describe("uploadFile", () => {
     expect(file.extension).toBe("png");
     expect(file.name).toBe("写真");
     expect(file.encryption).toBe("none");
+    expect(file.retention).toBe("7d");
     expect(file.size).toBe(20);
     expect(chunk.kind).toBe("blob");
     expect(chunk.fileId).toBe(file.id);
     expect(chunk.content).toBe("");
 
     // 分割された part が R2 上で 1 本に戻っている
-    expect(store.objects.get(objectKeyFor(ACCOUNT, file.id))).toEqual(content);
+    expect(store.objects.get(objectKeyFor(ACCOUNT, file.id, "7d"))).toEqual(content);
 
     // RxDB にも入っている
     expect(await db.files.findOne(file.id).exec()).not.toBeNull();
@@ -100,7 +108,7 @@ describe("uploadFile", () => {
     const { file } = await upload(content, fek);
 
     expect(file.encryption).toBe("password");
-    const stored = store.objects.get(objectKeyFor(ACCOUNT, file.id));
+    const stored = store.objects.get(objectKeyFor(ACCOUNT, file.id, "7d"));
     expect(stored).not.toEqual(content);
     // part ごとに nonce+tag の 40 バイトが乗る
     expect(stored?.length).toBe(content.length + Math.ceil(20 / PART_SIZE) * 40);
@@ -118,19 +126,92 @@ describe("uploadFile", () => {
   test("9 GiB 超は送らずに失敗する", async () => {
     const root = await getOrCreateDateChunkDoc(db, DATE);
     const huge = { name: "big.bin", size: 9 * 1024 ** 3 + 1, slice: () => new Blob() };
-    await expectRejects(uploadFile({ db, parentId: root.id, file: huge, fek: null, fetchFn }));
+    await expectRejects(
+      uploadFile({ db, parentId: root.id, file: huge, fek: null, retention: "7d", fetchFn }),
+    );
     expect(store.objects.size).toBe(0);
+  });
+
+  test("10 MiB 以上の permanent は通信前に失敗する", async () => {
+    const root = await getOrCreateDateChunkDoc(db, DATE);
+    const large = {
+      name: "large.bin",
+      size: PERMANENT_MAX_BYTES,
+      slice: () => new Blob(),
+    };
+    let requests = 0;
+    await expectRejects(
+      uploadFile({
+        db,
+        parentId: root.id,
+        file: large,
+        fek: null,
+        retention: "permanent",
+        fetchFn: async () => {
+          requests += 1;
+          return new Response(null, { status: 500 });
+        },
+      }),
+    );
+    expect(requests).toBe(0);
+    expect(store.created).toHaveLength(0);
+  });
+
+  test("begin は retention と size を送り、part 失敗時は multipart を cancel する", async () => {
+    const root = await getOrCreateDateChunkDoc(db, DATE);
+    const requests: { url: string; method: string; body: string | null }[] = [];
+    const file = new File([new Uint8Array([1, 2, 3])], "a.bin");
+    const failingFetch: FetchLike = async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method, body: typeof init?.body === "string" ? init.body : null });
+      if (method === "PUT") return new Response(null, { status: 500 });
+      return app.request(input, init);
+    };
+
+    await expectRejects(
+      uploadFile({
+        db,
+        parentId: root.id,
+        file,
+        fek: null,
+        retention: "30d",
+        fetchFn: failingFetch,
+      }),
+    );
+
+    expect(requests[0]?.body).toBe(JSON.stringify({ retention: "30d", size: 3 }));
+    expect(requests.at(-1)?.method).toBe("DELETE");
+    expect(requests.at(-1)?.url).toContain("/multipart/");
+    expect(requests.at(-1)?.url).toContain("retention=30d");
+  });
+
+  test("TTL で R2 本体だけ消えても files doc と blob chunk は残す", async () => {
+    const { file, chunk } = await upload(bytes(10), null, "expires.png", "1d");
+    await store.delete("1d", objectKeyFor(ACCOUNT, file.id, "1d"));
+
+    await expectRejects(downloadFile({ file, fek: null, fetchFn }));
+    expect(await db.files.findOne(file.id).exec()).not.toBeNull();
+    expect(await db.chunks.findOne(chunk.id).exec()).not.toBeNull();
   });
 });
 
 describe("F4: blob チャンクの削除", () => {
   test("R2 のオブジェクトも消える", async () => {
     const { file, chunk } = await upload(bytes(10), null);
-    expect(store.objects.has(objectKeyFor(ACCOUNT, file.id))).toBe(true);
+    expect(store.objects.has(objectKeyFor(ACCOUNT, file.id, "7d"))).toBe(true);
 
-    await removeChunkTree(db, chunk.id, { fetchFn });
+    const deletes: string[] = [];
+    await removeChunkTree(db, chunk.id, {
+      fetchFn: async (input, init) => {
+        if (init?.method === "DELETE") deletes.push(String(input));
+        return fetchFn(input, init);
+      },
+    });
 
-    expect(store.objects.has(objectKeyFor(ACCOUNT, file.id))).toBe(false);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]).toContain("retention=7d");
+    expect(store.objects.has(objectKeyFor(ACCOUNT, file.id, "7d"))).toBe(false);
     expect(await db.files.findOne(file.id).exec()).toBeNull();
   });
 
@@ -138,6 +219,6 @@ describe("F4: blob チャンクの削除", () => {
     const root = await getOrCreateDateChunkDoc(db, DATE);
     const { file } = await upload(bytes(10), null);
     await removeChunkTree(db, root.id, { fetchFn });
-    expect(store.objects.has(objectKeyFor(ACCOUNT, file.id))).toBe(false);
+    expect(store.objects.has(objectKeyFor(ACCOUNT, file.id, "7d"))).toBe(false);
   });
 });

@@ -31,7 +31,8 @@ const doc = (): FileDoc & { _deleted: boolean } => ({
   name: "秘密のメモ",
   extension: "png",
   encryption: "none",
-  objectKey: "accounts/acc/1758000000000001",
+  retention: "7d",
+  objectKey: "accounts/acc/7d/1758000000000001",
   size: 100,
   partSize: 33_554_432,
   updatedAt: "2026-09-20T00:00:00.000Z",
@@ -45,6 +46,7 @@ describe("F5: filePush / filePull", () => {
     expect(wire.name).not.toBe("秘密のメモ");
     // 拡張子・サイズはメタデータとして平文のまま（弁別に使う）
     expect(wire.extension).toBe("png");
+    expect(wire.retention).toBe("7d");
     expect(filePull(fc, wire)).toEqual(doc());
   });
 
@@ -94,10 +96,17 @@ describe("blob cleanup", () => {
       updatedAt: "2026-09-20T00:00:00.000Z",
     });
 
-    await removeChunkTree(db, root.id, {
-      fetchFn: () => Promise.resolve(new Response(null, { status: 503 })),
-    });
+    let error: unknown = null;
+    try {
+      await removeChunkTree(db, root.id, {
+        fetchFn: () => Promise.resolve(new Response(null, { status: 503 })),
+      });
+    } catch (caught) {
+      error = caught;
+    }
 
+    expect(error).not.toBeNull();
     expect(await db.files.findOne("1758000000000001").exec()).not.toBeNull();
+    expect(await db.chunks.findOne("1758000000000009").exec()).not.toBeNull();
   });
 });

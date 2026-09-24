@@ -12,6 +12,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { AAD } from "@zakki/core/crypto/aad.ts";
+import { FILE_RETENTIONS } from "@zakki/core/file/upload.ts";
 
 /**
  * 統合チャンクモデル（docs/CHUNKS.md, 2026-07-06 決定）。
@@ -87,6 +88,7 @@ export const files = sqliteTable("files", {
   name: text("name").notNull(),
   extension: text("extension").notNull(),
   encryption: text("encryption", { enum: ["none", "password"] }).notNull(),
+  retention: text("retention", { enum: FILE_RETENTIONS }).notNull().default("permanent"),
   objectKey: text("object_key").notNull(),
   size: integer("size").notNull(),
   partSize: integer("part_size").notNull(),

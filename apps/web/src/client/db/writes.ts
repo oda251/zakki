@@ -15,7 +15,7 @@
 import type { ChunkDraft } from "@zakki/core/chunk/chunker.ts";
 import { matchDraftsToExisting } from "@zakki/core/chunk/match.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
-import type { ChunkDoc, LinkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import type { ChunkDoc, FileDoc, LinkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { byPosition, toChunkDoc } from "@zakki/web/client/db/docs.ts";
 import { dateChunkId, docId, linkDocId, newDocId } from "@zakki/web/client/db/ids.ts";
 
@@ -107,17 +107,25 @@ async function removeBlobFiles(
   const blobs = await db.chunks.find({ selector: { id: { $in: chunkIds }, kind: "blob" } }).exec();
   if (blobs.length === 0) return;
   const fileIds = [...new Set(blobs.map((b) => b.fileId).filter((f): f is string => f !== null))];
-  const deletedFileIds = (
-    await Promise.all(
-      fileIds.map(async (fileId) => {
-        const response = await fetchFn(`/api/files/${fileId}`, {
-          method: "DELETE",
-        });
-        return response.ok ? fileId : null;
-      }),
-    )
-  ).filter((fileId): fileId is string => fileId !== null);
-  await db.files.bulkRemove(deletedFileIds);
+  const files = await Promise.all(
+    fileIds.map(async (fileId): Promise<FileDoc> => {
+      const file = await db.files.findOne(fileId).exec();
+      if (file === null) throw new Error(`ファイル doc が存在しません: ${fileId}`);
+      return file.toJSON();
+    }),
+  );
+  await Promise.all(
+    files.map(async (file) => {
+      const response = await fetchFn(
+        `/api/files/${file.id}?retention=${encodeURIComponent(file.retention)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok && response.status !== 404 && response.status !== 410) {
+        throw new Error(`ファイルの削除に失敗しました: ${response.status}`);
+      }
+    }),
+  );
+  await db.files.bulkRemove(fileIds);
 }
 
 /**

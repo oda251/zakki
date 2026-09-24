@@ -1,7 +1,7 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import { AAD } from "@zakki/core/crypto/aad.ts";
-import { BLOB_POSITION_BASE } from "@zakki/core/file/upload.ts";
+import { BLOB_POSITION_BASE, type FileRetention } from "@zakki/core/file/upload.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
@@ -27,6 +27,7 @@ export interface FileInsertInput {
   name: string;
   extension: string;
   encryption: "none" | "password";
+  retention: FileRetention;
   objectKey: string;
   size: number;
   partSize: number;
@@ -52,6 +53,7 @@ export function insertFile(
         name: crypto === undefined ? input.name : crypto.encString(input.name, AAD.fileName),
         extension: input.extension,
         encryption: input.encryption,
+        retention: input.retention,
         objectKey: input.objectKey,
         size: input.size,
         partSize: input.partSize,

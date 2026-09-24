@@ -5,26 +5,37 @@ import type { FileStore, MultipartPart } from "@zakki/web/server/files/store.ts"
  * ローカルで再現できないため、multipart の組み立てだけを同じ意味論で模す。
  * プロダクションコードからは import しない。
  */
-export function memoryFileStore(): FileStore & { objects: Map<string, Uint8Array> } {
+type MultipartRecord = { key: string; uploadId: string };
+
+export function memoryFileStore(): FileStore & {
+  objects: Map<string, Uint8Array>;
+  created: MultipartRecord[];
+  aborted: MultipartRecord[];
+} {
   const objects = new Map<string, Uint8Array>();
   const uploads = new Map<string, Map<number, Uint8Array>>();
+  const created: MultipartRecord[] = [];
+  const aborted: MultipartRecord[] = [];
   let seq = 0;
 
   return {
     objects,
-    createMultipart(key) {
+    created,
+    aborted,
+    createMultipart(_retention, key) {
       seq += 1;
       const uploadId = `upload-${seq}`;
       uploads.set(`${key}\u0000${uploadId}`, new Map());
+      created.push({ key, uploadId });
       return Promise.resolve({ uploadId });
     },
-    uploadPart(key, uploadId, partNumber, body) {
+    uploadPart(_retention, key, uploadId, partNumber, body) {
       const parts = uploads.get(`${key}\u0000${uploadId}`);
       if (parts === undefined) throw new Error(`未知の uploadId: ${uploadId}`);
       parts.set(partNumber, new Uint8Array(body));
       return Promise.resolve({ etag: `etag-${partNumber}` });
     },
-    completeMultipart(key, uploadId, parts: readonly MultipartPart[]) {
+    completeMultipart(_retention, key, uploadId, parts: readonly MultipartPart[]) {
       const stored = uploads.get(`${key}\u0000${uploadId}`);
       if (stored === undefined) throw new Error(`未知の uploadId: ${uploadId}`);
       const chunks = parts
@@ -41,10 +52,17 @@ export function memoryFileStore(): FileStore & { objects: Map<string, Uint8Array
       uploads.delete(`${key}\u0000${uploadId}`);
       return Promise.resolve();
     },
-    get(key) {
+    abortMultipart(_retention, key, uploadId) {
+      const uploadKey = `${key}\u0000${uploadId}`;
+      if (uploads.delete(uploadKey)) {
+        aborted.push({ key, uploadId });
+      }
+      return Promise.resolve();
+    },
+    get(_retention, key) {
       return Promise.resolve(objects.get(key) ?? null);
     },
-    delete(key) {
+    delete(_retention, key) {
       objects.delete(key);
       return Promise.resolve();
     },

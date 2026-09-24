@@ -188,4 +188,10 @@ export const EMBEDDED_MIGRATIONS: readonly EmbeddedMigration[] = [
       "CREATE TABLE `file_key_envelopes` (\n\t`id` integer PRIMARY KEY NOT NULL,\n\t`wrapped_fek` blob NOT NULL,\n\t`kdf_salt` blob NOT NULL,\n\t`kdf_ops` integer NOT NULL,\n\t`kdf_mem` integer NOT NULL,\n\t`created_at` text NOT NULL\n);\n",
     ],
   },
+  {
+    tag: "0016_file_retention",
+    folderMillis: 1790258663059,
+    hash: "72bcca4c336ccacbdce2787d10bde6f54c61b88ec1c0b87d1a78dcfdc17d9644",
+    sql: ["ALTER TABLE `files` ADD `retention` text DEFAULT 'permanent' NOT NULL;"],
+  },
 ];

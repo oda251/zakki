@@ -11,6 +11,7 @@
  */
 import { createRxDatabase } from "rxdb";
 import type { RxCollection, RxConflictHandler, RxDatabase, RxJsonSchema, RxStorage } from "rxdb";
+import { FILE_RETENTIONS } from "@zakki/core/file/upload.ts";
 import type {
   Chunk,
   ChunkUserTag,
@@ -154,12 +155,23 @@ const filesSchema = {
     name: { type: "string" },
     extension: { type: "string" },
     encryption: { type: "string", enum: ["none", "password"] },
+    retention: { type: "string", enum: FILE_RETENTIONS },
     objectKey: { type: "string" },
     size: { type: "number" },
     partSize: { type: "number" },
     updatedAt: { type: "string" },
   },
-  required: ["id", "name", "extension", "encryption", "objectKey", "size", "partSize", "updatedAt"],
+  required: [
+    "id",
+    "name",
+    "extension",
+    "encryption",
+    "retention",
+    "objectKey",
+    "size",
+    "partSize",
+    "updatedAt",
+  ],
 } as const satisfies RxJsonSchema<FileDoc>;
 
 /**

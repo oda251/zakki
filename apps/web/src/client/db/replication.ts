@@ -64,6 +64,7 @@ export const REPLICATION_POLICY = {
   tags: "replicated",
   chunkUserTags: "replicated",
   links: "replicated",
+  files: "replicated",
   // 変換学習はデバイスローカル運用（暗号 modifier 未定義。同期化は将来 issue）
   corrections: "local",
   // ファイルのメタデータ doc（issue #157）。実体（バイト列）は R2 で、中継サーバが

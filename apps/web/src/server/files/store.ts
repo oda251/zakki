@@ -6,6 +6,8 @@
  * depcruise `web-server-no-decrypt-capability`）。
  */
 
+import { FILE_RETENTIONS, type FileRetention } from "@zakki/core/file/upload.ts";
+
 /** R2 multipart upload の完了に渡す 1 part（part 番号は 1 始まり）。 */
 export interface MultipartPart {
   readonly partNumber: number;
@@ -13,16 +15,23 @@ export interface MultipartPart {
 }
 
 export interface FileStore {
-  createMultipart(key: string): Promise<{ uploadId: string }>;
+  createMultipart(retention: FileRetention, key: string): Promise<{ uploadId: string }>;
   uploadPart(
+    retention: FileRetention,
     key: string,
     uploadId: string,
     partNumber: number,
     body: ArrayBuffer,
   ): Promise<{ etag: string }>;
-  completeMultipart(key: string, uploadId: string, parts: readonly MultipartPart[]): Promise<void>;
-  get(key: string): Promise<Uint8Array | null>;
-  delete(key: string): Promise<void>;
+  completeMultipart(
+    retention: FileRetention,
+    key: string,
+    uploadId: string,
+    parts: readonly MultipartPart[],
+  ): Promise<void>;
+  abortMultipart(retention: FileRetention, key: string, uploadId: string): Promise<void>;
+  get(retention: FileRetention, key: string): Promise<Uint8Array | null>;
+  delete(retention: FileRetention, key: string): Promise<void>;
 }
 
 /**
@@ -41,16 +50,20 @@ function assertSafePathSegment(value: string, label: string): void {
  * アカウントをまたいだ参照を構造的に不可能にする（他アカウントの fileId を
  * 知っていても、自分の accountId 配下のキーしか組み立てられない）。
  */
-export function objectKeyFor(accountId: string, fileId: string): string {
+export function objectKeyFor(accountId: string, fileId: string, retention: FileRetention): string {
   assertSafePathSegment(accountId, "accountId");
   assertSafePathSegment(fileId, "fileId");
-  return `accounts/${accountId}/${fileId}`;
+  if (!FILE_RETENTIONS.includes(retention)) {
+    throw new Error(`不正な retention: ${JSON.stringify(retention)}`);
+  }
+  return `accounts/${accountId}/${retention}/${fileId}`;
 }
 
 /** Cloudflare R2 の multipart upload ハンドル（使う面だけの最小 interface）。 */
 export interface R2MultipartUploadLike {
   uploadPart(partNumber: number, value: ArrayBuffer): Promise<{ etag: string }>;
   complete(parts: readonly MultipartPart[]): Promise<unknown>;
+  abort(): Promise<void>;
 }
 
 /** R2 の get が返すオブジェクト（本体だけ使う）。 */
@@ -78,23 +91,32 @@ export interface R2BucketLike {
 }
 
 /** R2 binding のアダプタ。マルチユーザ Workers 配備（issue #134）で使う。 */
-export function r2FileStore(bucket: R2BucketLike): FileStore {
+export function r2FileStore(buckets: Record<FileRetention, R2BucketLike>): FileStore {
   return {
-    async createMultipart(key) {
-      return await bucket.createMultipartUpload(key);
+    async createMultipart(retention, key) {
+      return await buckets[retention].createMultipartUpload(key);
     },
-    async uploadPart(key, uploadId, partNumber, body) {
-      return await bucket.resumeMultipartUpload(key, uploadId).uploadPart(partNumber, body);
+    async uploadPart(retention, key, uploadId, partNumber, body) {
+      return await buckets[retention]
+        .resumeMultipartUpload(key, uploadId)
+        .uploadPart(partNumber, body);
     },
-    async completeMultipart(key, uploadId, parts) {
-      await bucket.resumeMultipartUpload(key, uploadId).complete(parts);
+    async completeMultipart(retention, key, uploadId, parts) {
+      await buckets[retention].resumeMultipartUpload(key, uploadId).complete(parts);
     },
-    async get(key) {
-      const object = await bucket.get(key);
+    async abortMultipart(retention, key, uploadId) {
+      try {
+        await buckets[retention].resumeMultipartUpload(key, uploadId).abort();
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.includes("(10024)")) throw error;
+      }
+    },
+    async get(retention, key) {
+      const object = await buckets[retention].get(key);
       return object === null ? null : new Uint8Array(await object.arrayBuffer());
     },
-    async delete(key) {
-      await bucket.delete(key);
+    async delete(retention, key) {
+      await buckets[retention].delete(key);
     },
   };
 }

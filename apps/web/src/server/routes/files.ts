@@ -1,10 +1,19 @@
 import { Hono } from "hono";
-import { DEFAULT_PART_BYTES, MAX_PART_BYTES } from "@zakki/core/file/upload.ts";
+import {
+  DEFAULT_PART_BYTES,
+  FILE_RETENTIONS,
+  MAX_PART_BYTES,
+  validateUpload,
+  type FileRetention,
+} from "@zakki/core/file/upload.ts";
 import { objectKeyFor } from "@zakki/web/server/files/store.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
 import { userForRequest } from "@zakki/web/server/deps.ts";
 import { parseBody } from "@zakki/web/server/parse.ts";
-import { FileMultipartCompleteSchema } from "@zakki/web/shared/api-schemas.ts";
+import {
+  FileMultipartBeginSchema,
+  FileMultipartCompleteSchema,
+} from "@zakki/web/shared/api-schemas.ts";
 
 /**
  * ファイル実体（バイト列）の中継（issue #157）。
@@ -28,14 +37,17 @@ export function fileRoutes(deps: AppDeps): Hono {
     if (deps.files === undefined) return c.json({ error: "ファイル保管は利用できません" }, 503);
     const user = await userForRequest(deps, c.req.raw);
     if (user === null) return c.json({ error: "認証が必要です" }, 401);
-    const key = keyFor(user.accountId, c.req.param("fileId"));
+    const body = await parseBody(c.req.raw, FileMultipartBeginSchema);
+    if (body === null) return c.json({ error: "invalid body" }, 400);
+    const validation = validateUpload(body.size, body.retention);
+    if (validation.isErr()) return c.json({ error: validation.error.message }, 422);
+    const key = keyFor(user.accountId, c.req.param("fileId"), body.retention);
     if (key === null) return c.json({ error: "invalid fileId" }, 400);
-    const created = await deps.files.createMultipart(key);
-    // objectKey も返す: クライアントはこの値を files doc に保存するだけで、
-    // アカウント名前空間（objectKeyFor の規約）を知る必要がない
+    const created = await deps.files.createMultipart(body.retention, key);
     return c.json({
       uploadId: created.uploadId,
       partSize: deps.partSize ?? DEFAULT_PART_BYTES,
+      retention: body.retention,
       objectKey: key,
     });
   });
@@ -44,17 +56,34 @@ export function fileRoutes(deps: AppDeps): Hono {
     if (deps.files === undefined) return c.json({ error: "ファイル保管は利用できません" }, 503);
     const user = await userForRequest(deps, c.req.raw);
     if (user === null) return c.json({ error: "認証が必要です" }, 401);
-    const key = keyFor(user.accountId, c.req.param("fileId"));
+    const retention = retentionFor(c.req.query("retention"));
+    if (retention === null) return c.json({ error: "invalid retention" }, 400);
+    const key = keyFor(user.accountId, c.req.param("fileId"), retention);
     if (key === null) return c.json({ error: "invalid fileId" }, 400);
+    const uploadId = c.req.param("uploadId");
     const partNumber = Number(c.req.param("n"));
     if (!Number.isInteger(partNumber) || partNumber < 1) {
+      await deps.files.abortMultipart(retention, key, uploadId);
       return c.json({ error: "invalid part number" }, 400);
     }
-    const body = await c.req.arrayBuffer();
+    let body: ArrayBuffer;
+    try {
+      body = await c.req.arrayBuffer();
+    } catch (error) {
+      await deps.files.abortMultipart(retention, key, uploadId);
+      throw error;
+    }
     if (body.byteLength > MAX_PART_BYTES) {
+      await deps.files.abortMultipart(retention, key, uploadId);
       return c.json({ error: "part が上限を超えています" }, 413);
     }
-    const uploaded = await deps.files.uploadPart(key, c.req.param("uploadId"), partNumber, body);
+    let uploaded: { etag: string };
+    try {
+      uploaded = await deps.files.uploadPart(retention, key, uploadId, partNumber, body);
+    } catch (error) {
+      await deps.files.abortMultipart(retention, key, uploadId);
+      throw error;
+    }
     return c.json({ etag: uploaded.etag });
   });
 
@@ -62,11 +91,22 @@ export function fileRoutes(deps: AppDeps): Hono {
     if (deps.files === undefined) return c.json({ error: "ファイル保管は利用できません" }, 503);
     const user = await userForRequest(deps, c.req.raw);
     if (user === null) return c.json({ error: "認証が必要です" }, 401);
-    const key = keyFor(user.accountId, c.req.param("fileId"));
+    const retention = retentionFor(c.req.query("retention"));
+    if (retention === null) return c.json({ error: "invalid retention" }, 400);
+    const key = keyFor(user.accountId, c.req.param("fileId"), retention);
     if (key === null) return c.json({ error: "invalid fileId" }, 400);
+    const uploadId = c.req.param("uploadId");
     const body = await parseBody(c.req.raw, FileMultipartCompleteSchema);
-    if (body === null) return c.json({ error: "invalid body" }, 400);
-    await deps.files.completeMultipart(key, c.req.param("uploadId"), body.parts);
+    if (body === null) {
+      await deps.files.abortMultipart(retention, key, uploadId);
+      return c.json({ error: "invalid body" }, 400);
+    }
+    try {
+      await deps.files.completeMultipart(retention, key, uploadId, body.parts);
+    } catch (error) {
+      await deps.files.abortMultipart(retention, key, uploadId);
+      throw error;
+    }
     return c.json({ ok: true });
   });
 
@@ -74,33 +114,53 @@ export function fileRoutes(deps: AppDeps): Hono {
     if (deps.files === undefined) return c.json({ error: "ファイル保管は利用できません" }, 503);
     const user = await userForRequest(deps, c.req.raw);
     if (user === null) return c.json({ error: "認証が必要です" }, 401);
-    const key = keyFor(user.accountId, c.req.param("fileId"));
+    const retention = retentionFor(c.req.query("retention"));
+    if (retention === null) return c.json({ error: "invalid retention" }, 400);
+    const key = keyFor(user.accountId, c.req.param("fileId"), retention);
     if (key === null) return c.json({ error: "invalid fileId" }, 400);
-    const bytes = await deps.files.get(key);
+    const bytes = await deps.files.get(retention, key);
     if (bytes === null) return c.json({ error: "not found" }, 404);
     return new Response(Uint8Array.from(bytes), { status: 200 });
+  });
+
+  app.delete("/:fileId/multipart/:uploadId", async (c) => {
+    if (deps.files === undefined) return c.json({ error: "ファイル保管は利用できません" }, 503);
+    const user = await userForRequest(deps, c.req.raw);
+    if (user === null) return c.json({ error: "認証が必要です" }, 401);
+    const retention = retentionFor(c.req.query("retention"));
+    if (retention === null) return c.json({ error: "invalid retention" }, 400);
+    const key = keyFor(user.accountId, c.req.param("fileId"), retention);
+    if (key === null) return c.json({ error: "invalid fileId" }, 400);
+    await deps.files.abortMultipart(retention, key, c.req.param("uploadId"));
+    return c.json({ ok: true });
   });
 
   app.delete("/:fileId", async (c) => {
     if (deps.files === undefined) return c.json({ error: "ファイル保管は利用できません" }, 503);
     const user = await userForRequest(deps, c.req.raw);
     if (user === null) return c.json({ error: "認証が必要です" }, 401);
-    const key = keyFor(user.accountId, c.req.param("fileId"));
+    const retention = retentionFor(c.req.query("retention"));
+    if (retention === null) return c.json({ error: "invalid retention" }, 400);
+    const key = keyFor(user.accountId, c.req.param("fileId"), retention);
     if (key === null) return c.json({ error: "invalid fileId" }, 400);
-    await deps.files.delete(key);
+    await deps.files.delete(retention, key);
     return c.json({ ok: true });
   });
 
   return app;
 }
 
+function retentionFor(value: string | undefined): FileRetention | null {
+  return FILE_RETENTIONS.find((retention) => retention === value) ?? null;
+}
+
 /**
  * accountId + fileId からオブジェクトキーを組み立てる。
  * パスセグメント検査（store.ts の objectKeyFor）に失敗したら null → 400。
  */
-function keyFor(accountId: string, fileId: string): string | null {
+function keyFor(accountId: string, fileId: string, retention: FileRetention): string | null {
   try {
-    return objectKeyFor(accountId, fileId);
+    return objectKeyFor(accountId, fileId, retention);
   } catch {
     return null;
   }

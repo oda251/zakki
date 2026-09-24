@@ -39,6 +39,7 @@ export function toFileDoc(d: RxDocument<FileDoc>): FileDoc {
     name: json.name,
     extension: json.extension,
     encryption: json.encryption,
+    retention: json.retention,
     objectKey: json.objectKey,
     size: json.size,
     partSize: json.partSize,

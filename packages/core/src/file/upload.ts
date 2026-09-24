@@ -13,6 +13,10 @@ import { PART_OVERHEAD_BYTES } from "@zakki/core/crypto/file-key.ts";
 /** 1 ファイルあたりのアップロード上限（issue #157 §4）。9 GiB。 */
 export const MAX_UPLOAD_BYTES = 9 * 1024 ** 3;
 
+export const FILE_RETENTIONS = ["permanent", "1d", "7d", "30d"] as const;
+export type FileRetention = (typeof FILE_RETENTIONS)[number];
+export const PERMANENT_MAX_BYTES = 10 * 1024 ** 2;
+
 /**
  * 1 part（暗号化後）の上限バイト数。Cloudflare Workers のリクエストボディ上限
  * （Free/Pro プランで 100 MB, https://developers.cloudflare.com/workers/platform/limits/）
@@ -44,8 +48,16 @@ export interface UploadSizeError {
   readonly message: string;
 }
 
+export interface UploadRetentionError {
+  readonly type: "upload-retention-error";
+  readonly message: string;
+}
+
 /** アップロードサイズが 1 バイト以上 {@link MAX_UPLOAD_BYTES} 以下かを検証する。 */
 export function validateUploadSize(totalBytes: number): Result<number, UploadSizeError> {
+  if (!Number.isSafeInteger(totalBytes)) {
+    return err({ type: "upload-size-error", message: "ファイルサイズが不正です" });
+  }
   if (totalBytes <= 0) {
     return err({ type: "upload-size-error", message: "ファイルが空です" });
   }
@@ -53,6 +65,23 @@ export function validateUploadSize(totalBytes: number): Result<number, UploadSiz
     return err({
       type: "upload-size-error",
       message: `ファイルサイズが上限（${MAX_UPLOAD_BYTES} バイト）を超えています`,
+    });
+  }
+  return ok(totalBytes);
+}
+
+export function validateUpload(
+  totalBytes: number,
+  retention: FileRetention,
+): Result<number, UploadSizeError | UploadRetentionError> {
+  const sizeResult = validateUploadSize(totalBytes);
+  if (sizeResult.isErr()) {
+    return err(sizeResult.error);
+  }
+  if (retention === "permanent" && totalBytes >= PERMANENT_MAX_BYTES) {
+    return err({
+      type: "upload-retention-error",
+      message: `permanent は ${PERMANENT_MAX_BYTES} バイト未満で指定してください`,
     });
   }
   return ok(totalBytes);
