@@ -46,7 +46,7 @@ function assertSafePathSegment(value: string, label: string): void {
 }
 
 /**
- * R2 のオブジェクトキー。`accounts/<accountId>/<fileId>` の形に固定することで、
+ * R2 のオブジェクトキー。`accounts/<accountId>/<retention>/<fileId>` の形に固定することで、
  * アカウントをまたいだ参照を構造的に不可能にする（他アカウントの fileId を
  * 知っていても、自分の accountId 配下のキーしか組み立てられない）。
  */

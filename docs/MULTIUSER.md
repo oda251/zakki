@@ -285,14 +285,28 @@ Workers 版が node 依存へ到達しないことは depcruise の `web-worker-
 bun run --cwd apps/api deploy         # → https://zakki-api-prod.<account>.workers.dev
 
 # 2) ファイルアップロード用の R2 バケット（issue #157）
- wrangler r2 bucket create zakki-files-prod
- #    別名にする場合は apps/web/wrangler.jsonc の r2_buckets[].bucket_name も合わせる
+cd apps/web
+bunx wrangler r2 bucket create zakki-files-permanent-prod
+bunx wrangler r2 bucket create zakki-files-1d-prod
+bunx wrangler r2 bucket create zakki-files-7d-prod
+bunx wrangler r2 bucket create zakki-files-30d-prod
+bunx wrangler r2 bucket lifecycle add zakki-files-permanent-prod abort-incomplete --abort-multipart-days 7
+bunx wrangler r2 bucket lifecycle add zakki-files-1d-prod delete-after-1d --expire-days 1 --abort-multipart-days 7
+bunx wrangler r2 bucket lifecycle add zakki-files-7d-prod delete-after-7d --expire-days 7 --abort-multipart-days 7
+bunx wrangler r2 bucket lifecycle add zakki-files-30d-prod delete-after-30d --expire-days 30 --abort-multipart-days 7
+cd ../..
+#    別名にする場合は apps/web/wrangler.jsonc の r2_buckets[].bucket_name も合わせる
+#    lifecycle 設定は bunx wrangler r2 bucket lifecycle list <bucket> で確認する
 
 # 3) 中継サーバ Worker（apps/web）
 just setup-web                        # vite build を dist/ へ
 #    wrangler.jsonc の vars に apps/api の URL を入れる
 bun run --cwd apps/web deploy         # → https://zakki-web.<account>.workers.dev
 ```
+
+保存期間はアップロードごとに「無期限 / 1日 / 7日 / 30日」から選ぶ。10 MiB 以上のファイルでは「無期限」を拒否する。有限期限は R2 lifecycle が本体だけを削除し、日記の blob チャンクと `files` メタデータは残す。R2 の削除は有効期限から通常 24 時間以内だが、即時削除を保証する API ではない（[Object lifecycles](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)）。
+
+multipart の失敗経路では `abort()` を同期的に待つ。Worker 強制終了や通信断まで含めて即時削除を数学的に保証することはできないため、4 バケットとも未完了 multipart を 7 日で abort する lifecycle を設定する。
 
 **設定値は全て `--secrets-file` で渡す**（非機密の値も含む）。`APP_ORIGIN` / `API_ORIGIN` / `ZAKKI_CONTROL_PLANE_URL` はアカウント固有の workers.dev サブドメインを含むので、公開リポジトリの `wrangler.jsonc` に書かない。そのため `env.production.vars` は空にしてあり、wrangler はトップレベルの vars が継承されない旨の警告を出すが意図どおり（同名の var があると secret と binding 名が衝突する）。secret はデプロイで消えないので、2 回目以降は値を変えるときだけファイルを更新すればよい。
 

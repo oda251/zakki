@@ -32,7 +32,7 @@ chunks(
 -- unique (parent_id, position)
 -- unique (date) where parent_id is null        -- 日付チャンクは 1 日 1 件
 -- check ((kind = 'blob') = (file_id IS NOT NULL))
-files(id, name, extension, encryption, object_key, size, part_size, created_at, updated_at)
+files(id, name, extension, encryption, retention, object_key, size, part_size, created_at, updated_at)
 links(from_chunk_id, to_chunk_id, score, origin) -- 変更なし。任意階層で張れる
 ```
 
@@ -50,6 +50,9 @@ links(from_chunk_id, to_chunk_id, score, origin) -- 変更なし。任意階層�
   暗号化**できる（チャンク E2E 暗号とは独立の FEK。`file_key_envelopes`）
 - `files.extension` / `size` は暗号 ON でも平文（画像かどうかの弁別に使う。
   `date` を平文にしているのと同じ受容）
+- `files.retention` は `permanent | 1d | 7d | 30d`。R2 の TTL 別バケットを選び、
+  10 MiB 以上では `permanent` を拒否する。期限到達時は R2 本体だけを lifecycle が
+  削除し、blob チャンクと `files` 行は残す
 
 - **entries / sessions テーブルは削除**。`raw` / `converted` 列も削除する
   - 打ちかけ行（Enter 前のライブ末尾ローマ字）はリロードで失われる。受容（2026-07-06 決定）

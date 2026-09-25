@@ -233,7 +233,8 @@ export function updateChunkContent(
  * 順で行う（逆順だと chunks.file_id の FK が files 行の削除を拒む）。
  *
  * 戻り値は削除した files 行の object_key 一覧（呼び出し側が R2 オブジェクトを
- * 掃除する材料。#157 の「R2 の掃除は明示 DELETE のときだけ」の入力）。
+ * 掃除する材料。有限 retention の lifecycle が既に削除した key も含まれるが、
+ * ユーザー明示 DELETE ではその key を削除対象として渡せる。
  */
 export function deleteChunk(db: Db, id: number): ResultAsync<string[], DbError> {
   return tryDbAsync(() =>
