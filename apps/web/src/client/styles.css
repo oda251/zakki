@@ -211,6 +211,24 @@ body,
   color: var(--text-muted);
 }
 
+.file-details__filename {
+  @apply break-all text-sm font-semibold text-ink;
+}
+
+.file-details__metadata {
+  @apply mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-muted;
+}
+
+.file-details__preview-image {
+  @apply mt-2 max-h-64 w-full rounded border object-contain;
+  border-color: var(--hairline);
+  background: var(--page);
+}
+
+.file-details__actions {
+  @apply mt-2 flex flex-wrap gap-1;
+}
+
 .chunk-digest {
   @apply block w-full cursor-pointer rounded border-0 bg-transparent px-2 py-1.5 text-left text-sm text-ink-secondary;
 }

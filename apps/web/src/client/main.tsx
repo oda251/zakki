@@ -8,6 +8,7 @@ import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 import { logoutSession } from "@zakki/web/client/store/logout.ts";
 import { usePasskeyStore } from "@zakki/web/client/store/passkey.ts";
 import { useFilePasswordStore } from "@zakki/web/client/store/file-password.ts";
+import { useFileStore } from "@zakki/web/client/store/files.ts";
 import "@zakki/web/client/styles.css";
 
 const root = document.getElementById("root");
@@ -42,6 +43,7 @@ void Promise.all([
         : { fetchFn: relayFetch },
     );
     const filePasswordControls = filePassword.createFilePasswordControls({ fetchFn: relayFetch });
+    useFileStore.getState().connect(db, relayFetch, filePasswordControls);
     await useFilePasswordStore.getState().connect(filePasswordControls);
     // サイドバー下部のアカウント表示（メール + プロバイダ, issue #159）。セッション
     // JWT はメモリのみなので、起動直後の resolveRemoteSession のレスポンスが唯一の供給源。

@@ -9,7 +9,9 @@ import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { openTestDb } from "@zakki/web/client/db/test-db.ts";
 import { getOrCreateDateChunkDoc, removeChunkTree } from "@zakki/web/client/db/writes.ts";
+import { createFilePasswordControls } from "@zakki/web/client/files/password.ts";
 import { downloadFile, uploadFile } from "@zakki/web/client/files/upload.ts";
+import { useFileStore } from "@zakki/web/client/store/files.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 import { memoryFileStore } from "@zakki/web/server/files/test-store.ts";
 import { objectKeyFor } from "@zakki/web/server/files/store.ts";
@@ -44,6 +46,13 @@ beforeEach(async () => {
     resolveUser: () => Promise.resolve({ db: serverDb, accountId: ACCOUNT }),
   });
   fetchFn = async (input, init) => app.request(input, init);
+  useFileStore
+    .getState()
+    .connect(
+      db,
+      fetchFn,
+      createFilePasswordControls({ fetchFn, params: { opsLimit: 1, memLimit: 8192 * 1024 } }),
+    );
 });
 
 afterEach(async () => {
@@ -193,6 +202,23 @@ describe("uploadFile", () => {
     await expectRejects(downloadFile({ file, fek: null, fetchFn }));
     expect(await db.files.findOne(file.id).exec()).not.toBeNull();
     expect(await db.chunks.findOne(chunk.id).exec()).not.toBeNull();
+  });
+
+  test("file store は upload・download・delete を authorized fetch と FEK closure で扱う", async () => {
+    const root = await getOrCreateDateChunkDoc(db, DATE);
+    const content = bytes(20);
+    const uploaded = await useFileStore.getState().upload({
+      file: new File([Uint8Array.from(content)], "store.png"),
+      parentId: root.id,
+      retention: "30d",
+      encrypted: false,
+    });
+    if (uploaded === null) throw new Error(useFileStore.getState().message ?? "upload failed");
+
+    expect(uploaded.file.retention).toBe("30d");
+    expect(await useFileStore.getState().download(uploaded.file)).toEqual(content);
+    expect(await useFileStore.getState().removeChunk(uploaded.chunk.id)).toBe(true);
+    expect(await db.files.findOne(uploaded.file.id).exec()).toBeNull();
   });
 });
 
