@@ -68,6 +68,14 @@ describe("nodesFromDocs", () => {
     expect(nodes[0]?.tags).toEqual([]);
   });
 
+  test("blob の kind と fileId を GraphNode へ保持する", () => {
+    const nodes = nodesFromDocs(
+      [chunk({ id: "20", kind: "blob", fileId: "file-20", content: "" })],
+      [],
+    );
+    expect(nodes[0]).toMatchObject({ kind: "blob", fileId: "file-20" });
+  });
+
   test("祖先に日付チャンクが無いノードは date が空文字になる", () => {
     const nodes = nodesFromDocs([chunk({ id: "5", parentId: "存在しない親" })], []);
     expect(nodes[0]?.date).toBe("");

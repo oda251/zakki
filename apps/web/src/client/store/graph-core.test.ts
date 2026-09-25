@@ -17,6 +17,8 @@ function n(id: number, parentId: number | null, over: Partial<GraphNode> = {}): 
     parentId,
     position: 0,
     content: `c${id}`,
+    kind: "text",
+    fileId: null,
     date: "2026-07-05",
     polarity: null,
     tags: [],
