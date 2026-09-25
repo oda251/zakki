@@ -4,7 +4,14 @@ import { ready } from "@zakki/core/crypto/sodium.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
-import { changeFilePassword, hasFilePassword, setFilePassword, unlockFek } from "./password.ts";
+import {
+  changeFilePassword,
+  createFilePasswordControls,
+  hasFilePassword,
+  setFilePassword,
+  unlockFek,
+} from "./password.ts";
+import { useFilePasswordStore } from "@zakki/web/client/store/file-password.ts";
 import { createApp } from "@zakki/web/server/app.ts";
 
 /**
@@ -83,5 +90,40 @@ describe("ファイルパスワード", () => {
       }),
     );
     expect(await unlockFek({ password: "ふるい", fetchFn })).toEqual(fek);
+  });
+});
+
+describe("createFilePasswordControls", () => {
+  test("設定・変更・再読込を FEK 非永続の closure で扱う", async () => {
+    const controls = createFilePasswordControls({ fetchFn, params });
+    expect(await controls.refresh()).toBe("unconfigured");
+
+    const fek = await controls.configure("ひみつ");
+    expect(await controls.status()).toBe("unlocked");
+    expect(controls.fek()).toEqual(fek);
+
+    await controls.change("ひみつ", "あたらしい");
+    expect(controls.fek()).toEqual(fek);
+    controls.clear();
+    expect(controls.fek()).toBeNull();
+    expect(await controls.status()).toBe("unknown");
+  });
+
+  test("パスワード違いは locked のまま FEK を持たない", async () => {
+    await setFilePassword({ password: "ひみつ", fetchFn, params });
+    const controls = createFilePasswordControls({ fetchFn, params });
+
+    expect(await controls.unlock("ちがう")).toBe("locked");
+    expect(controls.fek()).toBeNull();
+  });
+
+  test("Zustand には FEK もパスワードも渡さない", async () => {
+    const controls = createFilePasswordControls({ fetchFn, params });
+    await useFilePasswordStore.getState().connect(controls);
+    expect(useFilePasswordStore.getState().status).toBe("unconfigured");
+
+    await useFilePasswordStore.getState().configure("supersecret");
+    expect(useFilePasswordStore.getState().status).toBe("unlocked");
+    expect(JSON.stringify(useFilePasswordStore.getState())).not.toContain("supersecret");
   });
 });

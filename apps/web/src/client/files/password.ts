@@ -23,6 +23,23 @@ export interface FilePasswordParams {
   readonly memLimit: number;
 }
 
+export type FilePasswordStatus = "unknown" | "unconfigured" | "locked" | "unlocked";
+
+export interface FilePasswordControlsOptions {
+  readonly fetchFn?: FetchLike;
+  readonly params?: FilePasswordParams;
+}
+
+export interface FilePasswordControls {
+  readonly status: () => Promise<FilePasswordStatus>;
+  readonly refresh: () => Promise<FilePasswordStatus>;
+  readonly configure: (password: string) => Promise<Uint8Array>;
+  readonly unlock: (password: string) => Promise<FilePasswordStatus>;
+  readonly change: (oldPassword: string, newPassword: string) => Promise<FilePasswordStatus>;
+  readonly fek: () => Uint8Array | null;
+  readonly clear: () => void;
+}
+
 const envelopePath = `${API_BASE}/crypto/file-envelope`;
 
 async function getEnvelope(fetchFn: FetchLike): Promise<FileEnvelope | null> {
@@ -34,13 +51,24 @@ async function getEnvelope(fetchFn: FetchLike): Promise<FileEnvelope | null> {
   return body.envelope;
 }
 
-async function putEnvelope(fetchFn: FetchLike, envelope: FileEnvelope): Promise<void> {
+async function saveEnvelope(
+  fetchFn: FetchLike,
+  envelope: FileEnvelope,
+  method: "POST" | "PUT",
+): Promise<void> {
   const res = await fetchFn(envelopePath, {
-    method: "PUT",
+    method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(envelope),
   });
   if (res.status === 401) throw new Error("認証が必要です");
+  if (res.status === 409) {
+    throw new Error(
+      method === "POST"
+        ? "ファイル暗号のパスワードは既に設定済みです"
+        : "ファイル暗号のパスワードが未設定のため変更できません",
+    );
+  }
   if (!res.ok) throw new Error("ファイル暗号の封筒の保存に失敗しました");
 }
 
@@ -52,8 +80,8 @@ export async function hasFilePassword(opts: { fetchFn?: FetchLike }): Promise<bo
 
 /**
  * ファイル暗号のパスワードを設定し、新規生成した FEK を返す。
- * 封筒はサーバ（id=1）へ保存される。2 回目は上書き（すでにファイルがあって
- * パスワードを再設定する場合は setFilePassword ではなく changeFilePassword を使う）。
+ * 封筒はサーバ（id=1）へ初回だけ POST で保存される。既に設定済みの場合は
+ * setFilePassword ではなく changeFilePassword を使う。
  */
 export async function setFilePassword(opts: {
   password: string;
@@ -64,12 +92,16 @@ export async function setFilePassword(opts: {
   const params = opts.params ?? defaultKdfParams();
   const fek = generateFek();
   const salt = generateSalt();
-  await putEnvelope(fetchFn, {
-    wrappedFek: toBase64(wrapFek(fek, opts.password, salt, params)),
-    kdfSalt: toBase64(salt),
-    kdfOps: params.opsLimit,
-    kdfMem: params.memLimit,
-  });
+  await saveEnvelope(
+    fetchFn,
+    {
+      wrappedFek: toBase64(wrapFek(fek, opts.password, salt, params)),
+      kdfSalt: toBase64(salt),
+      kdfOps: params.opsLimit,
+      kdfMem: params.memLimit,
+    },
+    "POST",
+  );
   return fek;
 }
 
@@ -85,12 +117,10 @@ export async function unlockFek(opts: {
   const envelope = await getEnvelope(fetchFn);
   if (envelope === null) return null;
   try {
-    return unwrapFek(
-      fromBase64(envelope.wrappedFek),
-      opts.password,
-      fromBase64(envelope.kdfSalt),
-      { opsLimit: envelope.kdfOps, memLimit: envelope.kdfMem },
-    );
+    return unwrapFek(fromBase64(envelope.wrappedFek), opts.password, fromBase64(envelope.kdfSalt), {
+      opsLimit: envelope.kdfOps,
+      memLimit: envelope.kdfMem,
+    });
   } catch {
     return null;
   }
@@ -124,10 +154,82 @@ export async function changeFilePassword(opts: {
     newSalt,
     params,
   );
-  await putEnvelope(fetchFn, {
-    wrappedFek: toBase64(rewraped),
-    kdfSalt: toBase64(newSalt),
-    kdfOps: params.opsLimit,
-    kdfMem: params.memLimit,
-  });
+  await saveEnvelope(
+    fetchFn,
+    {
+      wrappedFek: toBase64(rewraped),
+      kdfSalt: toBase64(newSalt),
+      kdfOps: params.opsLimit,
+      kdfMem: params.memLimit,
+    },
+    "PUT",
+  );
+}
+
+export function createFilePasswordControls(
+  options: FilePasswordControlsOptions = {},
+): FilePasswordControls {
+  const fetchFn = options.fetchFn ?? fetch;
+  const params = options.params ?? defaultKdfParams();
+  let currentStatus: FilePasswordStatus = "unknown";
+  let currentFek: Uint8Array | null = null;
+
+  const refresh = async (): Promise<FilePasswordStatus> => {
+    const configured = await hasFilePassword({ fetchFn });
+    if (!configured) currentFek = null;
+    currentStatus = configured ? (currentFek === null ? "locked" : "unlocked") : "unconfigured";
+    return currentStatus;
+  };
+
+  const configure = async (password: string): Promise<Uint8Array> => {
+    const fek = await setFilePassword({ password, fetchFn, params });
+    currentFek = fek;
+    currentStatus = "unlocked";
+    return fek;
+  };
+
+  const unlock = async (password: string): Promise<FilePasswordStatus> => {
+    const fek = await unlockFek({ password, fetchFn });
+    if (fek !== null) {
+      currentFek = fek;
+      currentStatus = "unlocked";
+      return currentStatus;
+    }
+
+    currentFek = null;
+    if (currentStatus === "unknown") {
+      currentStatus = (await hasFilePassword({ fetchFn })) ? "locked" : "unconfigured";
+    } else {
+      currentStatus = currentStatus === "unconfigured" ? "unconfigured" : "locked";
+    }
+    return currentStatus;
+  };
+
+  const change = async (oldPassword: string, newPassword: string): Promise<FilePasswordStatus> => {
+    const existingFek = currentFek;
+    await changeFilePassword({ oldPassword, newPassword, fetchFn, params });
+    if (existingFek !== null) {
+      currentFek = existingFek;
+      currentStatus = "unlocked";
+      return currentStatus;
+    }
+
+    const fek = await unlockFek({ password: newPassword, fetchFn });
+    currentFek = fek;
+    currentStatus = fek === null ? "locked" : "unlocked";
+    return currentStatus;
+  };
+
+  return {
+    status: async () => currentStatus,
+    refresh,
+    configure,
+    unlock,
+    change,
+    fek: () => currentFek,
+    clear: () => {
+      currentFek = null;
+      currentStatus = "unknown";
+    },
+  };
 }

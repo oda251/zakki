@@ -325,6 +325,25 @@ body,
   @apply flex flex-col gap-1;
 }
 
+.file-password-settings {
+  @apply flex flex-col gap-2 border-t pt-4;
+  border-color: var(--hairline);
+}
+
+.file-password-settings__title {
+  @apply text-sm font-semibold text-ink;
+}
+
+.file-password-form {
+  @apply flex flex-col gap-2;
+}
+
+.file-password-field {
+  @apply flex flex-col gap-1;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
 /* ---- Composer.Web（docs/COMPOSER.md） ---- */
 
 /* チャット風（LINE 等）: 外枠は持たず、確定チャンクは左寄せの吹き出し、下に入力欄 */

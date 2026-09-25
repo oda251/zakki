@@ -1,6 +1,13 @@
+import { errAsync } from "neverthrow";
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { toBase64, fromBase64, WRAPPED_DEK_BYTES } from "@zakki/core/crypto/wire.ts";
-import { getFileKeyEnvelope, putFileKeyEnvelope } from "@zakki/data/file/envelope.ts";
+import type { FileKeyEnvelopeRecord } from "@zakki/data/file/envelope.ts";
+import {
+  createFileKeyEnvelope,
+  getFileKeyEnvelope,
+  updateFileKeyEnvelope,
+} from "@zakki/data/file/envelope.ts";
 import type { AppDeps } from "@zakki/web/server/deps.ts";
 import { dbForRequest } from "@zakki/web/server/deps.ts";
 import { parseBody } from "@zakki/web/server/parse.ts";
@@ -24,6 +31,29 @@ import { FileEnvelopeSchema } from "@zakki/web/shared/api-schemas.ts";
 /** Argon2id の推奨ソルト長（`crypto_pwhash_SALTBYTES` = 16 バイト, kdf.ts の generateSalt） */
 const KDF_SALT_BYTES = 16;
 
+async function parseFileEnvelopeBody(req: Request): Promise<FileEnvelope | null> {
+  return parseBody(req, FileEnvelopeSchema);
+}
+
+function validateFileEnvelope(body: FileEnvelope): FileKeyEnvelopeRecord | null {
+  let wrappedFek: Uint8Array;
+  let kdfSalt: Uint8Array;
+  try {
+    wrappedFek = fromBase64(body.wrappedFek);
+    kdfSalt = fromBase64(body.kdfSalt);
+  } catch {
+    return null;
+  }
+  if (wrappedFek.length !== WRAPPED_DEK_BYTES || kdfSalt.length !== KDF_SALT_BYTES) return null;
+
+  return {
+    wrappedFek,
+    kdfSalt,
+    kdfOps: body.kdfOps,
+    kdfMem: body.kdfMem,
+  };
+}
+
 export function fileEnvelopeRoutes(deps: AppDeps): Hono {
   const app = new Hono();
 
@@ -46,36 +76,36 @@ export function fileEnvelopeRoutes(deps: AppDeps): Hono {
     );
   });
 
-  app.put("/file-envelope", async (c) => {
-    const body = await parseBody(c.req.raw, FileEnvelopeSchema);
+  const saveEnvelope = async (c: Context, mode: "create" | "change"): Promise<Response> => {
+    const body = await parseFileEnvelopeBody(c.req.raw);
     if (body === null) return c.json({ error: "invalid body" }, 400);
     const db = await dbForRequest(deps, c.req.raw);
     if (db === null) return c.json({ error: "認証が必要です" }, 401);
-    // 封筒は `nonce || ciphertext`（file-key.ts の wrapFek）で長さが一意に決まる:
-    // XChaCha20 nonce 24B + FEK 32B + Poly1305 tag 16B = 72B。ソルトは Argon2id の
-    // 16B。どちらも違えば「開けない封筒」が DB に入る経路なので保存前に拒否する
-    // （crypto.ts の wrappedDek 検査と同じ流儀）。
-    let wrappedFek: Uint8Array;
-    let kdfSalt: Uint8Array;
-    try {
-      wrappedFek = fromBase64(body.wrappedFek);
-      kdfSalt = fromBase64(body.kdfSalt);
-    } catch {
-      return c.json({ error: "invalid body" }, 400);
+    const envelope = validateFileEnvelope(body);
+    if (envelope === null) return c.json({ error: "invalid body" }, 400);
+
+    const result =
+      mode === "create"
+        ? await createFileKeyEnvelope(db, envelope)
+        : await updateFileKeyEnvelope(db, envelope);
+    if (result.isErr()) return respond(c, errAsync(result.error));
+    if (!result.value) {
+      return c.json(
+        {
+          error:
+            mode === "create"
+              ? "ファイル暗号の封筒は既に存在します"
+              : "ファイル暗号の封筒が設定されていません",
+        },
+        409,
+      );
     }
-    if (wrappedFek.length !== WRAPPED_DEK_BYTES || kdfSalt.length !== KDF_SALT_BYTES) {
-      return c.json({ error: "invalid body" }, 400);
-    }
-    return respond(
-      c,
-      putFileKeyEnvelope(db, {
-        wrappedFek,
-        kdfSalt,
-        kdfOps: body.kdfOps,
-        kdfMem: body.kdfMem,
-      }).map(() => ({ ok: true })),
-    );
-  });
+
+    return c.json({ ok: true });
+  };
+
+  app.post("/file-envelope", (c) => saveEnvelope(c, "create"));
+  app.put("/file-envelope", (c) => saveEnvelope(c, "change"));
 
   return app;
 }

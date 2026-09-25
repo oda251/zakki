@@ -47,44 +47,43 @@ export function getFileKeyEnvelope(db: Db): ResultAsync<FileKeyEnvelopeRecord | 
   });
 }
 
-/** wrapped 済み FEK 封筒を保存する。既にある封筒は上書き（id=1 の upsert） */
-export function putFileKeyEnvelope(
+export function createFileKeyEnvelope(
   db: Db,
   envelope: FileKeyEnvelopeRecord,
   now: string = new Date().toISOString(),
-): ResultAsync<FileKeyEnvelopeRecord, DbError> {
+): ResultAsync<boolean, DbError> {
   return tryDbAsync(async () => {
-    const row: {
-      wrappedFek: Buffer;
-      kdfSalt: Buffer;
-      kdfOps: number;
-      kdfMem: number;
-    } = {
-      wrappedFek: Buffer.from(envelope.wrappedFek),
-      kdfSalt: Buffer.from(envelope.kdfSalt),
-      kdfOps: envelope.kdfOps,
-      kdfMem: envelope.kdfMem,
-    };
     const [inserted] = await db
       .insert(fileKeyEnvelopes)
       .values({
         id: ENVELOPE_ID,
-        ...row,
+        wrappedFek: Buffer.from(envelope.wrappedFek),
+        kdfSalt: Buffer.from(envelope.kdfSalt),
+        kdfOps: envelope.kdfOps,
+        kdfMem: envelope.kdfMem,
         createdAt: now,
       })
-      .onConflictDoUpdate({
-        target: fileKeyEnvelopes.id,
-        set: row,
+      .onConflictDoNothing({ target: fileKeyEnvelopes.id })
+      .returning({ id: fileKeyEnvelopes.id });
+    return inserted !== undefined;
+  });
+}
+
+export function updateFileKeyEnvelope(
+  db: Db,
+  envelope: FileKeyEnvelopeRecord,
+): ResultAsync<boolean, DbError> {
+  return tryDbAsync(async () => {
+    const [updated] = await db
+      .update(fileKeyEnvelopes)
+      .set({
+        wrappedFek: Buffer.from(envelope.wrappedFek),
+        kdfSalt: Buffer.from(envelope.kdfSalt),
+        kdfOps: envelope.kdfOps,
+        kdfMem: envelope.kdfMem,
       })
-      .returning();
-    if (inserted === undefined) {
-      throw new Error("FEK 封筒の保存に失敗しました");
-    }
-    return {
-      wrappedFek: toBytes(inserted.wrappedFek),
-      kdfSalt: toBytes(inserted.kdfSalt),
-      kdfOps: inserted.kdfOps,
-      kdfMem: inserted.kdfMem,
-    };
+      .where(eq(fileKeyEnvelopes.id, ENVELOPE_ID))
+      .returning({ id: fileKeyEnvelopes.id });
+    return updated !== undefined;
   });
 }

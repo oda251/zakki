@@ -1,3 +1,4 @@
+import { FilePasswordSettings } from "@zakki/web/client/layout/FilePasswordSettings.tsx";
 import { PasskeySettings } from "@zakki/web/client/layout/PasskeySettings.tsx";
 import { useSettingsStore } from "@zakki/web/client/store/settings.ts";
 
@@ -42,6 +43,7 @@ export function SettingsPanel() {
         </div>
         <div className="settings-panel__body">
           <PasskeySettings />
+          <FilePasswordSettings />
         </div>
       </div>
     </div>

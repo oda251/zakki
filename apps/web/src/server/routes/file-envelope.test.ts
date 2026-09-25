@@ -36,6 +36,13 @@ function envelopeBody(password: string, salt: Uint8Array, fek: Uint8Array) {
   };
 }
 
+const post = (body: unknown) =>
+  app.request("/api/crypto/file-envelope", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
 const put = (body: unknown) =>
   app.request("/api/crypto/file-envelope", {
     method: "PUT",
@@ -50,10 +57,10 @@ describe("GET /api/crypto/file-envelope", () => {
     expect(await res.json()).toEqual({ envelope: null });
   });
 
-  test("E2: PUT で保存した封筒が返り、パスワードで FEK を取り出せる", async () => {
+  test("E2: POST で保存した封筒が返り、パスワードで FEK を取り出せる", async () => {
     const fek = generateFek();
     const salt = generateSalt();
-    expect((await put(envelopeBody("ひみつ", salt, fek))).status).toBe(200);
+    expect((await post(envelopeBody("ひみつ", salt, fek))).status).toBe(200);
 
     const res = await app.request("/api/crypto/file-envelope");
     const { envelope } = (await res.json()) as { envelope: FileEnvelope | null };
@@ -68,12 +75,19 @@ describe("GET /api/crypto/file-envelope", () => {
     ).toEqual(fek);
   });
 
-  test("E2: PUT は上書きする（パスワード変更 = 封筒の差し替え）", async () => {
+  test("E2: POST は初回だけ保存し、2 回目は 409", async () => {
+    const first = envelopeBody("ふるい", generateSalt(), generateFek());
+    expect((await post(first)).status).toBe(200);
+    expect((await post(first)).status).toBe(409);
+  });
+
+  test("E2: PUT はパスワード変更専用で、封筒を同じ FEK で差し替える", async () => {
     const fek = generateFek();
     const first = generateSalt();
     const second = generateSalt();
-    await put(envelopeBody("ふるい", first, fek));
-    await put(envelopeBody("あたらしい", second, fek));
+    expect((await put(envelopeBody("ふるい", first, fek))).status).toBe(409);
+    await post(envelopeBody("ふるい", first, fek));
+    expect((await put(envelopeBody("あたらしい", second, fek))).status).toBe(200);
 
     const { envelope } = (await (await app.request("/api/crypto/file-envelope")).json()) as {
       envelope: FileEnvelope | null;
@@ -97,13 +111,23 @@ describe("GET /api/crypto/file-envelope", () => {
 
   test("E4: 中継先が解決できないリクエストは 401", async () => {
     const anon = createApp({ db, resolveUser: () => Promise.resolve(null) });
+    const body = envelopeBody("ひみつ", generateSalt(), generateFek());
     expect((await anon.request("/api/crypto/file-envelope")).status).toBe(401);
+    expect(
+      (
+        await anon.request("/api/crypto/file-envelope", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        })
+      ).status,
+    ).toBe(401);
     expect(
       (
         await anon.request("/api/crypto/file-envelope", {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(envelopeBody("ひみつ", generateSalt(), generateFek())),
+          body: JSON.stringify(body),
         })
       ).status,
     ).toBe(401);
