@@ -16,9 +16,11 @@ import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
 import { loadConfigOrExit } from "@zakki/tui/config.ts";
 import { localDate } from "@zakki/core/util/local-date.ts";
 import { getOrCreateDateChunk, listChildren } from "@zakki/data/chunk/repository.ts";
+import { listFilesByChunk } from "@zakki/data/file/repository.ts";
 import { buildRaw } from "@zakki/core/entry/records.ts";
 import { defaultVaultDir } from "@zakki/tui/export/obsidian.ts";
 import { App } from "@zakki/tui/tui/App.tsx";
+import { blobChunkLines, splitChunksByKind } from "@zakki/tui/tui/blob-lines.ts";
 
 // ゼロフリクション起動（docs/FEATURES.md 候補2）:
 // 設定・引数なしで起動し、当日エントリの末尾から即入力できる。
@@ -97,7 +99,18 @@ const children = await listChildren(db, dateChunk.id).match(
     process.exit(1);
   },
 );
-const initialRaw = buildRaw(children.map((c) => c.content));
+// blob チャンク（issue #157）は編集可能なテキストではないので buildRaw に混ぜない
+// （混ぜると打ち直しのたびに raw から再チャンク化されて二重化する。G3）。
+const { text: textChildren, blob: blobChildren } = splitChunksByKind(children);
+const initialRaw = buildRaw(textChildren.map((c) => c.content));
+const filesByChunk = await listFilesByChunk(db).match(
+  (m) => m,
+  (e): never => {
+    console.error(`zakki: DB エラー: ${e.message}`);
+    process.exit(1);
+  },
+);
+const initialBlobLines = blobChunkLines(blobChildren, filesByChunk);
 
 // anco 未導入（scripts/install-anco.sh 未実行）の環境では、かなのまま
 // 動作する identity エンジンにフォールバックする（docs/FEATURES.md §変換エンジン）。
@@ -119,6 +132,7 @@ createRoot(renderer).render(
     date={date}
     dateChunkId={dateChunk.id}
     initialRaw={initialRaw}
+    initialBlobLines={initialBlobLines}
     vaultDir={defaultVaultDir(config.vaultDir)}
     engine={engine}
     corrections={corrections}

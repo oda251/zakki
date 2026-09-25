@@ -4,6 +4,7 @@
  * client は派生型（v.InferInput）で送信リテラルの形を縛る。
  * レスポンス側の型は api-types.ts（@zakki/data の re-export）を参照。
  */
+import { FILE_RETENTIONS, MAX_UPLOAD_BYTES } from "@zakki/core/file/upload.ts";
 import * as v from "valibot";
 
 // chunks 書込み・読取系のスキーマは RxDB replication への移行で撤去済み（#44 → #45）。
@@ -82,6 +83,41 @@ export type PasskeyCryptoEnvelope = v.InferOutput<typeof PasskeyCryptoEnvelopeSc
  * （wrappedDek: base64 ORIGINAL）と credentialId だけを受ける。
  * **平文 DEK・PRF 出力は wire に流れない**（wrap はクライアントで行う, #28/#103）。
  */
+/**
+ * ファイル暗号鍵（FEK）の封筒（issue #157）。チャンクの DEK 封筒（CryptoEnvelope）と
+ * は**鍵・テーブルが別**で、封筒は常に 1 本（パスワード変更は再 wrap の上書き）。
+ * wrappedFek / kdfSalt は base64（ORIGINAL）。クライアントが受信側で検証する
+ * レスポンス形と、PUT のボディ形を兼ねる（サーバは wrap/unwrap しない, #28）。
+ */
+export const FileEnvelopeSchema = v.object({
+  wrappedFek: v.string(),
+  kdfSalt: v.string(),
+  kdfOps: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  kdfMem: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+
+export type FileEnvelope = v.InferOutput<typeof FileEnvelopeSchema>;
+
+/**
+ * POST /api/files/:fileId/multipart/:uploadId/complete のボディ。
+ * R2 multipart の完了は「part 番号（1 始まり）と R2 が発行した etag」の一覧を
+ * 渡す必要がある（R2 はサーバ側で part ごとの etag を照合する）。
+ * part は 1 つ以上（無音声の 0 part 完了はあり得ない）。
+ */
+export const FileMultipartPartSchema = v.object({
+  partNumber: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  etag: v.pipe(v.string(), v.minLength(1)),
+});
+
+export const FileMultipartBeginSchema = v.object({
+  retention: v.picklist(FILE_RETENTIONS),
+  size: v.pipe(v.number(), v.safeInteger(), v.minValue(1), v.maxValue(MAX_UPLOAD_BYTES)),
+});
+
+export const FileMultipartCompleteSchema = v.object({
+  parts: v.pipe(v.array(FileMultipartPartSchema), v.minLength(1)),
+});
+
 export const PasskeyEnvelopePutSchema = v.object({
   wrappedDek: v.pipe(v.string(), v.minLength(1)),
   // WebAuthn の credential id は base64url（no padding）。ここで形を縛るのは、

@@ -211,6 +211,24 @@ body,
   color: var(--text-muted);
 }
 
+.file-details__filename {
+  @apply break-all text-sm font-semibold text-ink;
+}
+
+.file-details__metadata {
+  @apply mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-muted;
+}
+
+.file-details__preview-image {
+  @apply mt-2 max-h-64 w-full rounded border object-contain;
+  border-color: var(--hairline);
+  background: var(--page);
+}
+
+.file-details__actions {
+  @apply mt-2 flex flex-wrap gap-1;
+}
+
 .chunk-digest {
   @apply block w-full cursor-pointer rounded border-0 bg-transparent px-2 py-1.5 text-left text-sm text-ink-secondary;
 }
@@ -325,6 +343,25 @@ body,
   @apply flex flex-col gap-1;
 }
 
+.file-password-settings {
+  @apply flex flex-col gap-2 border-t pt-4;
+  border-color: var(--hairline);
+}
+
+.file-password-settings__title {
+  @apply text-sm font-semibold text-ink;
+}
+
+.file-password-form {
+  @apply flex flex-col gap-2;
+}
+
+.file-password-field {
+  @apply flex flex-col gap-1;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
 /* ---- Composer.Web（docs/COMPOSER.md） ---- */
 
 /* チャット風（LINE 等）: 外枠は持たず、確定チャンクは左寄せの吹き出し、下に入力欄 */
@@ -402,4 +439,90 @@ body,
 
 .composer__session {
   @apply mb-1 text-xs text-ink-muted;
+}
+
+.file-upload {
+  @apply flex flex-col gap-2 border-t pt-3;
+  border-color: var(--hairline);
+}
+
+.file-upload__heading {
+  @apply text-xs font-semibold uppercase tracking-wider text-ink-muted;
+}
+
+.file-upload__toggle,
+.file-upload__submit,
+.file-upload__secondary {
+  @apply cursor-pointer rounded border px-2 py-1.5 text-sm text-ink;
+  border-color: var(--hairline);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.file-upload__toggle:hover,
+.file-upload__submit:hover:not(:disabled),
+.file-upload__secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--accent);
+}
+
+.file-upload__toggle:disabled,
+.file-upload__submit:disabled,
+.file-upload__secondary:disabled {
+  @apply cursor-not-allowed opacity-60;
+}
+
+.file-upload__form {
+  @apply flex flex-col gap-2;
+}
+
+.file-upload__field {
+  @apply flex flex-col gap-1 text-xs text-ink-secondary;
+}
+
+.file-upload__input {
+  @apply w-full rounded border bg-transparent px-2 py-1.5 text-sm text-ink outline-none;
+  border-color: var(--hairline);
+}
+
+.file-upload__input:focus {
+  border-color: var(--accent);
+}
+
+.file-upload__checkbox {
+  @apply flex items-center gap-2 text-sm text-ink-secondary;
+}
+
+.file-upload__notice {
+  @apply flex flex-wrap items-center gap-2 text-xs text-ink-muted;
+}
+
+.file-upload__secondary {
+  @apply px-2 py-1 text-xs;
+}
+
+.file-upload__error {
+  @apply text-xs;
+  color: var(--series-6);
+}
+
+.file-upload__list {
+  @apply flex flex-col gap-1 border-t pt-2;
+  border-color: var(--hairline);
+}
+
+.file-upload__file {
+  @apply flex w-full items-center gap-2 rounded border-0 bg-transparent px-2 py-1 text-left text-sm text-ink-secondary;
+}
+
+.file-upload__file:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.file-upload__file > span:first-child {
+  @apply min-w-0 flex-1 truncate;
+}
+
+.file-upload__expired {
+  @apply shrink-0 text-xs;
+  color: var(--series-6);
 }

@@ -7,6 +7,8 @@ import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 import { logoutSession } from "@zakki/web/client/store/logout.ts";
 import { usePasskeyStore } from "@zakki/web/client/store/passkey.ts";
+import { useFilePasswordStore } from "@zakki/web/client/store/file-password.ts";
+import { useFileStore } from "@zakki/web/client/store/files.ts";
 import "@zakki/web/client/styles.css";
 
 const root = document.getElementById("root");
@@ -28,16 +30,21 @@ createRoot(root).render(<App />);
 void Promise.all([
   import("@zakki/web/client/db/bootstrap.ts"),
   import("@zakki/web/client/api/control-plane.ts").then(async (m) => m.resolveRemoteSession()),
+  import("@zakki/web/client/files/password.ts"),
 ])
-  .then(async ([m, remote]) => {
+  .then(async ([m, remote, filePassword]) => {
     if (remote?.status === "signed-out") {
       useAuthStore.getState().setSignedOut(remote);
     }
+    const relayFetch = remote?.status === "signed-in" ? remote.fetchFn : fetch;
     const { db, passkey } = await m.bootstrapClientDb(
       remote?.status === "signed-in"
-        ? { fetchFn: remote.fetchFn, dbName: `zakki-${remote.identity.userId}` }
-        : {},
+        ? { fetchFn: relayFetch, dbName: `zakki-${remote.identity.userId}` }
+        : { fetchFn: relayFetch },
     );
+    const filePasswordControls = filePassword.createFilePasswordControls({ fetchFn: relayFetch });
+    useFileStore.getState().connect(db, relayFetch, filePasswordControls);
+    await useFilePasswordStore.getState().connect(filePasswordControls);
     // サイドバー下部のアカウント表示（メール + プロバイダ, issue #159）。セッション
     // JWT はメモリのみなので、起動直後の resolveRemoteSession のレスポンスが唯一の供給源。
     // ログアウトは「サーバへ 1 往復（最善努力）→ ローカルレプリカを消す → リロード」
@@ -51,6 +58,7 @@ void Promise.all([
         userId: remote.identity.userId,
       });
       useAuthStore.getState().setLogoutHandler(() => {
+        filePasswordControls.clear();
         void logoutSession({
           logout: () => remote.client.logout(),
           // RxDB の remove() は消えた DB 名の配列を返すが、deps には完了だけが必要

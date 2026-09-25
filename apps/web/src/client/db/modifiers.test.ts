@@ -27,6 +27,8 @@ beforeAll(async () => {
 const chunkDoc = (over: Partial<ChunkDocData> & { id: string }): ChunkDocData => ({
   parentId: "0",
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "今日はコードを書いた",
   date: null,
   polarity: null,

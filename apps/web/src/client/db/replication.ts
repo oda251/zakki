@@ -22,6 +22,8 @@ import type { ZakkiCollections, ZakkiDatabase } from "@zakki/web/client/db/datab
 import {
   chunkPull,
   chunkPush,
+  filePull,
+  filePush,
   linkPull,
   linkPush,
   tagPull,
@@ -62,6 +64,11 @@ export const REPLICATION_POLICY = {
   tags: "replicated",
   chunkUserTags: "replicated",
   links: "replicated",
+  files: "replicated",
+  // 変換学習はデバイスローカル運用（暗号 modifier 未定義。同期化は将来 issue）
+  corrections: "local",
+  // ファイルのメタデータ doc（issue #157）。実体（バイト列）は R2 で、中継サーバが
+  // オブジェクトキー単位に振り分けるため、doc の objectKey も同期して多端末で表示する
 } as const satisfies Record<keyof ZakkiCollections, "replicated" | "local">;
 
 /** REPLICATION_POLICY で "replicated" と宣言されたコレクション名 */
@@ -199,6 +206,16 @@ export function startReplication(
       collection: db.links,
       toWire: (doc) => linkPush(doc),
       fromWire: (wire) => linkPull(wire),
+      post,
+      live,
+      retryTime,
+      stream$,
+    }),
+    files: replicateWired({
+      name: "files",
+      collection: db.files,
+      toWire: (doc) => filePush(fc, doc),
+      fromWire: (wire) => filePull(fc, wire),
       post,
       live,
       retryTime,

@@ -15,6 +15,7 @@ import { createDb } from "./connect.ts";
 const MIGRATIONS = join(import.meta.dir, "..", "..", "drizzle");
 /** 0009_sessions の journal `when`。これを記録しておくと migrate は 0010 だけを適用する */
 const WHEN_0009 = 1783182391764;
+const WHEN_0015 = 1789870171622;
 
 async function buildLegacyDb(): Promise<string> {
   const path = join(mkdtempSync(join(tmpdir(), "zakki-mig-")), "db.sqlite");
@@ -67,6 +68,53 @@ async function buildLegacyDb(): Promise<string> {
   await client.execute(
     "INSERT INTO links (from_chunk_id, to_chunk_id, score, origin) VALUES (1, 3, 0.9, 'auto')",
   );
+  client.close();
+  return path;
+}
+
+async function buildPreRetentionDb(): Promise<string> {
+  const path = join(mkdtempSync(join(tmpdir(), "zakki-mig-")), "db.sqlite");
+  const client = createClient({ url: `file:${path}` });
+  const files = [
+    "0000_init.sql",
+    "0001_corrections.sql",
+    "0002_tags-links.sql",
+    "0003_embeddings.sql",
+    "0004_conversion_cache.sql",
+    "0005_chunk_polarity.sql",
+    "0006_drop_chunk_title.sql",
+    "0007_cynical_power_man.sql",
+    "0008_strange_hannibal_king.sql",
+    "0009_sessions.sql",
+    "0010_chunk_tree.sql",
+    "0011_repl_docs.sql",
+    "0012_passkey_envelope.sql",
+    "0013_multi_passkey_envelopes.sql",
+    "0014_files.sql",
+    "0015_file_key_envelopes.sql",
+  ];
+  for (const file of files) {
+    const raw = readFileSync(join(MIGRATIONS, file), "utf8");
+    for (const stmt of raw.split("--> statement-breakpoint")) {
+      if (stmt.trim() !== "") await client.execute(stmt);
+    }
+  }
+  await client.execute(
+    "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)",
+  );
+  await client.execute({
+    sql: "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+    args: ["pre-retention", WHEN_0015],
+  });
+  const now = "2026-09-20T00:00:00.000Z";
+  await client.execute({
+    sql: "INSERT INTO files (id, name, extension, encryption, object_key, size, part_size, created_at, updated_at) VALUES (42, 'cipher-name', 'bin', 'password', 'accounts/acc/42', ?, 33554432, ?, ?)",
+    args: [10 * 1024 ** 2, now, now],
+  });
+  await client.execute({
+    sql: "INSERT INTO chunks (id, parent_id, position, content, date, polarity, kind, file_id, created_at, updated_at) VALUES (100, NULL, 0, '2026-09-20', '2026-09-20', NULL, 'text', NULL, ?, ?), (101, 100, 1000000, '', NULL, NULL, 'blob', 42, ?, ?)",
+    args: [now, now, now, now],
+  });
   client.close();
   return path;
 }
@@ -145,6 +193,12 @@ describe("0010_chunk_tree", () => {
 
     // 新規 id は既存 id と衝突しない（AUTOINCREMENT 続き）
     expect(Math.min(dc0701.id, dc0703.id, container.id)).toBeGreaterThan(4);
+
+    // 0014_files: 既存行はすべてテキストチャンク（issue #157 A1）。テーブル再構築を
+    // 挟んでも id・親子関係・links が保たれることは上の検証がそのまま担保する
+    const kinds = (await db.run(sql`SELECT kind, file_id AS fileId FROM chunks`))
+      .rows as unknown as { kind: string; fileId: number | null }[];
+    expect(kinds.every((k) => k.kind === "text" && k.fileId === null)).toBe(true);
   });
 
   test("空 DB（新規）にも適用できる", async () => {
@@ -153,5 +207,23 @@ describe("0010_chunk_tree", () => {
       n: number;
     }[];
     expect(rows[0]?.n).toBe(0);
+  });
+});
+
+describe("0016_file_retention", () => {
+  test("既存 files 行を permanent として移行し、blob 参照を保つ", async () => {
+    const path = await buildPreRetentionDb();
+    const db = await createDb(path);
+
+    const fileRows = (await db.run(sql`SELECT name, retention FROM files WHERE id = 42`))
+      .rows as unknown as { name: string; retention: string }[];
+    expect(fileRows).toEqual([{ name: "cipher-name", retention: "permanent" }]);
+
+    const chunkRows = (await db.run(sql`SELECT kind, file_id AS fileId FROM chunks WHERE id = 101`))
+      .rows as unknown as { kind: string; fileId: number }[];
+    expect(chunkRows).toEqual([{ kind: "blob", fileId: 42 }]);
+
+    const foreignKeyErrors = (await db.run(sql`PRAGMA foreign_key_check`)).rows;
+    expect(foreignKeyErrors).toHaveLength(0);
   });
 });

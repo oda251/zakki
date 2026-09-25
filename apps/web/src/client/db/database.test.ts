@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import type { ChunkDoc, FileDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
 import { childrenQuery } from "@zakki/web/client/db/docs.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
@@ -11,6 +11,8 @@ import { testStorage } from "@zakki/web/client/db/test-db.ts";
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "0",
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "本文",
   date: null,
   polarity: null,
@@ -32,10 +34,10 @@ afterEach(async () => {
 const tick = () => new Promise((r) => setTimeout(r, 30));
 
 describe("rxdb database (Phase 1)", () => {
-  test("createZakkiDb は 4 コレクションを持つ", async () => {
+  test("createZakkiDb は 6 コレクションを持つ", async () => {
     const db = await open();
     expect(Object.keys(db.collections).toSorted()).toEqual(
-      ["chunkUserTags", "chunks", "links", "tags"].toSorted(),
+      ["chunkUserTags", "chunks", "corrections", "files", "links", "tags"].toSorted(),
     );
   });
 
@@ -68,6 +70,31 @@ describe("rxdb database (Phase 1)", () => {
     sub.unsubscribe();
     expect(seen.at(0)).toBe(0);
     expect(seen.at(-1)).toBe(1);
+  });
+
+  test("files は固定 retention を保持し、未知の値を拒否する", async () => {
+    const db = await open();
+    const file: FileDoc = {
+      id: "file-30d",
+      name: "写真",
+      extension: "png",
+      encryption: "none",
+      retention: "30d",
+      objectKey: "accounts/acc/30d/file-30d",
+      size: 100,
+      partSize: 33_554_432,
+      updatedAt: "2026-09-20T00:00:00.000Z",
+    };
+    await db.files.insert(file);
+    expect((await db.files.findOne(file.id).exec())?.toJSON()).toMatchObject({ retention: "30d" });
+
+    let error: unknown = null;
+    try {
+      await db.files.insert({ ...file, id: "invalid", retention: "2d" as never });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).not.toBeNull();
   });
 
   test("ソフト削除: remove 後 find はその行を含まない", async () => {

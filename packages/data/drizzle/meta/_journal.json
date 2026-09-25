@@ -99,6 +99,27 @@
       "when": 1785101242767,
       "tag": "0013_multi_passkey_envelopes",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1789866956316,
+      "tag": "0014_files",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1789870171622,
+      "tag": "0015_file_key_envelopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1790258663059,
+      "tag": "0016_file_retention",
+      "breakpoints": true
     }
   ]
 }

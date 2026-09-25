@@ -10,6 +10,8 @@ import { nodesFromDocs } from "@zakki/web/client/store/graph-docs.ts";
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: null,
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "本文",
   date: null,
   polarity: null,
@@ -64,6 +66,14 @@ describe("nodesFromDocs", () => {
     );
     expect(nodes[0]?.userTags).toEqual(["a", "b"]);
     expect(nodes[0]?.tags).toEqual([]);
+  });
+
+  test("blob の kind と fileId を GraphNode へ保持する", () => {
+    const nodes = nodesFromDocs(
+      [chunk({ id: "20", kind: "blob", fileId: "file-20", content: "" })],
+      [],
+    );
+    expect(nodes[0]).toMatchObject({ kind: "blob", fileId: "file-20" });
   });
 
   test("祖先に日付チャンクが無いノードは date が空文字になる", () => {

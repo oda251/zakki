@@ -28,7 +28,7 @@ function connect(db: ZakkiDatabase): void {
 }
 
 beforeEach(() => {
-  useGraphStore.setState({ data: null, error: null });
+  useGraphStore.setState({ data: null, files: new Map(), error: null });
 });
 
 afterEach(async () => {
@@ -56,6 +56,40 @@ describe("useGraphStore.connect", () => {
       [numId(saved[0]?.id ?? ""), numId(parent.id)].toSorted((a, b) => a - b),
     );
     expect(nodes.find((n) => n.id === numId(parent.id))?.childCount).toBe(1);
+  });
+
+  test("files doc を購読し、blob ノードと fileId を結びつける", async () => {
+    const db = await open();
+    connect(db);
+    const parent = await getOrCreateDateChunkDoc(db, "2026-07-07", T1);
+    await db.files.insert({
+      id: "file-30d",
+      name: "写真",
+      extension: "png",
+      encryption: "none",
+      retention: "30d",
+      objectKey: "accounts/acc/30d/file-30d",
+      size: 10,
+      partSize: 33_554_432,
+      updatedAt: T1,
+    });
+    await db.chunks.insert({
+      id: "30",
+      parentId: parent.id,
+      position: 1_000_000,
+      kind: "blob",
+      fileId: "file-30d",
+      content: "",
+      date: null,
+      polarity: null,
+      updatedAt: T1,
+    });
+    await tick();
+
+    expect(useGraphStore.getState().files.get("file-30d")?.name).toBe("写真");
+    expect(
+      useGraphStore.getState().data?.nodes.find((node) => node.id === numId("30")),
+    ).toMatchObject({ kind: "blob", fileId: "file-30d" });
   });
 
   test("links doc がエッジとして導出され、doc 再 emit を跨いで生存し、ノード削除で落ちる", async () => {
@@ -95,7 +129,7 @@ describe("useGraphStore.connect", () => {
     await addLinkDocs(db, [{ from: a, to: b }], T1);
 
     // セッション状態を捨てて（リロード相当）から接続し直す
-    useGraphStore.setState({ data: null, error: null });
+    useGraphStore.setState({ data: null, files: new Map(), error: null });
     connect(db);
     await tick();
     expect(useGraphStore.getState().data?.edges.length).toBe(1);
