@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { FileRetention } from "@zakki/core/file/upload.ts";
+import type { FileRetention } from "@zakki/core/file/retention.ts";
 import { errorMessage } from "@zakki/core/util/error.ts";
 import type { FetchLike } from "@zakki/web/client/api/client.ts";
 import type { FileDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";

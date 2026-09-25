@@ -1,5 +1,12 @@
 import { err, ok, type Result } from "neverthrow";
 import { PART_OVERHEAD_BYTES } from "@zakki/core/crypto/file-key.ts";
+import { PERMANENT_MAX_BYTES, type FileRetention } from "@zakki/core/file/retention.ts";
+
+export {
+  FILE_RETENTIONS,
+  PERMANENT_MAX_BYTES,
+  type FileRetention,
+} from "@zakki/core/file/retention.ts";
 
 /**
  * ファイルアップロードのサイズ制約・part 分割（issue #157）。
@@ -12,10 +19,6 @@ import { PART_OVERHEAD_BYTES } from "@zakki/core/crypto/file-key.ts";
 
 /** 1 ファイルあたりのアップロード上限（issue #157 §4）。9 GiB。 */
 export const MAX_UPLOAD_BYTES = 9 * 1024 ** 3;
-
-export const FILE_RETENTIONS = ["permanent", "1d", "7d", "30d"] as const;
-export type FileRetention = (typeof FILE_RETENTIONS)[number];
-export const PERMANENT_MAX_BYTES = 10 * 1024 ** 2;
 
 /**
  * 1 part（暗号化後）の上限バイト数。Cloudflare Workers のリクエストボディ上限
