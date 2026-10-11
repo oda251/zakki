@@ -1,8 +1,8 @@
 import { auditTime, combineLatest } from "rxjs";
 import { create } from "zustand";
 import { errorMessage } from "@zakki/core/util/error.ts";
-import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
-import { chunksView, linksView, userTagsView } from "@zakki/web/client/db/live.ts";
+import type { FileDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import { chunksView, filesView, linksView, userTagsView } from "@zakki/web/client/db/live.ts";
 import type { GraphData } from "@zakki/web/shared/api-types.ts";
 import { edgesFromDocs, nodesFromDocs } from "@zakki/web/client/store/graph-docs.ts";
 
@@ -22,6 +22,7 @@ export function sessionColor(slot: number | undefined): string {
  */
 interface GraphState {
   data: GraphData | null;
+  files: ReadonlyMap<string, FileDoc>;
   error: string | null;
   /** RxDB 購読を開始する（main.tsx の合成点から一度呼ぶ）。戻り値は購読解除 */
   connect: (db: ZakkiDatabase) => () => void;
@@ -31,19 +32,24 @@ interface GraphState {
 
 export const useGraphStore = create<GraphState>((set) => ({
   data: null,
+  files: new Map(),
   error: null,
 
   connect: (db) => {
     // 1 回の保存は複数 doc 書込み（remove + upsert）になりうるため、同 tick の
     // emit バーストを auditTime(0) で 1 回のグラフ導出にまとめる
-    const sub = combineLatest([chunksView(db), userTagsView(db), linksView(db)])
+    const sub = combineLatest([chunksView(db), userTagsView(db), linksView(db), filesView(db)])
       .pipe(auditTime(0))
       .subscribe({
-        next: ([chunks, userTags, links]) => {
+        next: ([chunks, userTags, links, files]) => {
           const nodes = nodesFromDocs(chunks, userTags);
           const alive = new Set(nodes.map((n) => n.id));
           const edges = edgesFromDocs(links, alive);
-          set({ data: { version: "", nodes, edges }, error: null });
+          set({
+            data: { version: "", nodes, edges },
+            files: new Map(files.map((file) => [file.id, file])),
+            error: null,
+          });
         },
         error: (e: unknown) => {
           set({ error: errorMessage(e) });

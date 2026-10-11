@@ -4,7 +4,7 @@ import { defaultDbPath, openDb, openRemoteDb } from "@zakki/data/db/connect.ts";
 import { resolveLocalIdentity } from "@zakki/data/identity/local.ts";
 import { xdgConfigHome, xdgDataHome } from "@zakki/data/util/paths.ts";
 import { createApp } from "./app.ts";
-import { createRemoteDbResolver } from "./identity/remote.ts";
+import { createRemoteUserResolver } from "./identity/remote.ts";
 
 /**
  * API サーバの合成（issue #29）。検証済み config を受け取り、標準 Fetch ハンドラ
@@ -61,7 +61,7 @@ export async function bootstrapServer(config: ZakkiConfig): Promise<{ app: Hono 
     app: createApp({
       db,
       controlPlaneUrl,
-      resolveDb: createRemoteDbResolver({ controlPlaneUrl, openUserDb: openRemoteDb }),
+      resolveUser: createRemoteUserResolver({ controlPlaneUrl, openUserDb: openRemoteDb }),
     }),
   };
 }

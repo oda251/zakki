@@ -2,9 +2,10 @@ import * as v from "valibot";
 import type { Identity } from "@zakki/core/identity/types.ts";
 import { isConnectionExpiring, remoteIdentity } from "@zakki/core/identity/remote.ts";
 import type { Db } from "@zakki/data/db/client.ts";
+import type { ResolvedUser, ResolveUser } from "@zakki/web/server/deps.ts";
 
 /**
- * マルチユーザ構成での「このリクエストはどの DB を中継するか」の解決（issue #105）。
+ * マルチユーザ構成での「このリクエストはどの DB・アカウントを中継するか」の解決（issue #105）。
  *
  * 現行アーキ（ブラウザ → apps/web が replication を中継 → DB）を維持したまま、
  * 中継先だけをアカウントごとに切り替える。ブラウザは自分のセッション JWT を
@@ -31,7 +32,7 @@ const DbConnectionSchema = v.object({
   expiresAt: v.number(),
 });
 
-export interface RemoteDbResolverOptions {
+export interface RemoteUserResolverOptions {
   /** apps/api の base URL（末尾スラッシュ無し） */
   readonly controlPlaneUrl: string;
   /**
@@ -44,9 +45,6 @@ export interface RemoteDbResolverOptions {
   /** 現在時刻（ms）。トークン失効判定に使う */
   readonly now?: () => number;
 }
-
-/** リクエスト → そのアカウントの DB（未認証・解決不能なら null） */
-export type ResolveDb = (req: Request) => Promise<Db | null>;
 
 /**
  * セッションの再検証間隔（秒, issue #117）。
@@ -71,6 +69,8 @@ const REVALIDATE_INTERVAL_SEC = 60;
 /** キャッシュ 1 件。DB トークンの寿命に合わせて作り直す（libsql クライアントは作成時のトークンを持つ） */
 interface CacheEntry {
   readonly db: Db;
+  /** R2 オブジェクトキーの名前空間（objectKeyFor）。`/auth/me` の応答をそのまま持つ */
+  readonly accountId: string;
   /** epoch 秒。DB トークンの失効時刻 */
   readonly expiresAt: number;
   /** epoch 秒。最後にコントロールプレーンでセッションの生存を確かめた時刻（#117） */
@@ -110,7 +110,7 @@ async function getJson<T>(
  * ヒット時も {@link REVALIDATE_INTERVAL_SEC} ごとにコントロールプレーンへ生存を
  * 問い合わせ、ログアウト・退会（#117 / #116）がこの間隔で中継にも効くようにする。
  */
-export function createRemoteDbResolver(options: RemoteDbResolverOptions): ResolveDb {
+export function createRemoteUserResolver(options: RemoteUserResolverOptions): ResolveUser {
   const fetchFn = options.fetchFn ?? fetch;
   const now = options.now ?? Date.now;
   const base = options.controlPlaneUrl.replace(/\/+$/, "");
@@ -120,9 +120,9 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
   // migrate が多重になる（初回ログイン時は DB が空で、migration の CREATE TABLE は
   // IF NOT EXISTS を持たないため実 Turso では衝突しうる）。開いたハンドルの取り違え
   // （後勝ちで孤児になる）もこれで消える
-  const inFlight = new Map<string, Promise<Db | null>>();
+  const inFlight = new Map<string, Promise<ResolvedUser | null>>();
 
-  const resolve = async (token: string, nowSec: number): Promise<Db | null> => {
+  const resolve = async (token: string, nowSec: number): Promise<ResolvedUser | null> => {
     // 信頼できる出どころ（コントロールプレーン）に「あなたは誰で、どの DB か」を訊く。
     // 未ログイン・失効セッションはここで 401 になり、解決不能（null）になる
     const account = await getJson(fetchFn, `${base}/auth/me`, token, AccountSchema);
@@ -134,8 +134,15 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
     if (isConnectionExpiring(connection, nowSec, 0)) return null;
 
     const db = await options.openUserDb(remoteIdentity(connection));
-    cache.set(token, { db, expiresAt: connection.expiresAt, verifiedAt: nowSec });
-    return db;
+    // accountId は /auth/me から既に得ている（GET /me/db はこの往復のみ）ので、
+    // R2 オブジェクトキーの名前空間を得るための追加往復は増やさない
+    cache.set(token, {
+      db,
+      accountId: account.accountId,
+      expiresAt: connection.expiresAt,
+      verifiedAt: nowSec,
+    });
+    return { db, accountId: account.accountId };
   };
 
   /**
@@ -148,7 +155,7 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
     token: string,
     entry: CacheEntry,
     nowSec: number,
-  ): Promise<Db | null> => {
+  ): Promise<ResolvedUser | null> => {
     const res = await fetchFn(`${base}/auth/me`, {
       method: "GET",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -162,11 +169,13 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
       cache.delete(token);
       return null;
     }
-    if (!res.ok) return entry.db;
+    if (!res.ok) return { db: entry.db, accountId: entry.accountId };
     const body: unknown = await res.json().catch(() => null);
-    if (!v.safeParse(AccountSchema, body).success) return entry.db;
+    if (!v.safeParse(AccountSchema, body).success) {
+      return { db: entry.db, accountId: entry.accountId };
+    }
     entry.verifiedAt = nowSec;
-    return entry.db;
+    return { db: entry.db, accountId: entry.accountId };
   };
 
   return async (req) => {
@@ -185,7 +194,9 @@ export function createRemoteDbResolver(options: RemoteDbResolverOptions): Resolv
 
     const cached = cache.get(token);
     if (cached !== undefined) {
-      if (nowSec - cached.verifiedAt < REVALIDATE_INTERVAL_SEC) return cached.db;
+      if (nowSec - cached.verifiedAt < REVALIDATE_INTERVAL_SEC) {
+        return { db: cached.db, accountId: cached.accountId };
+      }
       const revalidation = revalidate(token, cached, nowSec).finally(() => inFlight.delete(token));
       inFlight.set(token, revalidation);
       return revalidation;

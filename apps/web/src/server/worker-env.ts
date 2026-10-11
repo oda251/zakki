@@ -1,5 +1,7 @@
 import { err, ok, type Result } from "neverthrow";
+import type { FileRetention } from "@zakki/core/file/upload.ts";
 import * as v from "valibot";
+import type { R2BucketLike } from "./files/store.ts";
 
 /**
  * Workers 配備の中継サーバが要る設定（issue #134）。
@@ -36,6 +38,45 @@ export type RelayConfig = v.InferOutput<typeof EnvSchema>;
 /** Service Binding の最小面（Worker → Worker 直結の `fetch`） */
 export interface ServiceBinding {
   fetch(input: string, init?: RequestInit): Promise<Response>;
+}
+
+const R2_BINDING_NAMES = {
+  permanent: "FILES_PERMANENT",
+  "1d": "FILES_1D",
+  "7d": "FILES_7D",
+  "30d": "FILES_30D",
+} as const satisfies Record<FileRetention, string>;
+
+function isR2BucketLike(value: unknown): value is R2BucketLike {
+  if (typeof value !== "object" || value === null) return false;
+  return (
+    "createMultipartUpload" in value &&
+    typeof value.createMultipartUpload === "function" &&
+    "resumeMultipartUpload" in value &&
+    typeof value.resumeMultipartUpload === "function" &&
+    "get" in value &&
+    typeof value.get === "function" &&
+    "delete" in value &&
+    typeof value.delete === "function"
+  );
+}
+
+export function r2BucketBindings(
+  env: Record<string, unknown>,
+): Record<FileRetention, R2BucketLike> | null {
+  const permanent = r2Bucket(env, R2_BINDING_NAMES.permanent);
+  const oneDay = r2Bucket(env, R2_BINDING_NAMES["1d"]);
+  const sevenDays = r2Bucket(env, R2_BINDING_NAMES["7d"]);
+  const thirtyDays = r2Bucket(env, R2_BINDING_NAMES["30d"]);
+  if (permanent === null || oneDay === null || sevenDays === null || thirtyDays === null) {
+    return null;
+  }
+  return { permanent, "1d": oneDay, "7d": sevenDays, "30d": thirtyDays };
+}
+
+function r2Bucket(env: Record<string, unknown>, name: string): R2BucketLike | null {
+  const binding = env[name];
+  return isR2BucketLike(binding) ? binding : null;
 }
 
 /**

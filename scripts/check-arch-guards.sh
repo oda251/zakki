@@ -47,7 +47,7 @@ fi
 # 文字列リテラル（"chunk.content" 等）の直書きは定数とのズレ＝復号不能を招く。
 # 引用符付きのみ検知する（chunk.content のようなプロパティアクセスは対象外）。
 # ---------------------------------------------------------------------------
-AAD_LITERALS='chunk\.content|tag\.name|chunkUserTag\.name|embedding\.vector'
+AAD_LITERALS='chunk\.content|tag\.name|chunkUserTag\.name|embedding\.vector|file\.name|file\.part'
 AAD_PATTERN="[\"'\`](${AAD_LITERALS})[\"'\`]"
 AAD_ALLOW=(
   ':!packages/core/src/crypto/aad.ts' # AAD 定数の定義本体

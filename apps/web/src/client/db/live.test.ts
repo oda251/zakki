@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { firstValueFrom } from "rxjs";
-import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import type { ChunkDoc, FileDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { openTestDb } from "@zakki/web/client/db/test-db.ts";
-import { childrenView } from "@zakki/web/client/db/live.ts";
+import { childrenView, filesView } from "@zakki/web/client/db/live.ts";
 
 /**
  * Phase 4（#40）: RxDB を UI 購読用 Observable に変換する reactive view。
@@ -11,12 +11,26 @@ import { childrenView } from "@zakki/web/client/db/live.ts";
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "100",
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "本文",
   date: null,
   polarity: null,
   updatedAt: "2026-07-06T00:00:00.000Z",
   ...over,
 });
+
+const file: FileDoc = {
+  id: "file-1",
+  name: "写真",
+  extension: "png",
+  encryption: "none",
+  retention: "7d",
+  objectKey: "accounts/acc/7d/file-1",
+  size: 10,
+  partSize: 33_554_432,
+  updatedAt: "2026-07-06T00:00:00.000Z",
+};
 
 let dbs: ZakkiDatabase[] = [];
 async function open(): Promise<ZakkiDatabase> {
@@ -54,5 +68,12 @@ describe("reactive views (Phase 4)", () => {
     sub.unsubscribe();
     expect(seen.at(0)).toEqual(["a"]);
     expect(seen.at(-1)).toEqual(["new-head", "a"]);
+  });
+
+  test("filesView は file doc を平坦化して emit する", async () => {
+    const db = await open();
+    await db.files.insert(file);
+    const first = await firstValueFrom(filesView(db));
+    expect(first).toEqual([file]);
   });
 });

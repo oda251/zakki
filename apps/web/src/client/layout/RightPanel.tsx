@@ -1,9 +1,17 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { chunkDigestWeb, chunkWeb } from "@zakki/web/client/chunk/chunk.web.ts";
 import { ComposerPane } from "@zakki/web/client/composer/ComposerPane.tsx";
+import type { FileDoc } from "@zakki/web/client/db/database.ts";
 import { docId } from "@zakki/web/client/db/ids.ts";
-import { removeChunkTree, renameChunkDoc, setUserTagDocs } from "@zakki/web/client/db/writes.ts";
+import { renameChunkDoc, setUserTagDocs } from "@zakki/web/client/db/writes.ts";
+import {
+  fileLabel,
+  graphNodeLabel,
+  isFileExpired,
+  mimeTypeForFile,
+  retentionLabel,
+} from "@zakki/web/client/files/display.ts";
 import { currentHref } from "@zakki/web/client/router/history.ts";
 import {
   gotoChunk,
@@ -15,7 +23,14 @@ import {
 import { parseRoute } from "@zakki/web/client/router/route.ts";
 import { useRoute } from "@zakki/web/client/router/use-route.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
+import { useFileStore } from "@zakki/web/client/store/files.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
+
+function fileBlob(file: FileDoc, content: Uint8Array): Blob {
+  const bytes = new Uint8Array(content.byteLength);
+  bytes.set(content);
+  return new Blob([bytes.buffer], { type: mimeTypeForFile(file) });
+}
 
 /**
  * 右パネル: 上=Composer.Web（入力欄）、
@@ -27,16 +42,32 @@ import { useGraphStore } from "@zakki/web/client/store/graph.ts";
  */
 export function RightPanel() {
   const data = useGraphStore((s) => s.data);
+  const files = useGraphStore((s) => s.files);
   const selectedNodeId = useRoute().select;
   const db = useBufferStore((s) => s.db);
   const currentId = useBufferStore((s) => s.currentId);
   const openToday = useBufferStore((s) => s.openToday);
+  const fileActivity = useFileStore((s) => s.activity);
+  const fileMessage = useFileStore((s) => s.message);
+  const download = useFileStore((s) => s.download);
+  const removeChunk = useFileStore((s) => s.removeChunk);
 
   const [tagsDraft, setTagsDraft] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ fileId: string; url: string } | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
 
   const nodesById = useMemo(() => new Map((data?.nodes ?? []).map((n) => [n.id, n])), [data]);
   const selected = selectedNodeId === null ? null : (nodesById.get(selectedNodeId) ?? null);
+  const selectedFile =
+    selected?.kind === "blob" && selected.fileId !== null
+      ? (files.get(selected.fileId) ?? null)
+      : null;
+  const selectedFileExpired = selectedFile !== null && isFileExpired(selectedFile, Date.now());
+  const selectedPreview =
+    selectedFile !== null && !selectedFileExpired && preview?.fileId === selectedFile.id
+      ? preview
+      : null;
 
   // グラフの links から選択ノードの隣接を引く（双方向）
   const neighbors = useMemo(() => {
@@ -69,10 +100,39 @@ export function RightPanel() {
     await renameChunkDoc(db, docId(id), content);
   };
 
+  const replacePreview = (file: FileDoc, content: Uint8Array) => {
+    const url = URL.createObjectURL(fileBlob(file, content));
+    const previous = previewUrlRef.current;
+    if (previous !== null) URL.revokeObjectURL(previous);
+    previewUrlRef.current = url;
+    setPreview({ fileId: file.id, url });
+  };
+
+  const previewFile = async (file: FileDoc, expired: boolean) => {
+    if (expired || isFileExpired(file, Date.now())) return;
+    const content = await download(file);
+    if (content === null) return;
+    replacePreview(file, content);
+  };
+
+  const saveFile = async (file: FileDoc, expired: boolean) => {
+    if (expired || isFileExpired(file, Date.now())) return;
+    const content = await download(file);
+    if (content === null) return;
+    const url = URL.createObjectURL(fileBlob(file, content));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileLabel(file);
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const deleteNode = async (id: number) => {
-    if (db === null) return;
     if (!window.confirm("このチャンクを削除しますか？子孫も消えます。")) return;
-    await removeChunkTree(db, docId(id));
+    const removed = await removeChunk(docId(id));
+    if (!removed) return;
     selectNode(null);
     // 現バッファが消えた場合は当日へ。URL が /c/… なら遷移（router が開き直す）、
     // 既に当日（"/"・"/all"）なら日付チャンクを作り直して開く
@@ -98,7 +158,60 @@ export function RightPanel() {
         ) : (
           <div>
             <div className={chunkDigestWeb.date}>{selected.date}</div>
-            {renaming !== null && selected.childCount > 0 ? (
+            {selected.kind === "blob" ? (
+              selectedFile === null ? (
+                <div className="empty-note">ファイル情報がありません</div>
+              ) : (
+                <div>
+                  <div className="file-details__filename">{fileLabel(selectedFile)}</div>
+                  <div className="file-details__metadata">
+                    <span>{selectedFile.size.toLocaleString()} bytes</span>
+                    <span>{retentionLabel(selectedFile.retention)}</span>
+                    <span>
+                      {selectedFile.encryption === "password" ? "暗号化済み" : "暗号化なし"}
+                    </span>
+                  </div>
+                  {selectedFileExpired ? (
+                    <div className="empty-note">保存期限が切れています</div>
+                  ) : (
+                    <>
+                      {selectedPreview !== null && (
+                        <img
+                          className="file-details__preview-image"
+                          src={selectedPreview.url}
+                          alt={fileLabel(selectedFile)}
+                        />
+                      )}
+                      <div className="file-details__actions">
+                        {mimeTypeForFile(selectedFile).startsWith("image/") && (
+                          <button
+                            type="button"
+                            className="session-tag"
+                            disabled={fileActivity !== "idle"}
+                            onClick={() => void previewFile(selectedFile, selectedFileExpired)}
+                          >
+                            プレビュー
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="session-tag"
+                          disabled={fileActivity !== "idle"}
+                          onClick={() => void saveFile(selectedFile, selectedFileExpired)}
+                        >
+                          ダウンロード
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {fileMessage !== null && (
+                    <div className="empty-note" role="alert">
+                      {fileMessage}
+                    </div>
+                  )}
+                </div>
+              )
+            ) : renaming !== null && selected.childCount > 0 ? (
               <input
                 className="sidebar__input"
                 value={renaming}
@@ -217,7 +330,7 @@ export function RightPanel() {
                 onClick={() => selectNode(node.id)}
               >
                 <span className={chunkDigestWeb.date}>{node.date}</span>
-                {makeTitle(node.content)}
+                {makeTitle(graphNodeLabel(node, files))}
               </button>
             ))
           )}

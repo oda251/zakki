@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
+import { graphNodeLabel } from "@zakki/web/client/files/display.ts";
 import { clampText } from "@zakki/web/client/graph/clamp.ts";
 import { useElementSize } from "@zakki/web/client/hooks/use-element-size.ts";
 import { gotoChunk, selectNode } from "@zakki/web/client/router/navigate.ts";
@@ -75,6 +76,7 @@ function traceShape(
 
 export function GraphView() {
   const data = useGraphStore((s) => s.data);
+  const files = useGraphStore((s) => s.files);
   // ドリル位置・選択・フィルタは URL が SSOT（#52）。
   // Escape（親階層へ戻る）のキーマップも URL 遷移として router/controller.ts に集約済み。
   const drillId = useDrillId();
@@ -98,12 +100,11 @@ export function GraphView() {
   const graphData = useMemo(() => {
     return {
       nodes: visible.nodes.map(({ node, external }): ForceNode => {
+        const label = clampText(graphNodeLabel(node, files));
         const cached = nodeCache.current.get(node.id);
         if (cached !== undefined) {
-          if (cached.node !== node) {
-            cached.node = node;
-            cached.label = clampText(node.content);
-          }
+          cached.node = node;
+          cached.label = label;
           cached.external = external;
           return cached;
         }
@@ -111,14 +112,14 @@ export function GraphView() {
           id: node.id,
           node,
           external,
-          label: clampText(node.content),
+          label,
         };
         nodeCache.current.set(node.id, created);
         return created;
       }),
       links: visible.edges.map((e) => ({ source: e.from, target: e.to, score: e.score })),
     };
-  }, [visible]);
+  }, [visible, files]);
 
   const colorOf = (fn: ForceNode): string => {
     const slot = slots.get(fn.node.id);
@@ -156,7 +157,7 @@ export function GraphView() {
           linkColor={() => palette.hairline}
           linkWidth={(l) => Math.max(1, (l.score - 0.8) * 10)}
           nodeRelSize={NODE_RADIUS}
-          nodeLabel={({ node }) => `${node.date}<br/>${makeTitle(node.content)}`}
+          nodeLabel={({ node }) => `${node.date}<br/>${makeTitle(graphNodeLabel(node, files))}`}
           nodeCanvasObject={(fn, ctx, globalScale) => {
             const { node, external, label, x, y } = fn;
             if (x === undefined || y === undefined) return;

@@ -6,7 +6,7 @@ import { replDocs } from "@zakki/data/db/schema.ts";
 import type { Hono } from "hono";
 import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
 import { makeFieldCrypto } from "@zakki/web/client/db/crypto.ts";
-import type { ChunkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import type { ChunkDoc, FileDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { createZakkiDb } from "@zakki/web/client/db/database.ts";
 import { testStorage } from "@zakki/web/client/db/test-db.ts";
 import { REPLICATION_POLICY, startReplication } from "@zakki/web/client/db/replication.ts";
@@ -57,6 +57,8 @@ async function sync(db: ZakkiDatabase): Promise<void> {
 const chunk = (over: Partial<ChunkDoc> & { id: string }): ChunkDoc => ({
   parentId: "0",
   position: 0,
+  kind: "text",
+  fileId: null,
   content: "秘密の本文",
   date: null,
   polarity: null,
@@ -88,6 +90,48 @@ describe("client replication (issue #43)", () => {
     expect((await b.chunks.findOne("1").exec())?.content).toBe("今日の記録");
     expect((await b.tags.findOne("10").exec())?.name).toBe("日記");
     expect((await b.chunkUserTags.findOne("20").exec())?.name).toBe("旅行");
+  });
+
+  test("files の retention と blob 参照が別インスタンスへ同期される", async () => {
+    const a = await open();
+    const b = await open();
+    const file: FileDoc = {
+      id: "file-30d",
+      name: "秘密のファイル",
+      extension: "png",
+      encryption: "none",
+      retention: "30d",
+      objectKey: "accounts/acc/30d/file-30d",
+      size: 100,
+      partSize: 33_554_432,
+      updatedAt: "2026-07-07T00:00:01.000Z",
+    };
+    await a.files.insert(file);
+    await a.chunks.insert(
+      chunk({
+        id: "blob-30d",
+        parentId: "root",
+        position: 1_000_000,
+        kind: "blob",
+        fileId: file.id,
+        content: "",
+      }),
+    );
+
+    await sync(a);
+    await sync(b);
+
+    expect((await b.files.findOne(file.id).exec())?.toJSON()).toMatchObject({
+      name: file.name,
+      retention: "30d",
+    });
+    expect((await b.chunks.findOne("blob-30d").exec())?.toJSON()).toMatchObject({
+      kind: "blob",
+      fileId: file.id,
+    });
+    const wire = (await serverData()).find((row) => row.includes('"retention":"30d"'));
+    expect(wire).toContain('"retention":"30d"');
+    expect(wire).not.toContain(file.name);
   });
 
   test("D2: サーバ repl_docs.data は暗号文のみ（平文が出ない）＋ tag wire は fingerprint 付き", async () => {

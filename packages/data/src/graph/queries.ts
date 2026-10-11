@@ -18,6 +18,8 @@ export interface GraphNode extends Pick<
   Chunk,
   "id" | "parentId" | "position" | "content" | "polarity"
 > {
+  kind: Chunk["kind"];
+  fileId: string | null;
   /** 祖先（自身を含む）の日付チャンクの date */
   date: NonNullable<Chunk["date"]>;
   /** 自動タグ（chunk_tags 由来、スコア降順） */

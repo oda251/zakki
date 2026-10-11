@@ -14,7 +14,8 @@
  */
 import type { ChunkDraft } from "@zakki/core/chunk/chunker.ts";
 import { matchDraftsToExisting } from "@zakki/core/chunk/match.ts";
-import type { ChunkDoc, LinkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
+import type { FetchLike } from "@zakki/web/client/api/client.ts";
+import type { ChunkDoc, FileDoc, LinkDoc, ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { byPosition, toChunkDoc } from "@zakki/web/client/db/docs.ts";
 import { dateChunkId, docId, linkDocId, newDocId } from "@zakki/web/client/db/ids.ts";
 
@@ -36,6 +37,8 @@ export async function getOrCreateDateChunkDoc(
     id: dateChunkId(date),
     parentId: null,
     position: 0,
+    kind: "text",
+    fileId: null,
     content: date,
     date,
     polarity: null,
@@ -63,7 +66,11 @@ async function removeSubtrees(db: ZakkiDatabase, rootIds: readonly string[]): Pr
   // サーバの FK cascade に相当: 消えたチャンクの userTags・links も落とす
   const tags = await db.chunkUserTags.find({ selector: { chunkId: { $in: ids } } }).exec();
   const links = await db.links
-    .find({ selector: { $or: [{ fromChunkId: { $in: ids } }, { toChunkId: { $in: ids } }] } })
+    .find({
+      selector: {
+        $or: [{ fromChunkId: { $in: ids } }, { toChunkId: { $in: ids } }],
+      },
+    })
     .exec();
   await Promise.all([
     db.chunkUserTags.bulkRemove(tags.map((t) => t.id)),
@@ -72,14 +79,63 @@ async function removeSubtrees(db: ZakkiDatabase, rootIds: readonly string[]): Pr
 }
 
 /** チャンクを子孫・userTags ごと削除する（DELETE /chunks/:id 相当） */
-export async function removeChunkTree(db: ZakkiDatabase, id: string): Promise<void> {
+export async function removeChunkTree(
+  db: ZakkiDatabase,
+  id: string,
+  opts?: { fetchFn?: FetchLike },
+): Promise<void> {
+  // 削除対象の部分木に blob チャンク（添付ファイル, issue #157）が含まれていたら、
+  // R2 の実体と files doc を先に消す。オブジェクト削除はサーバしかできないため
+  // fetchFn（API クライアント）が必要。無い呼び出し（ローカル操作のみ）では
+  // files doc も消さない: 実体へのポインタを失うと消せないバイト列が残るため、
+  // R2 を消せない間は doc を残して再試行の余地を残す。
+  if (opts?.fetchFn !== undefined) {
+    await removeBlobFiles(db, await collectSubtree(db, [id]), opts.fetchFn);
+  }
   await removeSubtrees(db, [id]);
+}
+
+/**
+ * 部分木内の blob チャンクに対応する R2 オブジェクトと files doc を削除する。
+ * 同じ fileId が複数の blob チャンクから指されていてもオブジェクトは 1 度だけ消す。
+ */
+async function removeBlobFiles(
+  db: ZakkiDatabase,
+  chunkIds: string[],
+  fetchFn: FetchLike,
+): Promise<void> {
+  const blobs = await db.chunks.find({ selector: { id: { $in: chunkIds }, kind: "blob" } }).exec();
+  if (blobs.length === 0) return;
+  const fileIds = [...new Set(blobs.map((b) => b.fileId).filter((f): f is string => f !== null))];
+  const files = await Promise.all(
+    fileIds.map(async (fileId): Promise<FileDoc> => {
+      const file = await db.files.findOne(fileId).exec();
+      if (file === null) throw new Error(`ファイル doc が存在しません: ${fileId}`);
+      return file.toJSON();
+    }),
+  );
+  await Promise.all(
+    files.map(async (file) => {
+      const response = await fetchFn(
+        `/api/files/${file.id}?retention=${encodeURIComponent(file.retention)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok && response.status !== 404 && response.status !== 410) {
+        throw new Error(`ファイルの削除に失敗しました: ${response.status}`);
+      }
+    }),
+  );
+  await db.files.bulkRemove(fileIds);
 }
 
 /**
  * 親バッファの全子チャンクを草稿列で置き換える（PUT /chunks/:id/children 相当）。
  * 突き合わせ順序はサーバと同一: content 完全一致（同文は position 順に消費）→
  * 余った既存行を position 順に再利用（= 編集された行）→ 残りは削除。
+ *
+ * 投影対象は kind='text' の草稿だけ（issue #157）: blob チャンクは専用の
+ * position 帯（BLOB_POSITION_BASE 以上）に住み、ここで触らない
+ * （server/chunk/repository.ts の saveChildren と同じ除外。F6）。
  */
 export async function saveChildrenDocs(
   db: ZakkiDatabase,
@@ -87,7 +143,7 @@ export async function saveChildrenDocs(
   drafts: readonly ChunkDraft[],
   now: string = nowIso(),
 ): Promise<ChunkDoc[]> {
-  const existingDocs = await db.chunks.find({ selector: { parentId } }).exec();
+  const existingDocs = await db.chunks.find({ selector: { parentId, kind: "text" } }).exec();
   const existing = existingDocs.map(toChunkDoc).toSorted(byPosition);
 
   // 突き合わせはサーバ（repository.saveChildren）と共有する純カーネルに委譲する
@@ -111,6 +167,8 @@ export async function saveChildrenDocs(
             id: newDocId(),
             parentId,
             position,
+            kind: "text",
+            fileId: null,
             content: draft.content,
             date: null,
             polarity: null,

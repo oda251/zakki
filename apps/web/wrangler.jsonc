@@ -27,6 +27,12 @@
   // サーバ側の問い合わせは必ずこの binding を通す。service 名は apps/api の
   // env.production.name と一致させる。
   "services": [{ "binding": "CONTROL_PLANE", "service": "zakki-api-prod" }],
+  "r2_buckets": [
+    { "binding": "FILES_PERMANENT", "bucket_name": "zakki-files-permanent-prod" },
+    { "binding": "FILES_1D", "bucket_name": "zakki-files-1d-prod" },
+    { "binding": "FILES_7D", "bucket_name": "zakki-files-7d-prod" },
+    { "binding": "FILES_30D", "bucket_name": "zakki-files-30d-prod" },
+  ],
   // 非機密の設定。値は空にしてある: 埋めずに `wrangler dev` すると env 検証が
   // 即座に落ちて設定漏れに気づける（apps/api/wrangler.jsonc と同じ方針）。
   //   ZAKKI_CONTROL_PLANE_URL  apps/api の base URL。**ブラウザが直接叩く**ための公開 URL で、
@@ -42,6 +48,12 @@
     "production": {
       "name": "zakki-web",
       "services": [{ "binding": "CONTROL_PLANE", "service": "zakki-api-prod" }],
+      "r2_buckets": [
+        { "binding": "FILES_PERMANENT", "bucket_name": "zakki-files-permanent-prod" },
+        { "binding": "FILES_1D", "bucket_name": "zakki-files-1d-prod" },
+        { "binding": "FILES_7D", "bucket_name": "zakki-files-7d-prod" },
+        { "binding": "FILES_30D", "bucket_name": "zakki-files-30d-prod" },
+      ],
       "vars": {},
     },
   },

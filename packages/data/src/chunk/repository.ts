@@ -1,4 +1,4 @@
-import { asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import type { ResultAsync } from "neverthrow";
 import { matchDraftsToExisting } from "@zakki/core/chunk/match.ts";
 import { AAD } from "@zakki/core/crypto/aad.ts";
@@ -7,8 +7,9 @@ import type { CryptoContext } from "@zakki/data/db/crypto-context.ts";
 import { getCrypto } from "@zakki/data/db/crypto-context.ts";
 import type { DbError } from "@zakki/data/db/error.ts";
 import { tryDbAsync } from "@zakki/data/db/error.ts";
+import { rowsAs } from "@zakki/data/db/rows.ts";
 import type { Chunk } from "@zakki/data/db/schema.ts";
-import { chunks } from "@zakki/data/db/schema.ts";
+import { chunks, files } from "@zakki/data/db/schema.ts";
 
 /**
  * 統合チャンクモデル（docs/CHUNKS.md）のリポジトリ。
@@ -135,10 +136,13 @@ export function saveChildren(
         .limit(1);
       if (parent === undefined) return null;
 
+      // 投影対象はテキスト行のみ（issue #157）。blob チャンク（アップロードファイル）は
+      // 専用の position 帯（BLOB_POSITION_BASE 以上）に住み、草稿と対応しないので
+      // ここに混ぜると「どの草稿にも対応しない行」として毎回消えてしまう
       const rows = await tx
         .select()
         .from(chunks)
-        .where(eq(chunks.parentId, parentId))
+        .where(and(eq(chunks.parentId, parentId), eq(chunks.kind, "text")))
         .orderBy(asc(chunks.position));
       const existing = rows.map((c) => decChunk(crypto, c));
 
@@ -219,9 +223,42 @@ export function updateChunkContent(
   });
 }
 
-/** チャンクを削除する。子孫・タグ・リンク・埋め込みは FK cascade で連鎖削除 */
-export function deleteChunk(db: Db, id: number): ResultAsync<void, DbError> {
-  return tryDbAsync(async () => {
-    await db.delete(chunks).where(eq(chunks.id, id));
-  });
+/**
+ * チャンクを削除する。子孫・タグ・リンク・埋め込みは FK cascade で連鎖削除。
+ *
+ * blob チャンク（issue #157）は files 行を参照するが、`chunks.file_id` に cascade は
+ * 無い（files 行を消すには R2 の object_key を事前に読む必要があるため）。そこで
+ * 削除前に部分木（自身 + 子孫）の blob チャンクを再帰 CTE で集めて object_key を
+ * 控え、チャンク削除（cascade で部分木ごと消える）→ 対応する files 行の削除、の
+ * 順で行う（逆順だと chunks.file_id の FK が files 行の削除を拒む）。
+ *
+ * 戻り値は削除した files 行の object_key 一覧（呼び出し側が R2 オブジェクトを
+ * 掃除する材料。有限 retention の lifecycle が既に削除した key も含まれるが、
+ * ユーザー明示 DELETE ではその key を削除対象として渡せる。
+ */
+export function deleteChunk(db: Db, id: number): ResultAsync<string[], DbError> {
+  return tryDbAsync(() =>
+    db.transaction(async (tx) => {
+      const res = await tx.run(sql`
+        WITH RECURSIVE subtree(id) AS (
+          SELECT ${id} AS id
+          UNION ALL
+          SELECT c.id FROM chunks c JOIN subtree s ON c.parent_id = s.id
+        )
+        SELECT f.id AS fileId, f.object_key AS objectKey
+        FROM subtree s
+        JOIN chunks c ON c.id = s.id
+        JOIN files f ON f.id = c.file_id
+        WHERE c.kind = 'blob'
+      `);
+      const removedFiles = rowsAs<{ fileId: number; objectKey: string }>(res);
+
+      await tx.delete(chunks).where(eq(chunks.id, id));
+      for (const f of removedFiles) {
+        await tx.delete(files).where(eq(files.id, f.fileId));
+      }
+
+      return removedFiles.map((f) => f.objectKey);
+    }),
+  );
 }

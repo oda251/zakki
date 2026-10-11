@@ -8,18 +8,28 @@
  * （`schema.ts` の既存方針と同じく平文のまま同期する）。
  */
 import { AAD } from "@zakki/core/crypto/aad.ts";
-import type { ChunkDoc, ChunkUserTagDoc, LinkDoc, TagDoc } from "@zakki/web/client/db/database.ts";
+import type {
+  ChunkDoc,
+  ChunkUserTagDoc,
+  FileDoc,
+  LinkDoc,
+  TagDoc,
+} from "@zakki/web/client/db/database.ts";
 import type { FieldCrypto } from "@zakki/web/client/db/crypto.ts";
 
 export type ChunkDocData = ChunkDoc & { _deleted: boolean };
 export type ChunkUserTagDocData = ChunkUserTagDoc & { _deleted: boolean };
 export type TagDocData = TagDoc & { _deleted: boolean };
 export type LinkDocData = LinkDoc & { _deleted: boolean };
+export type FileDocData = FileDoc & { _deleted: boolean };
 
 export interface ChunkWire {
   id: string;
   parentId: string | null;
   position: number;
+  // blob チャンク（issue #157）は kind='blob'・fileId=<files.id> を wire で運ぶ
+  kind: ChunkDoc["kind"];
+  fileId: ChunkDoc["fileId"];
   content: string;
   date: string | null;
   polarity: number | null;
@@ -54,7 +64,25 @@ export interface LinkWire {
   _deleted: boolean;
 }
 
-/** チャンク doc → wire。日付チャンクは content を暗号化しない */
+/** ファイル doc → wire（issue #157）。name のみ暗号化（filePush 参照） */
+export interface FileWire {
+  id: string;
+  name: string;
+  extension: string;
+  encryption: FileDoc["encryption"];
+  retention: FileDoc["retention"];
+  objectKey: string;
+  size: number;
+  partSize: number;
+  updatedAt: string;
+  _deleted: boolean;
+}
+
+/**
+ * チャンク doc → wire。日付チャンクは content を暗号化しない。
+ * kind / fileId（issue #157）は構造情報なので wire でも平文のまま運ぶ
+ * （links が wire でも平文なのと同じ判断。id / parentId / position と同じ露出面）。
+ */
 export function chunkPush(fc: FieldCrypto, doc: ChunkDocData): ChunkWire {
   return {
     ...doc,
@@ -62,11 +90,36 @@ export function chunkPush(fc: FieldCrypto, doc: ChunkDocData): ChunkWire {
   };
 }
 
-/** チャンク wire → doc。日付チャンクは content を復号しない */
+/** チャンク wire → doc。日付チャンクは content を復号しない。
+ * kind / fileId は旧 wire（kind 導入前）との後方互換のため欠けていたら補う。 */
 export function chunkPull(fc: FieldCrypto, wire: ChunkWire): ChunkDocData {
   return {
     ...wire,
+    kind: wire.kind ?? "text",
+    fileId: wire.fileId ?? null,
     content: wire.date === null ? fc.decString(wire.content, AAD.chunkContent) : wire.content,
+  };
+}
+
+/**
+ * ファイル doc → wire。name はチャンク正文と同じく DEK で暗号化する
+ * （サーバは files.name を AAD.fileName で復号する, data/file/repository.ts の decFile）。
+ * extension / size / partSize / objectKey は一覧表示の弁別に使うメタデータなので平文のまま。
+ * この暗号化は doc.encryption（= FEK によるファイル本編の要否）とは無関係に走る:
+ * filePush は DEK の有無だけで分岐する（chunkPush と同じ境界）。
+ */
+export function filePush(fc: FieldCrypto, doc: FileDocData): FileWire {
+  return {
+    ...doc,
+    name: fc.encString(doc.name, AAD.fileName),
+  };
+}
+
+/** ファイル wire → doc。name を復号する（{@link filePush} 参照） */
+export function filePull(fc: FieldCrypto, wire: FileWire): FileDocData {
+  return {
+    ...wire,
+    name: fc.decString(wire.name, AAD.fileName),
   };
 }
 

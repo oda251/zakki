@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { generateDek } from "@zakki/core/crypto/dek.ts";
+import { FILE_RETENTIONS, type FileRetention } from "@zakki/core/file/upload.ts";
 import { ready } from "@zakki/core/crypto/sodium.ts";
 import { addPassphraseEnvelope } from "@zakki/data/crypto/envelopes.ts";
 import type { Db } from "@zakki/data/db/client.ts";
 import { createDb } from "@zakki/data/db/connect.ts";
 import type { Hono } from "hono";
+import { memoryFileStore } from "@zakki/web/server/files/test-store.ts";
+import { r2FileStore, type R2BucketLike } from "@zakki/web/server/files/store.ts";
 import { composeRelayApp } from "@zakki/web/server/relay.ts";
-import { parseRelayEnv, serviceBinding } from "@zakki/web/server/worker-env.ts";
+import { parseRelayEnv, r2BucketBindings, serviceBinding } from "@zakki/web/server/worker-env.ts";
 
 /**
  * マルチユーザ**専用**の中継アプリ（issue #134）。
@@ -28,6 +31,7 @@ const DB_URL = "libsql://user-db.example.turso.io";
 let userDb: Db;
 let app: Hono;
 let opened: number;
+let files: ReturnType<typeof memoryFileStore>;
 
 /** 実物と同じ経路・同じ JSON を返す fake コントロールプレーン */
 function fakeControlPlane(input: string, init?: RequestInit): Promise<Response> {
@@ -52,8 +56,10 @@ beforeEach(async () => {
   await ready();
   userDb = await createDb(":memory:");
   opened = 0;
+  files = memoryFileStore();
   app = composeRelayApp({
     controlPlaneUrl: CONTROL_PLANE_URL,
+    files,
     fetchFn: fakeControlPlane,
     openUserDb: (identity) => {
       opened += 1;
@@ -103,6 +109,20 @@ describe("composeRelayApp", () => {
     expect(res.status).toBe(401);
   });
 
+  test("file store を渡すと認証済み multipart 経路を中継する", async () => {
+    const res = await app.request("/api/files/1758000000000001/multipart", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ retention: "7d", size: 20 }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(files.created).toHaveLength(1);
+  });
+
   test("GET /api/config はコントロールプレーンの所在を返す（クライアントの構成選択）", async () => {
     const res = await app.request("/api/config");
 
@@ -121,6 +141,89 @@ describe("parseRelayEnv", () => {
 
   test("未設定なら起動失敗（Workers 版はマルチユーザ専用で、単一ユーザ構成が成立しない）", () => {
     expect(parseRelayEnv({})._unsafeUnwrapErr()).toContain("ZAKKI_CONTROL_PLANE_URL");
+  });
+});
+
+function fakeBucket(label: string, calls: string[]): R2BucketLike {
+  return {
+    createMultipartUpload(key) {
+      calls.push(`${label}:create:${key}`);
+      return Promise.resolve({ uploadId: `${label}-upload` });
+    },
+    resumeMultipartUpload(key, uploadId) {
+      return {
+        uploadPart(partNumber) {
+          calls.push(`${label}:part:${key}:${uploadId}:${partNumber}`);
+          return Promise.resolve({ etag: `${label}-etag` });
+        },
+        complete(parts) {
+          calls.push(`${label}:complete:${key}:${uploadId}:${parts.length}`);
+          return Promise.resolve();
+        },
+        abort() {
+          if (uploadId === "missing") {
+            return Promise.reject(new Error("NoSuchUpload (10024)"));
+          }
+          calls.push(`${label}:abort:${key}:${uploadId}`);
+          return Promise.resolve();
+        },
+      };
+    },
+    get(key) {
+      calls.push(`${label}:get:${key}`);
+      return Promise.resolve(null);
+    },
+    delete(key) {
+      calls.push(`${label}:delete:${key}`);
+      return Promise.resolve();
+    },
+  };
+}
+
+describe("R2 retention bindings", () => {
+  test("4 つの binding を retention ごとの Record として読む", () => {
+    const calls: string[] = [];
+    const env = Object.fromEntries(
+      FILE_RETENTIONS.map((retention) => {
+        const binding = `FILES_${retention.toUpperCase()}`;
+        return [binding, fakeBucket(retention, calls)];
+      }),
+    );
+
+    const bindings = r2BucketBindings(env);
+    expect(bindings).not.toBeNull();
+    expect(bindings?.permanent).toBe(env.FILES_PERMANENT);
+    expect(bindings?.["1d"]).toBe(env.FILES_1D);
+    expect(bindings?.["7d"]).toBe(env.FILES_7D);
+    expect(bindings?.["30d"]).toBe(env.FILES_30D);
+  });
+
+  test("1 つでも binding が欠ければ null", () => {
+    const calls: string[] = [];
+    const env = Object.fromEntries(
+      FILE_RETENTIONS.map((retention) => [
+        `FILES_${retention.toUpperCase()}`,
+        fakeBucket(retention, calls),
+      ]),
+    );
+    delete env.FILES_30D;
+    expect(r2BucketBindings(env)).toBeNull();
+  });
+
+  test("r2FileStore は指定 retention の bucket だけへ操作する", async () => {
+    const calls: string[] = [];
+    const buckets: Record<FileRetention, R2BucketLike> = {
+      permanent: fakeBucket("permanent", calls),
+      "1d": fakeBucket("1d", calls),
+      "7d": fakeBucket("7d", calls),
+      "30d": fakeBucket("30d", calls),
+    };
+    const store = r2FileStore(buckets);
+
+    await store.createMultipart("30d", "accounts/acc/30d/file");
+    await store.abortMultipart("30d", "accounts/acc/30d/file", "missing");
+
+    expect(calls).toEqual(["30d:create:accounts/acc/30d/file"]);
   });
 });
 

@@ -66,6 +66,7 @@ describe("セキュリティヘッダ（#28 / #43）", () => {
     expect(csp).toContain("default-src 'self'");
     // libsodium の WASM 初期化に必要な最小限のみ script-src へ追加する
     expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(csp).toContain("img-src 'self' data: blob:");
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("frame-ancestors 'none'");
     // 同一オリジンのみ: CORS を明示的に開放しない
