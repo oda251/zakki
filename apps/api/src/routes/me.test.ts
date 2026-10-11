@@ -358,7 +358,7 @@ describe("GET /me/db の異常系", () => {
     app = createApp({
       db,
       auth: { appOrigin: TEST_APP_ORIGIN, sessionSecret: SESSION_SECRET },
-    providers: [createTestGoogleProvider(idp)],
+      providers: [createTestGoogleProvider(idp)],
       turso: createTursoPlatform({
         baseUrl,
         apiToken: "wrong-token",

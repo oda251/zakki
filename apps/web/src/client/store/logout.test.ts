@@ -10,9 +10,10 @@ import { logoutSession } from "@zakki/web/client/store/logout.ts";
  * （apps/api の `POST /auth/logout`）と DB 削除はそれぞれ本物の統合テストがあるので、
  * ここは control-flow（順序・失敗時の進行）だけを注入した依存で確かめる。
  */
-function makeDeps(
-  opts: { logout?: "reject"; removeDb?: "reject" } = {},
-): { calls: string[]; deps: LogoutDeps } {
+function makeDeps(opts: { logout?: "reject"; removeDb?: "reject" } = {}): {
+  calls: string[];
+  deps: LogoutDeps;
+} {
   const calls: string[] = [];
   const deps: LogoutDeps = {
     logout: () => {
@@ -23,9 +24,7 @@ function makeDeps(
     },
     removeDb: () => {
       calls.push("removeDb");
-      return opts.removeDb === "reject"
-        ? Promise.reject(new Error("db busy"))
-        : Promise.resolve();
+      return opts.removeDb === "reject" ? Promise.reject(new Error("db busy")) : Promise.resolve();
     },
     reload: () => {
       calls.push("reload");

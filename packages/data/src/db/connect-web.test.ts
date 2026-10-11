@@ -47,7 +47,7 @@ async function applied(target: Db): Promise<{ hash: string; created_at: number }
   const rows = await target.all<{ hash: string; created_at: number }>(
     sql.raw("SELECT hash, created_at FROM `__drizzle_migrations` ORDER BY created_at"),
   );
-  return rows.map((r) => ({ hash: r.hash, created_at: Number(r.created_at) }));
+  return rows.map((r) => ({ hash: r.hash, created_at: r.created_at }));
 }
 
 describe("migrateWebDb", () => {

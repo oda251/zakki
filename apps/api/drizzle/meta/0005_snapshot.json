@@ -42,12 +42,8 @@
           "name": "account_databases_account_id_accounts_id_fk",
           "tableFrom": "account_databases",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -106,16 +102,12 @@
       "indexes": {
         "account_identities_account": {
           "name": "account_identities_account",
-          "columns": [
-            "account_id"
-          ],
+          "columns": ["account_id"],
           "isUnique": false
         },
         "account_identities_primary_unique": {
           "name": "account_identities_primary_unique",
-          "columns": [
-            "account_id"
-          ],
+          "columns": ["account_id"],
           "isUnique": true,
           "where": "\"is_primary\" = 1"
         }
@@ -125,22 +117,15 @@
           "name": "account_identities_account_id_accounts_id_fk",
           "tableFrom": "account_identities",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
         "account_identities_provider_subject_pk": {
-          "columns": [
-            "provider",
-            "subject"
-          ],
+          "columns": ["provider", "subject"],
           "name": "account_identities_provider_subject_pk"
         }
       },
@@ -210,12 +195,8 @@
           "name": "login_handoffs_account_id_accounts_id_fk",
           "tableFrom": "login_handoffs",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -266,9 +247,7 @@
       "indexes": {
         "oidc_states_expires": {
           "name": "oidc_states_expires",
-          "columns": [
-            "expires_at"
-          ],
+          "columns": ["expires_at"],
           "isUnique": false
         }
       },

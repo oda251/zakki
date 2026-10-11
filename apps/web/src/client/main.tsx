@@ -7,7 +7,11 @@ import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 import { logoutSession } from "@zakki/web/client/store/logout.ts";
 import { usePasskeyStore } from "@zakki/web/client/store/passkey.ts";
+import { registerPwaServiceWorker } from "@zakki/web/client/pwa.ts";
 import "@zakki/web/client/styles.css";
+
+// PWA: Service Worker を登録してオフラインキャッシュと PWA インストール要件を有効化
+registerPwaServiceWorker();
 
 const root = document.getElementById("root");
 if (root === null) {

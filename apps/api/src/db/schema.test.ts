@@ -23,7 +23,9 @@ async function openControlDb() {
   const path = join(mkdtempSync(join(tmpdir(), "zakki-control-")), "control.sqlite");
   const client = createClient({ url: `file:${path}` });
   await client.execute("PRAGMA foreign_keys = ON");
-  const db = drizzle(client, { schema: { accounts, accountIdentities, loginHandoffs, accountDatabases } });
+  const db = drizzle(client, {
+    schema: { accounts, accountIdentities, loginHandoffs, accountDatabases },
+  });
   await migrate(db, { migrationsFolder: MIGRATIONS });
   return { client, db };
 }
@@ -84,9 +86,7 @@ describe("コントロールプレーン DB スキーマ", () => {
     }
     expect(rejected).toBe(true);
     // 別プロバイダなら同じ subject 文字列でも別物
-    await db
-      .insert(accountIdentities)
-      .values({ ...row, provider: "github", accountId: "acc-2" });
+    await db.insert(accountIdentities).values({ ...row, provider: "github", accountId: "acc-2" });
   });
 
   test("is_primary（issue #159）: アカウントに主 identity は高々 1 つ", async () => {

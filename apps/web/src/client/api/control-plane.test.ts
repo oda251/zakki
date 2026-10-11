@@ -107,7 +107,8 @@ let subjectSeq = 0;
 /** Google で同意して戻ってきた fragment から handoff code を取り出す */
 async function authorizeCode(subject: string): Promise<string> {
   const fragment = readLoginFragment(await cp.authorize(subject));
-  if (fragment?.kind !== "code") throw new Error(`ログインできていない: ${JSON.stringify(fragment)}`);
+  if (fragment?.kind !== "code")
+    throw new Error(`ログインできていない: ${JSON.stringify(fragment)}`);
   return fragment.code;
 }
 

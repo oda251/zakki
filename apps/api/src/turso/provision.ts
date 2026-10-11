@@ -1,7 +1,12 @@
 import { eq } from "drizzle-orm";
 import { err, ok, type Result } from "neverthrow";
 import type { ControlDb } from "@zakki/api/db/client.ts";
-import { accountDatabases, accountIdentities, accounts, loginHandoffs } from "@zakki/api/db/schema.ts";
+import {
+  accountDatabases,
+  accountIdentities,
+  accounts,
+  loginHandoffs,
+} from "@zakki/api/db/schema.ts";
 import type { PlatformFailure, TursoDatabase, TursoPlatform } from "@zakki/core/turso/platform.ts";
 
 /**

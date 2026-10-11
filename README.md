@@ -58,13 +58,13 @@ TUI・Web とも OpenAI 互換のローカル LLM（LM Studio・Ollama・llama.c
 
 ## 技術スタック
 
-| 領域         | 採用                                                                                                                                                           |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ランタイム   | Bun + TypeScript                                                                                                                                               |
-| TUI          | [OpenTUI](https://github.com/sst/opentui)                                                                                                                      |
+| 領域         | 採用                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ランタイム   | Bun + TypeScript                                                                                                                                                                           |
+| TUI          | [OpenTUI](https://github.com/sst/opentui)                                                                                                                                                  |
 | かな漢字変換 | TUI のみ: [AzooKeyKanaKanjiConverter](https://github.com/azooKey/AzooKeyKanaKanjiConverter)（anco）+ [zenz-v3.1](https://huggingface.co/Miwa-Keita/zenz-v3.1-small-gguf)。Web は OS の IME |
-| 形態素解析   | [lindera-wasm](https://github.com/lindera/lindera)                                                                                                             |
-| 感情分析     | [negaposi](https://github.com/hata6502/negaposi)（日本語評価極性辞書 / 東北大 乾・岡崎研）                                                                     |
-| DB           | bun:sqlite（+ [sqlite-vec](https://github.com/asg017/sqlite-vec)）                                                                                             |
+| 形態素解析   | [lindera-wasm](https://github.com/lindera/lindera)                                                                                                                                         |
+| 感情分析     | [negaposi](https://github.com/hata6502/negaposi)（日本語評価極性辞書 / 東北大 乾・岡崎研）                                                                                                 |
+| DB           | bun:sqlite（+ [sqlite-vec](https://github.com/asg017/sqlite-vec)）                                                                                                                         |
 
 選定根拠は [docs/RESEARCH.md](docs/RESEARCH.md) を参照。
