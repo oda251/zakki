@@ -63,8 +63,6 @@ export function nodesFromDocs(
       parentId: c.parentId === null ? null : numId(c.parentId),
       position: c.position,
       content: c.content,
-      kind: c.kind,
-      fileId: c.fileId,
       date: dates.get(c.id) ?? "",
       polarity: c.polarity,
       tags: [],

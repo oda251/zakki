@@ -141,8 +141,6 @@ describe("サーバは平文を保持しない（#28）", () => {
       id: "c1",
       parentId: null,
       position: 0,
-      kind: "text",
-      fileId: null,
       content: "秘密の本文",
       date: null,
       polarity: null,

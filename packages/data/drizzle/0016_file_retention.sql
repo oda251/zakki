@@ -1,1 +1,0 @@
-ALTER TABLE `files` ADD `retention` text DEFAULT 'permanent' NOT NULL;

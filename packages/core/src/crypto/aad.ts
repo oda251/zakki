@@ -14,6 +14,4 @@ export const AAD = {
   tagName: "tag.name",
   chunkUserTagName: "chunkUserTag.name",
   embeddingVector: "embedding.vector",
-  fileName: "file.name",
-  filePart: "file.part",
 } as const;

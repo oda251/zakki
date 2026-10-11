@@ -1,7 +1,5 @@
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import { Composer } from "@zakki/web/client/composer/Composer.tsx";
-import { FileUploadForm } from "@zakki/web/client/files/FileUploadForm.tsx";
-import { graphNodeLabel } from "@zakki/web/client/files/display.ts";
 import { useBufferStore } from "@zakki/web/client/store/buffer.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
@@ -19,7 +17,6 @@ export function ComposerPane() {
   const initialRaw = useBufferStore((s) => s.initialRaw);
   const initialChunkIds = useBufferStore((s) => s.initialChunkIds);
   const error = useBufferStore((s) => s.error);
-  const files = useGraphStore((s) => s.files);
   const currentNode = useGraphStore((s) =>
     currentId === null ? undefined : s.data?.nodes.find((n) => n.id === currentId),
   );
@@ -37,7 +34,7 @@ export function ComposerPane() {
           ? "…"
           : currentNode.parentId === null
             ? currentNode.date
-            : makeTitle(graphNodeLabel(currentNode, files))}
+            : makeTitle(currentNode.content)}
       </div>
       <Composer
         key={currentId}
@@ -46,7 +43,6 @@ export function ComposerPane() {
         initialRaw={initialRaw}
         initialChunkIds={initialChunkIds}
       />
-      <FileUploadForm key={currentId} parentId={currentId} />
     </div>
   );
 }
