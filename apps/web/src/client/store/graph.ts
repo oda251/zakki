@@ -4,7 +4,11 @@ import { errorMessage } from "@zakki/core/util/error.ts";
 import type { ZakkiDatabase } from "@zakki/web/client/db/database.ts";
 import { chunksView, linksView, userTagsView } from "@zakki/web/client/db/live.ts";
 import type { GraphData } from "@zakki/web/shared/api-types.ts";
-import { edgesFromDocs, nodesFromDocs } from "@zakki/web/client/store/graph-docs.ts";
+import {
+  chronoEdgesFromNodes,
+  edgesFromDocs,
+  nodesFromDocs,
+} from "@zakki/web/client/store/graph-docs.ts";
 
 export const NODE_NEUTRAL = "var(--node-neutral)";
 
@@ -14,8 +18,9 @@ export function sessionColor(slot: number | undefined): string {
 
 /**
  * グラフ状態の zustand ストア（imperative shell）。ノードは RxDB liveQuery 購読
- * （connect）から nodesFromDocs で、エッジは links コレクション購読から
- * edgesFromDocs で導出し、手動 fetch / キャッシュ・非導出のエッジ状態を持たない
+ * （connect）から nodesFromDocs で導出し、edges は links コレクション由来と
+ * 日付ルート間の chrono エッジを組み合わせる。手動 fetch / キャッシュ・非導出の
+ * エッジ状態を持たない
  * （#44 / #77。数珠繋ぎの書込みは writes.ts addLinkDocs、意味リンクの生成は M6）。
  * ナビゲーション状態（ドリル位置・選択・フィルタ）は URL が SSOT（#52, router/）で、
  * ここには URL 化も永続化もできないものだけが残る。
@@ -42,7 +47,7 @@ export const useGraphStore = create<GraphState>((set) => ({
         next: ([chunks, userTags, links]) => {
           const nodes = nodesFromDocs(chunks, userTags);
           const alive = new Set(nodes.map((n) => n.id));
-          const edges = edgesFromDocs(links, alive);
+          const edges = [...edgesFromDocs(links, alive), ...chronoEdgesFromNodes(nodes)];
           set({ data: { version: "", nodes, edges }, error: null });
         },
         error: (e: unknown) => {

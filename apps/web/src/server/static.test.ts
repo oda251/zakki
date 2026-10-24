@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ describe("setupStaticRoutes", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "zakki-static-test-"));
     try {
       const app = new Hono();
-      const result = setupStaticRoutes(app, tempDir);
+      const result = setupStaticRoutes(app, tempDir, serveStatic);
       expect(result).toBe(false);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -26,7 +27,7 @@ describe("setupStaticRoutes", () => {
       writeFileSync(join(tempDir, "manifest.webmanifest"), '{"name":"zakki"}');
 
       const app = new Hono();
-      const result = setupStaticRoutes(app, tempDir, process.cwd());
+      const result = setupStaticRoutes(app, tempDir, serveStatic, process.cwd());
       expect(result).toBe(true);
 
       // 1. GET /sw.js は no-cache, no-store ヘッダ付きで sw.js を返す

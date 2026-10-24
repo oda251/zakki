@@ -1,7 +1,10 @@
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import type { MiddlewareHandler } from "hono";
 import type { Hono } from "hono";
-import { serveStatic } from "hono/bun";
+import type { ServeStaticOptions } from "hono/serve-static";
+
+type StaticMiddlewareFactory = (options: ServeStaticOptions) => MiddlewareHandler;
 
 /**
  * ビルド済み SPA（vite build → apps/web/dist）を配信する（SPA フォールバック付き）。
@@ -15,6 +18,7 @@ import { serveStatic } from "hono/bun";
 export function setupStaticRoutes(
   app: Hono,
   distDir: string,
+  staticMiddleware: StaticMiddlewareFactory,
   cwd: string = process.cwd(),
 ): boolean {
   if (!existsSync(join(distDir, "index.html"))) {
@@ -26,7 +30,7 @@ export function setupStaticRoutes(
   // 1. /assets/* は不変キャッシュ
   app.get(
     "/assets/*",
-    serveStatic({
+    staticMiddleware({
       root,
       onFound: (_path, c) => {
         c.header("Cache-Control", "public, max-age=31536000, immutable");
@@ -37,7 +41,7 @@ export function setupStaticRoutes(
   // 2. PWA 関連ファイル（sw.js, manifest.webmanifest, アイコン画像など）の実在ファイルを配信
   app.use(
     "*",
-    serveStatic({
+    staticMiddleware({
       root,
       onFound: (path, c) => {
         if (path.endsWith("sw.js") || path.endsWith(".webmanifest")) {
@@ -52,7 +56,7 @@ export function setupStaticRoutes(
   // 3. SPA フォールバック（実在しないパスは index.html を返す）
   app.get(
     "*",
-    serveStatic({
+    staticMiddleware({
       root,
       path: "index.html",
       onFound: (_path, c) => {

@@ -28,8 +28,8 @@ export type ChunkUserTagDoc = { id: string; chunkId: string; updatedAt: string }
 >;
 export type TagDoc = { id: string; updatedAt: string } & Pick<Tag, "name">;
 /**
- * chunk 間リンク（数珠繋ぎ・意味リンク, #77）。サーバ links 表と同じく from < to 正規化の
- * ペア一意で、id はペアから決定的に導出する（ids.ts の
+ * chunk 間リンク（数珠繋ぎ・意味リンク, #77）。方向付きペアごとに一意で、id はペアから
+ * 決定的に導出する（ids.ts の
  * {@link import("@zakki/web/client/db/ids.ts").linkDocId}）。
  */
 export type LinkDoc = {

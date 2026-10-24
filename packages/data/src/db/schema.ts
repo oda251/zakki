@@ -224,9 +224,9 @@ export const chunkTags = sqliteTable(
 );
 
 /**
- * chunk 間の関連（docs/CONCEPT.md データモデル素案）。双方向とみなし from < to で正規化。
- * 任意階層のチャンク同士で張れる（docs/CHUNKS.md）。日付チャンク間の時系列リンクは
- * 保存せずグラフクエリで導出する。
+ * chunk 間の関連（docs/CONCEPT.md）。auto は双方向で from < to に正規化し、manual は
+ * from → to の有向リンク。任意階層のチャンク同士で張れる（docs/CHUNKS.md）。
+ * 日付チャンク間の時系列リンクは保存せずグラフクエリで導出する。
  */
 export const links = sqliteTable(
   "links",

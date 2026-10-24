@@ -58,6 +58,20 @@ describe("useGraphStore.connect", () => {
     expect(nodes.find((n) => n.id === numId(parent.id))?.childCount).toBe(1);
   });
 
+  test("GraphData に隣接日付ルート間の有向 chrono エッジを導出する", async () => {
+    const db = await open();
+    connect(db);
+    const later = await getOrCreateDateChunkDoc(db, "2026-07-09", T1);
+    const earlier = await getOrCreateDateChunkDoc(db, "2026-07-07", T1);
+    await getOrCreateDateChunkDoc(db, "2026-07-08", T1);
+    await tick();
+
+    expect(useGraphStore.getState().data?.edges).toEqual([
+      { from: numId(earlier.id), to: numId("900000020260708"), score: 1, origin: "chrono" },
+      { from: numId("900000020260708"), to: numId(later.id), score: 1, origin: "chrono" },
+    ]);
+  });
+
   test("links doc がエッジとして導出され、doc 再 emit を跨いで生存し、ノード削除で落ちる", async () => {
     const db = await open();
     connect(db);

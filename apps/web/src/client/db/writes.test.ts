@@ -170,7 +170,7 @@ describe("setUserTagDocs", () => {
 });
 
 describe("addLinkDocs", () => {
-  test("from<to 正規化・決定的 id で永続化し、自己リンクは作らない（#77）", async () => {
+  test("入力方向を保った決定的 id で永続化し、自己リンクは作らない（#77）", async () => {
     const db = await open();
     await addLinkDocs(
       db,
@@ -183,9 +183,9 @@ describe("addLinkDocs", () => {
     const links = (await db.links.find().exec()).map((d) => d.toJSON());
     expect(links).toEqual([
       {
-        id: "3-7",
-        fromChunkId: "3",
-        toChunkId: "7",
+        id: "7-3",
+        fromChunkId: "7",
+        toChunkId: "3",
         score: 1,
         origin: "manual",
         updatedAt: T1,
@@ -193,13 +193,30 @@ describe("addLinkDocs", () => {
     ]);
   });
 
-  test("既存ペアは no-op（updatedAt を動かさず replication ノイズを出さない）", async () => {
+  test("同じ方向の既存リンクは no-op、逆方向は別リンクとして保存する", async () => {
     const db = await open();
     await addLinkDocs(db, [{ from: 3, to: 7 }], T1);
     await addLinkDocs(db, [{ from: 7, to: 3 }], T2);
+    await addLinkDocs(db, [{ from: 3, to: 7 }], T2);
     const links = await db.links.find().exec();
-    expect(links.length).toBe(1);
-    expect(links[0]?.updatedAt).toBe(T1);
+    expect(links.map((link) => link.toJSON())).toEqual([
+      {
+        id: "3-7",
+        fromChunkId: "3",
+        toChunkId: "7",
+        score: 1,
+        origin: "manual",
+        updatedAt: T1,
+      },
+      {
+        id: "7-3",
+        fromChunkId: "7",
+        toChunkId: "3",
+        score: 1,
+        origin: "manual",
+        updatedAt: T2,
+      },
+    ]);
   });
 
   test("チャンク削除で両端いずれかが消えたリンクも cascade 削除される", async () => {

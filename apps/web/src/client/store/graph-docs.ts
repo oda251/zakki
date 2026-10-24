@@ -5,7 +5,7 @@
  * 投影のクライアント版: root date 継承・childCount / descendantCount の再導出。
  * 派生値の定義は graph-core の recomputeCounts と共有する。
  *
- * エッジは links コレクション（#77 で永続化）から {@link edgesFromDocs} で導出する。
+ * links コレクション（#77 で永続化）由来のエッジと、日付ルート間の chrono エッジを導出する。
  * 自動タグ（chunk_tags）はサーバ解析の産物で replication 対象外のため tags は空
  * （クライアント解析は #28/#26、意味リンクの生成も同じく M6）。
  */
@@ -72,6 +72,19 @@ export function nodesFromDocs(
     }),
   );
   return recomputeCounts(nodes.toSorted((a, b) => a.id - b.id));
+}
+
+/** 入力順の日付ルートを隣接するもの同士で結ぶ。 */
+export function chronoEdgesFromNodes(nodes: readonly GraphNode[]): GraphEdge[] {
+  const roots = nodes.filter((node) => node.parentId === null && node.date !== "");
+  const edges: GraphEdge[] = [];
+  for (let index = 1; index < roots.length; index += 1) {
+    const from = roots[index - 1];
+    const to = roots[index];
+    if (from === undefined || to === undefined) continue;
+    edges.push({ from: from.id, to: to.id, score: 1, origin: "chrono" });
+  }
+  return edges;
 }
 
 /**

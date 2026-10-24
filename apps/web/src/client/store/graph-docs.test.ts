@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ChunkDoc, ChunkUserTagDoc } from "@zakki/web/client/db/database.ts";
-import { nodesFromDocs } from "@zakki/web/client/store/graph-docs.ts";
+import { chronoEdgesFromNodes, nodesFromDocs } from "@zakki/web/client/store/graph-docs.ts";
 
 /**
  * issue #44: RxDB chunk docs → GraphNode[] の純導出。
@@ -69,5 +69,33 @@ describe("nodesFromDocs", () => {
   test("祖先に日付チャンクが無いノードは date が空文字になる", () => {
     const nodes = nodesFromDocs([chunk({ id: "5", parentId: "存在しない親" })], []);
     expect(nodes[0]?.date).toBe("");
+  });
+});
+
+describe("chronoEdgesFromNodes", () => {
+  test("links adjacent date roots in the given node order", () => {
+    const nodes = nodesFromDocs(
+      [
+        chunk({ id: "900", date: "2026-07-09", content: "2026-07-09" }),
+        chunk({ id: "100", date: "2026-07-07", content: "2026-07-07" }),
+        chunk({ id: "500", date: "2026-07-08", content: "2026-07-08" }),
+        chunk({ id: "1", parentId: "500", position: 0 }),
+      ],
+      [],
+    ).toReversed();
+
+    expect(chronoEdgesFromNodes(nodes)).toEqual([
+      { from: 900, to: 500, score: 1, origin: "chrono" },
+      { from: 500, to: 100, score: 1, origin: "chrono" },
+    ]);
+  });
+
+  test("a single date root has no chronological edges", () => {
+    const nodes = nodesFromDocs(
+      [chunk({ id: "900", date: "2026-07-07", content: "2026-07-07" }), chunk({ id: "901" })],
+      [],
+    );
+
+    expect(chronoEdgesFromNodes(nodes)).toEqual([]);
   });
 });

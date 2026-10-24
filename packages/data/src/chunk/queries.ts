@@ -151,13 +151,13 @@ export function dailySentiment(db: Db): ResultAsync<DailySentiment[], DbError> {
   });
 }
 
-/** chunk id → 関連 chunk id（スコア降順、双方向） */
+/** chunk id → 関連 chunk id（スコア降順、auto は双方向、manual は from → to） */
 export function listLinksByChunk(db: Db): ResultAsync<Map<number, number[]>, DbError> {
   return tryDbAsync(async () => {
     const res = await db.run(
-      sql`SELECT from_chunk_id AS fromChunkId, to_chunk_id AS toChunkId, score FROM links`,
+      sql`SELECT from_chunk_id AS fromChunkId, to_chunk_id AS toChunkId, score, origin FROM links`,
     );
-    const rows = rowsAs<Pick<Link, "fromChunkId" | "toChunkId" | "score">>(res);
+    const rows = rowsAs<Pick<Link, "fromChunkId" | "toChunkId" | "score" | "origin">>(res);
     const sorted = rows.toSorted((a, b) => b.score - a.score);
     const result = new Map<number, number[]>();
     const push = (from: number, to: number) => {
@@ -167,7 +167,7 @@ export function listLinksByChunk(db: Db): ResultAsync<Map<number, number[]>, DbE
     };
     for (const row of sorted) {
       push(row.fromChunkId, row.toChunkId);
-      push(row.toChunkId, row.fromChunkId);
+      if (row.origin === "auto") push(row.toChunkId, row.fromChunkId);
     }
     return result;
   });
