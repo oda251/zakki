@@ -31,8 +31,8 @@ export interface GraphNode extends Pick<
 }
 
 /**
- * グラフビューのエッジ。links（from < to 正規化済み）+ 導出の時系列リンク（chrono）。
- * 列は {@link Link} から派生（"chrono" のみ保存しない導出 origin）。
+ * グラフビューのエッジ。auto links（from < to 正規化済み）・manual links（有向）+
+ * 導出の時系列リンク（chrono）。列は {@link Link} から派生（chrono のみ保存しない origin）。
  */
 export interface GraphEdge {
   from: Link["fromChunkId"];

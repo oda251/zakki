@@ -132,15 +132,17 @@ describe("dailySentiment", () => {
 });
 
 describe("listLinksByChunk", () => {
-  test("双方向・スコア降順で返す", async () => {
+  test("auto は双方向、manual は from から to の一方向でスコア降順に返す", async () => {
     const [a, b, c] = await seedDay("2026-07-05", ["一。", "二。", "三。"]);
     if (a === undefined || b === undefined || c === undefined) throw new Error("seed 不足");
     await db.insert(links).values([
       { fromChunkId: a, toChunkId: b, score: 0.5, origin: "auto" },
       { fromChunkId: a, toChunkId: c, score: 0.9, origin: "auto" },
+      { fromChunkId: b, toChunkId: c, score: 0.7, origin: "manual" },
     ]);
     const byChunk = (await listLinksByChunk(db))._unsafeUnwrap();
     expect(byChunk.get(a)).toEqual([c, b]);
-    expect(byChunk.get(b)).toEqual([a]);
+    expect(byChunk.get(b)).toEqual([c, a]);
+    expect(byChunk.get(c)).toEqual([a]);
   });
 });

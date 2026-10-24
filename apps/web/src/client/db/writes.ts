@@ -175,8 +175,8 @@ export async function setUserTagDocs(
 
 /**
  * 数珠繋ぎリンクの永続化（#77。graph store の manualEdges セッションローカル実装を置換）。
- * かつての data 層 addManualLink と同じ不変条件: from < to 正規化・自己リンクと
- * 既存ペアは no-op（updatedAt を書き換えず、無駄な replication push を出さない）。
+ * 自己リンクと同じ方向の既存リンクは no-op（updatedAt を書き換えず、無駄な
+ * replication push を出さない）。
  * id はペアから決定的（{@link linkDocId}）で、多端末でも同一 doc に収束する。
  */
 export async function addLinkDocs(
@@ -187,12 +187,11 @@ export async function addLinkDocs(
   const candidates = new Map<string, LinkDoc>();
   for (const d of drafts) {
     if (d.from === d.to) continue;
-    const [from, to] = d.from < d.to ? [d.from, d.to] : [d.to, d.from];
-    const id = linkDocId(from, to);
+    const id = linkDocId(d.from, d.to);
     candidates.set(id, {
       id,
-      fromChunkId: docId(from),
-      toChunkId: docId(to),
+      fromChunkId: docId(d.from),
+      toChunkId: docId(d.to),
       score: 1,
       origin: "manual",
       updatedAt: now,
