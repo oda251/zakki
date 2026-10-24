@@ -1,9 +1,9 @@
-export const NODE_CARD_WIDTH = 180;
-export const NODE_CARD_PADDING = 10;
-export const NODE_CARD_FONT_SIZE = 12;
-export const NODE_CARD_LINE_HEIGHT = 16;
-export const NODE_CARD_MAX_GRAPHEMES = 280;
-export const NODE_CARD_COLLISION_GAP = 8;
+export const NODE_CARD_WIDTH = 96;
+export const NODE_CARD_PADDING = 5;
+export const NODE_CARD_FONT_SIZE = 10;
+export const NODE_CARD_LINE_HEIGHT = 12;
+export const NODE_CARD_MAX_GRAPHEMES = 36;
+export const NODE_CARD_COLLISION_GAP = 4;
 
 const NODE_CARD_BORDER = 1;
 const segmenter = new Intl.Segmenter("ja", { granularity: "grapheme" });

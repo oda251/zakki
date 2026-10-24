@@ -129,7 +129,9 @@ export function GraphView() {
     retainedGraphData.current = retainGraphData(retainedGraphData.current, graphPayload, {
       nodeIds: visible.nodes.map(({ node }) => node.id),
       edges: visible.edges,
-      layoutKey: graphPayload.nodes.map(({ id, card }) => `${id}:${card.height}`).join("|"),
+      layoutKey: graphPayload.nodes
+        .map(({ id, card }) => `${id}:${card.width}x${card.height}`)
+        .join("|"),
     });
     return retainedGraphData.current.data;
   }, [visible, measureCardText]);
