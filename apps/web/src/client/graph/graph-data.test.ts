@@ -53,4 +53,31 @@ describe("retainGraphData", () => {
     expect(updated).not.toBe(initial);
     expect(updated.data).toBe(updatedData);
   });
+
+  test("card geometry changes replace graph data but same geometry does not", () => {
+    const initialData: TestGraphData = { nodes: [{ id: 1, content: "first" }], links: [] };
+    const initial = retainGraphData<TestGraphData>(null, initialData, {
+      ...topology,
+      layoutKey: "1:38",
+    });
+    const sameLayoutData: TestGraphData = { nodes: [{ id: 1, content: "other text" }], links: [] };
+    const sameLayout = retainGraphData(initial, sameLayoutData, {
+      ...topology,
+      layoutKey: "1:38",
+    });
+
+    expect(sameLayout).toBe(initial);
+
+    const tallerCardData: TestGraphData = {
+      nodes: [{ id: 1, content: "a\nsecond line" }],
+      links: [],
+    };
+    const tallerCard = retainGraphData(sameLayout, tallerCardData, {
+      ...topology,
+      layoutKey: "1:54",
+    });
+
+    expect(tallerCard).not.toBe(initial);
+    expect(tallerCard.data).toBe(tallerCardData);
+  });
 });
