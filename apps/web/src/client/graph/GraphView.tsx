@@ -14,6 +14,7 @@ import {
   seriesSlotsAtLevel,
   visibleGraph,
 } from "@zakki/web/client/store/graph-core.ts";
+import { retainGraphData, type RetainedGraphData } from "@zakki/web/client/graph/graph-data.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /** canvas は CSS 変数を解決できないため、実色は computed style から一度だけ読む */
@@ -95,8 +96,12 @@ export function GraphView() {
   // id で使い回して座標（x/y）を引き継ぎ、フィルタ・ドリル切り替えでレイアウトが
   // 最初からやり直しになるのを避ける。
   const nodeCache = useRef(new Map<number, ForceNode>());
+  const retainedGraphData = useRef<RetainedGraphData<{
+    nodes: ForceNode[];
+    links: ForceLink[];
+  }> | null>(null);
   const graphData = useMemo(() => {
-    return {
+    const data = {
       nodes: visible.nodes.map(({ node, external }): ForceNode => {
         const cached = nodeCache.current.get(node.id);
         if (cached !== undefined) {
@@ -118,6 +123,11 @@ export function GraphView() {
       }),
       links: visible.edges.map((e) => ({ source: e.from, target: e.to, score: e.score })),
     };
+    retainedGraphData.current = retainGraphData(retainedGraphData.current, data, {
+      nodeIds: visible.nodes.map(({ node }) => node.id),
+      edges: visible.edges,
+    });
+    return retainedGraphData.current.data;
   }, [visible]);
 
   const colorOf = (fn: ForceNode): string => {
