@@ -8,6 +8,7 @@ import {
   recomputeCounts,
   resolveNodeActivation,
   seriesSlotsAtLevel,
+  visibleHierarchy,
   visibleGraph,
 } from "./graph-core.ts";
 
@@ -81,6 +82,77 @@ describe("visibleGraph", () => {
       [2, false],
       [6, true],
     ]);
+  });
+});
+
+describe("visibleHierarchy", () => {
+  test("drill root includes descendants with relative depth and parent-child edges", () => {
+    const hierarchy = visibleHierarchy(data(TREE), 1, EMPTY_FILTER);
+
+    expect(hierarchy.nodes.map(({ node, depth }) => [node.id, depth])).toEqual([
+      [1, 0],
+      [2, 1],
+      [3, 1],
+      [4, 2],
+    ]);
+    expect(hierarchy.treeEdges).toEqual([
+      { from: 1, to: 2 },
+      { from: 1, to: 3 },
+      { from: 3, to: 4 },
+    ]);
+  });
+
+  test("tag filtering keeps matching nodes and their ancestor path", () => {
+    const nodes = TREE.map((node) => (node.id === 4 ? { ...node, tags: ["target"] } : node));
+    const hierarchy = visibleHierarchy(data(nodes), 1, { tag: "target", userTag: null });
+
+    expect(hierarchy.nodes.map(({ node }) => node.id)).toEqual([1, 3, 4]);
+    expect(hierarchy.treeEdges).toEqual([
+      { from: 1, to: 3 },
+      { from: 3, to: 4 },
+    ]);
+  });
+
+  test("top-level view contains all roots and their complete trees", () => {
+    const hierarchy = visibleHierarchy(data(TREE), null, EMPTY_FILTER);
+
+    expect(hierarchy.nodes.map(({ node, depth }) => [node.id, depth])).toEqual([
+      [1, 0],
+      [2, 1],
+      [3, 1],
+      [4, 2],
+      [5, 0],
+      [6, 1],
+    ]);
+  });
+
+  test("semantic links to nodes outside the selected tree keep the endpoint external", () => {
+    const hierarchy = visibleHierarchy(data(TREE, [edge(4, 6)]), 1, EMPTY_FILTER);
+
+    expect(hierarchy.nodes.map(({ node, external }) => [node.id, external])).toEqual([
+      [1, false],
+      [2, false],
+      [3, false],
+      [4, false],
+      [6, true],
+    ]);
+    expect(hierarchy.edges).toEqual([edge(4, 6)]);
+  });
+
+  test("semantic links to filtered-out nodes remain visible as external endpoints", () => {
+    const nodes = TREE.map((node) => (node.id === 4 ? { ...node, tags: ["target"] } : node));
+    const hierarchy = visibleHierarchy(data(nodes, [edge(4, 2)]), 1, {
+      tag: "target",
+      userTag: null,
+    });
+
+    expect(hierarchy.nodes.map(({ node, external }) => [node.id, external])).toEqual([
+      [1, false],
+      [3, false],
+      [4, false],
+      [2, true],
+    ]);
+    expect(hierarchy.edges).toEqual([edge(4, 2)]);
   });
 });
 

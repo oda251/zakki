@@ -22,6 +22,99 @@ export interface VisibleNode {
   external: boolean;
 }
 
+export interface VisibleHierarchyNode extends VisibleNode {
+  depth: number;
+}
+
+/**
+ * ドリル位置のルートと子孫を、親子関係を保った preorder で返す。
+ * semantic edge は階層 edge と分離し、フィルタ後の表示範囲外の端点を external として含める。
+ */
+export function visibleHierarchy(
+  data: GraphData,
+  drillId: number | null,
+  filter: GraphFilter,
+): {
+  nodes: VisibleHierarchyNode[];
+  treeEdges: { from: number; to: number }[];
+  edges: GraphEdge[];
+} {
+  const byId = new Map(data.nodes.map((node) => [node.id, node]));
+  const childrenByParent = new Map<number, GraphNode[]>();
+  for (const node of data.nodes) {
+    if (node.parentId === null) continue;
+    const children = childrenByParent.get(node.parentId) ?? [];
+    children.push(node);
+    childrenByParent.set(node.parentId, children);
+  }
+
+  const roots =
+    drillId === null
+      ? data.nodes.filter((node) => node.parentId === null)
+      : [byId.get(drillId)].filter((node): node is GraphNode => node !== undefined);
+  const selectedTree: { node: GraphNode; depth: number }[] = [];
+  const visited = new Set<number>();
+  const stack = roots.toReversed().map((node) => ({ node, depth: 0 }));
+  while (stack.length > 0) {
+    const entry = stack.pop();
+    if (entry === undefined || visited.has(entry.node.id)) continue;
+    visited.add(entry.node.id);
+    selectedTree.push(entry);
+    const children = childrenByParent.get(entry.node.id) ?? [];
+    for (const child of children.toReversed()) {
+      stack.push({ node: child, depth: entry.depth + 1 });
+    }
+  }
+
+  const hasFilter = filter.tag !== null || filter.userTag !== null;
+  const includedIds = new Set<number>();
+  if (hasFilter) {
+    const parentById = new Map(selectedTree.map(({ node }) => [node.id, node.parentId]));
+    for (const { node } of selectedTree) {
+      const matches =
+        (filter.tag === null || node.tags.includes(filter.tag)) &&
+        (filter.userTag === null || node.userTags.includes(filter.userTag));
+      if (!matches) continue;
+      let cursor: number | null = node.id;
+      while (cursor !== null && !includedIds.has(cursor)) {
+        includedIds.add(cursor);
+        cursor = parentById.get(cursor) ?? null;
+      }
+    }
+  } else {
+    for (const { node } of selectedTree) includedIds.add(node.id);
+  }
+  if (drillId !== null && byId.has(drillId)) includedIds.add(drillId);
+
+  const externalIds = new Set<number>();
+  for (const edge of data.edges) {
+    const fromIncluded = includedIds.has(edge.from);
+    const toIncluded = includedIds.has(edge.to);
+    if (fromIncluded === toIncluded) continue;
+    const outsideId = fromIncluded ? edge.to : edge.from;
+    if (byId.has(outsideId)) {
+      externalIds.add(outsideId);
+    }
+  }
+
+  const nodes: VisibleHierarchyNode[] = selectedTree
+    .filter(({ node }) => includedIds.has(node.id))
+    .map(({ node, depth }) => ({ node, depth, external: false }));
+  for (const id of externalIds) {
+    const node = byId.get(id);
+    if (node !== undefined) nodes.push({ node, depth: 0, external: true });
+  }
+
+  const treeEdges = nodes.flatMap(({ node }) =>
+    node.parentId !== null && includedIds.has(node.parentId)
+      ? [{ from: node.parentId, to: node.id }]
+      : [],
+  );
+  const visibleIds = new Set([...includedIds, ...externalIds]);
+  const edges = data.edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to));
+  return { nodes, treeEdges, edges };
+}
+
 /**
  * ドリル中チャンク drillId（null = トップレベル = 日付チャンク層）の表示グラフ。
  * ベースは直下子に閉じ、表示中ノードからセッション外のノードへリンクがある場合は
