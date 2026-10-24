@@ -6,15 +6,15 @@ describe("cardLayout", () => {
     const layout = cardLayout("abcde", (text) => text.length * 10);
 
     expect(layout.lines).toEqual(["abcde"]);
-    expect(layout.width).toBe(96);
-    expect(layout.height).toBe(24);
-    expect(layout.collisionRadius).toBeLessThan(70);
+    expect(layout.width).toBe(64);
+    expect(layout.height).toBe(22);
+    expect(layout.collisionRadius).toBeLessThan(50);
   });
 
   test("wraps content at the card width", () => {
     const layout = cardLayout("abcdefghijklmnopqrst", (text) => text.length * 10);
 
-    expect(layout.lines).toEqual(["abcdefgh", "ijklmnop", "qrst"]);
+    expect(layout.lines).toEqual(["abcde", "fghij", "klmno", "pqrst"]);
   });
 
   test("truncates display at 36 graphemes without changing source content", () => {

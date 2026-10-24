@@ -28,7 +28,13 @@ import { retainGraphData, type RetainedGraphData } from "@zakki/web/client/graph
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /** canvas は CSS 変数を解決できないため、実色は computed style から一度だけ読む */
-function resolvePalette(): { series: string[]; neutral: string; ink: string; hairline: string } {
+function resolvePalette(): {
+  series: string[];
+  neutral: string;
+  ink: string;
+  hairline: string;
+  border: string;
+} {
   const style = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
   return {
@@ -36,6 +42,7 @@ function resolvePalette(): { series: string[]; neutral: string; ink: string; hai
     neutral: read("--node-neutral", "#6b6a64"),
     ink: read("--text-secondary", "#c3c2b7"),
     hairline: read("--baseline", "#383835"),
+    border: read("--hairline", "#2c2c2a"),
   };
 }
 
@@ -189,13 +196,20 @@ export function GraphView() {
             ctx.save();
             ctx.globalAlpha = external ? 0.4 : 1;
             ctx.beginPath();
-            ctx.rect(left, top, card.width, card.height);
+            ctx.roundRect(left, top, card.width, card.height, 6);
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = palette.border;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.roundRect(left + 1, top + 1, 2, card.height - 2, 1);
             ctx.fillStyle = colorOf(fn);
             ctx.fill();
             if (node.id === selectedNodeId) {
               ctx.globalAlpha = 1;
               ctx.lineWidth = 1.5;
               ctx.strokeStyle = "#ffffff";
+              ctx.beginPath();
+              ctx.roundRect(left, top, card.width, card.height, 6);
               ctx.stroke();
             }
             ctx.beginPath();

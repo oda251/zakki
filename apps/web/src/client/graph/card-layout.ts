@@ -1,5 +1,5 @@
-export const NODE_CARD_WIDTH = 96;
-export const NODE_CARD_PADDING = 5;
+export const NODE_CARD_WIDTH = 64;
+export const NODE_CARD_PADDING = 4;
 export const NODE_CARD_FONT_SIZE = 10;
 export const NODE_CARD_LINE_HEIGHT = 12;
 export const NODE_CARD_MAX_GRAPHEMES = 36;
