@@ -38,9 +38,9 @@ describe("dateChunkId", () => {
 });
 
 describe("linkDocId", () => {
-  test("ペアから決定的で、向きに依らず同一 id（from<to 正規化）", () => {
+  test("有向ペアから決定的で、逆向きは別 id", () => {
     expect(linkDocId(3, 7)).toBe("3-7");
-    expect(linkDocId(7, 3)).toBe("3-7");
+    expect(linkDocId(7, 3)).toBe("7-3");
   });
 
   test("異なるペアは異なる id", () => {
