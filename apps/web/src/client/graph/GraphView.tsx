@@ -4,7 +4,7 @@ import ForceGraph2D, {
   type LinkObject,
   type NodeObject,
 } from "react-force-graph-2d";
-import { forceCollide } from "d3-force-3d";
+import { forceCollide, forceX, forceY } from "d3-force-3d";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
 import {
   cardLayout,
@@ -25,6 +25,7 @@ import {
   visibleGraph,
 } from "@zakki/web/client/store/graph-core.ts";
 import { retainGraphData, type RetainedGraphData } from "@zakki/web/client/graph/graph-data.ts";
+import { directedTargets } from "@zakki/web/client/graph/directed-layout.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /** canvas は CSS 変数を解決できないため、実色は computed style から一度だけ読む */
@@ -53,6 +54,8 @@ interface ForceNode {
   /** ドリル階層外だがリンクで引き込まれたノード（薄く描画する） */
   external: boolean;
   card: ReturnType<typeof cardLayout>;
+  targetX: number;
+  targetY: number;
   x?: number;
   y?: number;
 }
@@ -84,6 +87,14 @@ export function GraphView() {
   }, []);
   const collisionForce = useMemo(
     () => forceCollide<NodeObject<ForceNode>>((fn) => fn.card.collisionRadius),
+    [],
+  );
+  const targetXForce = useMemo(
+    () => forceX<NodeObject<ForceNode>>((fn) => fn.targetX).strength(0.12),
+    [],
+  );
+  const targetYForce = useMemo(
+    () => forceY<NodeObject<ForceNode>>((fn) => fn.targetY).strength(0.12),
     [],
   );
   const graphRef = useRef<
@@ -127,17 +138,34 @@ export function GraphView() {
           sourceContent: node.content,
           external,
           card: cardLayout(node.content, measureCardText),
+          targetX: 0,
+          targetY: 0,
         };
         nodeCache.current.set(node.id, created);
         return created;
       }),
       links: visible.edges.map((e) => ({ source: e.from, target: e.to, score: e.score })),
     };
+    const targets = directedTargets(
+      graphPayload.nodes.map(({ id, node }) => ({ id, position: node.position })),
+      visible.edges,
+      new Map(graphPayload.nodes.map(({ id, card }) => [id, card])),
+    );
+    for (const node of graphPayload.nodes) {
+      const target = targets.get(node.id);
+      if (target !== undefined) {
+        node.targetX = target.x;
+        node.targetY = target.y;
+      }
+    }
     retainedGraphData.current = retainGraphData(retainedGraphData.current, graphPayload, {
       nodeIds: visible.nodes.map(({ node }) => node.id),
       edges: visible.edges,
       layoutKey: graphPayload.nodes
-        .map(({ id, card }) => `${id}:${card.width}x${card.height}`)
+        .map(
+          ({ id, card, targetX, targetY }) =>
+            `${id}:${card.width}x${card.height}@${targetX},${targetY}`,
+        )
         .join("|"),
     });
     return retainedGraphData.current.data;
@@ -184,6 +212,8 @@ export function GraphView() {
             if (graph === undefined || collisionGraph.current === graph) return;
             collisionGraph.current = graph;
             graph.d3Force("collide", collisionForce);
+            graph.d3Force("x", targetXForce);
+            graph.d3Force("y", targetYForce);
             graph.d3ReheatSimulation();
           }}
           nodeRelSize={NODE_RADIUS}
