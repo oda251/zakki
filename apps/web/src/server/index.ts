@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { parseZakkiConfig } from "@zakki/core/config/env.ts";
+import { serveStatic } from "hono/bun";
 import { bootstrapServer } from "./bootstrap.ts";
 import { setupStaticRoutes } from "./static.ts";
 
@@ -25,7 +26,7 @@ const { app } = await bootstrapServer(config).catch((err: unknown): never => {
 // ビルド済み SPA（vite build → apps/web/dist）があれば配信する（SPA フォールバック付き）。
 // 開発時は dist が無くてもよい（vite dev サーバが /api を proxy する）。
 const distDir = fileURLToPath(new URL("../../dist", import.meta.url));
-setupStaticRoutes(app, distDir);
+setupStaticRoutes(app, distDir, serveStatic);
 
 const server = Bun.serve({ port: config.webPort, fetch: app.fetch });
 console.log(`zakki-web: http://localhost:${server.port}`);
