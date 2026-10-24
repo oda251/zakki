@@ -1,7 +1,17 @@
 import { useMemo, useRef } from "react";
-import ForceGraph2D from "react-force-graph-2d";
+import ForceGraph2D, {
+  type ForceGraphMethods,
+  type LinkObject,
+  type NodeObject,
+} from "react-force-graph-2d";
+import { forceCollide, forceX, forceY } from "d3-force-3d";
 import { makeTitle } from "@zakki/core/chunk/chunker.ts";
-import { clampText } from "@zakki/web/client/graph/clamp.ts";
+import {
+  cardLayout,
+  NODE_CARD_FONT_SIZE,
+  NODE_CARD_LINE_HEIGHT,
+  NODE_CARD_PADDING,
+} from "@zakki/web/client/graph/card-layout.ts";
 import { useElementSize } from "@zakki/web/client/hooks/use-element-size.ts";
 import { gotoChunk, selectNode } from "@zakki/web/client/router/navigate.ts";
 import { useDrillId, useRoute } from "@zakki/web/client/router/use-route.ts";
@@ -15,10 +25,17 @@ import {
   visibleGraph,
 } from "@zakki/web/client/store/graph-core.ts";
 import { retainGraphData, type RetainedGraphData } from "@zakki/web/client/graph/graph-data.ts";
+import { directedTargets } from "@zakki/web/client/graph/directed-layout.ts";
 import { useGraphStore } from "@zakki/web/client/store/graph.ts";
 
 /** canvas は CSS 変数を解決できないため、実色は computed style から一度だけ読む */
-function resolvePalette(): { series: string[]; neutral: string; ink: string; hairline: string } {
+function resolvePalette(): {
+  series: string[];
+  neutral: string;
+  ink: string;
+  hairline: string;
+  border: string;
+} {
   const style = getComputedStyle(document.documentElement);
   const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
   return {
@@ -26,16 +43,19 @@ function resolvePalette(): { series: string[]; neutral: string; ink: string; hai
     neutral: read("--node-neutral", "#6b6a64"),
     ink: read("--text-secondary", "#c3c2b7"),
     hairline: read("--baseline", "#383835"),
+    border: read("--hairline", "#2c2c2a"),
   };
 }
 
 interface ForceNode {
   id: number;
   node: GraphNode;
+  sourceContent: string;
   /** ドリル階層外だがリンクで引き込まれたノード（薄く描画する） */
   external: boolean;
-  /** clamp 済みラベル（毎フレームの Segmenter 実行を避けるため生成時に計算） */
-  label: string;
+  card: ReturnType<typeof cardLayout>;
+  targetX: number;
+  targetY: number;
   x?: number;
   y?: number;
 }
@@ -49,31 +69,6 @@ interface ForceLink {
 
 const NODE_RADIUS = 4;
 
-/** 半径は descendantCount の対数スケール（大きなコンテナほど大きく, docs/CHUNKS.md） */
-function nodeRadius(descendantCount: number): number {
-  return NODE_RADIUS * (1 + Math.log2(1 + descendantCount) / 3);
-}
-
-/** childCount > 0 のコンテナはひし形（◆）、葉は円（〇）で描く */
-function traceShape(
-  ctx: CanvasRenderingContext2D,
-  node: GraphNode,
-  x: number,
-  y: number,
-  r: number,
-): void {
-  ctx.beginPath();
-  if (node.childCount > 0) {
-    ctx.moveTo(x, y - r);
-    ctx.lineTo(x + r, y);
-    ctx.lineTo(x, y + r);
-    ctx.lineTo(x - r, y);
-    ctx.closePath();
-  } else {
-    ctx.arc(x, y, r, 0, 2 * Math.PI);
-  }
-}
-
 export function GraphView() {
   const data = useGraphStore((s) => s.data);
   // ドリル位置・選択・フィルタは URL が SSOT（#52）。
@@ -84,6 +79,30 @@ export function GraphView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const size = useElementSize(containerRef);
   const palette = useMemo(resolvePalette, []);
+  const measureCardText = useMemo(() => {
+    const context = document.createElement("canvas").getContext("2d");
+    if (context === null) return (text: string) => text.length * NODE_CARD_FONT_SIZE * 0.6;
+    context.font = `${NODE_CARD_FONT_SIZE}px system-ui, sans-serif`;
+    return (text: string) => context.measureText(text).width;
+  }, []);
+  const collisionForce = useMemo(
+    () => forceCollide<NodeObject<ForceNode>>((fn) => fn.card.collisionRadius),
+    [],
+  );
+  const targetXForce = useMemo(
+    () => forceX<NodeObject<ForceNode>>((fn) => fn.targetX).strength(0.12),
+    [],
+  );
+  const targetYForce = useMemo(
+    () => forceY<NodeObject<ForceNode>>((fn) => fn.targetY).strength(0.12),
+    [],
+  );
+  const graphRef = useRef<
+    ForceGraphMethods<NodeObject<ForceNode>, LinkObject<ForceNode, ForceLink>> | undefined
+  >(undefined);
+  const collisionGraph = useRef<
+    ForceGraphMethods<NodeObject<ForceNode>, LinkObject<ForceNode, ForceLink>> | undefined
+  >(undefined);
 
   const visible = useMemo(
     (): ReturnType<typeof visibleGraph> =>
@@ -101,13 +120,14 @@ export function GraphView() {
     links: ForceLink[];
   }> | null>(null);
   const graphData = useMemo(() => {
-    const data = {
+    const graphPayload = {
       nodes: visible.nodes.map(({ node, external }): ForceNode => {
         const cached = nodeCache.current.get(node.id);
         if (cached !== undefined) {
-          if (cached.node !== node) {
-            cached.node = node;
-            cached.label = clampText(node.content);
+          cached.node = node;
+          if (cached.sourceContent !== node.content) {
+            cached.sourceContent = node.content;
+            cached.card = cardLayout(node.content, measureCardText);
           }
           cached.external = external;
           return cached;
@@ -115,20 +135,41 @@ export function GraphView() {
         const created: ForceNode = {
           id: node.id,
           node,
+          sourceContent: node.content,
           external,
-          label: clampText(node.content),
+          card: cardLayout(node.content, measureCardText),
+          targetX: 0,
+          targetY: 0,
         };
         nodeCache.current.set(node.id, created);
         return created;
       }),
       links: visible.edges.map((e) => ({ source: e.from, target: e.to, score: e.score })),
     };
-    retainedGraphData.current = retainGraphData(retainedGraphData.current, data, {
+    const targets = directedTargets(
+      graphPayload.nodes.map(({ id, node }) => ({ id, position: node.position })),
+      visible.edges,
+      new Map(graphPayload.nodes.map(({ id, card }) => [id, card])),
+    );
+    for (const node of graphPayload.nodes) {
+      const target = targets.get(node.id);
+      if (target !== undefined) {
+        node.targetX = target.x;
+        node.targetY = target.y;
+      }
+    }
+    retainedGraphData.current = retainGraphData(retainedGraphData.current, graphPayload, {
       nodeIds: visible.nodes.map(({ node }) => node.id),
       edges: visible.edges,
+      layoutKey: graphPayload.nodes
+        .map(
+          ({ id, card, targetX, targetY }) =>
+            `${id}:${card.width}x${card.height}@${targetX},${targetY}`,
+        )
+        .join("|"),
     });
     return retainedGraphData.current.data;
-  }, [visible]);
+  }, [visible, measureCardText]);
 
   const colorOf = (fn: ForceNode): string => {
     const slot = slots.get(fn.node.id);
@@ -165,38 +206,69 @@ export function GraphView() {
           backgroundColor="transparent"
           linkColor={() => palette.hairline}
           linkWidth={(l) => Math.max(1, (l.score - 0.8) * 10)}
+          ref={graphRef}
+          onEngineTick={() => {
+            const graph = graphRef.current;
+            if (graph === undefined || collisionGraph.current === graph) return;
+            collisionGraph.current = graph;
+            graph.d3Force("collide", collisionForce);
+            graph.d3Force("x", targetXForce);
+            graph.d3Force("y", targetYForce);
+            graph.d3ReheatSimulation();
+          }}
           nodeRelSize={NODE_RADIUS}
           nodeLabel={({ node }) => `${node.date}<br/>${makeTitle(node.content)}`}
-          nodeCanvasObject={(fn, ctx, globalScale) => {
-            const { node, external, label, x, y } = fn;
+          nodeCanvasObject={(fn, ctx) => {
+            const { card, external, node, x, y } = fn;
             if (x === undefined || y === undefined) return;
-            const r = nodeRadius(node.descendantCount);
+            const left = x - card.width / 2;
+            const top = y - card.height / 2;
             ctx.save();
-            // external はドリル階層外の引き込みノード: それ自体を薄く描く
             ctx.globalAlpha = external ? 0.4 : 1;
-            traceShape(ctx, node, x, y, r);
+            ctx.beginPath();
+            ctx.roundRect(left, top, card.width, card.height, 6);
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = palette.border;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.roundRect(left + 1, top + 1, 2, card.height - 2, 1);
             ctx.fillStyle = colorOf(fn);
             ctx.fill();
             if (node.id === selectedNodeId) {
               ctx.globalAlpha = 1;
               ctx.lineWidth = 1.5;
               ctx.strokeStyle = "#ffffff";
+              ctx.beginPath();
+              ctx.roundRect(left, top, card.width, card.height, 6);
               ctx.stroke();
             }
-            // 本文の clamp ラベルを常時表示（ドリル表示でノード数は絞られている前提）
-            const fontSize = Math.min(Math.max(10 / globalScale, 3), 8);
+            ctx.beginPath();
+            ctx.rect(
+              left + NODE_CARD_PADDING,
+              top + NODE_CARD_PADDING,
+              card.width - NODE_CARD_PADDING * 2,
+              card.height - NODE_CARD_PADDING * 2,
+            );
+            ctx.clip();
             ctx.globalAlpha = external ? 0.55 : 1;
-            ctx.font = `${fontSize}px system-ui, sans-serif`;
+            ctx.font = `${NODE_CARD_FONT_SIZE}px system-ui, sans-serif`;
             ctx.fillStyle = palette.ink;
-            ctx.textAlign = "center";
+            ctx.textAlign = "left";
             ctx.textBaseline = "top";
-            ctx.fillText(label, x, y + r + 1);
+            card.lines.forEach((line, index) => {
+              ctx.fillText(
+                line,
+                left + NODE_CARD_PADDING,
+                top + NODE_CARD_PADDING + index * NODE_CARD_LINE_HEIGHT,
+              );
+            });
             ctx.restore();
           }}
-          nodePointerAreaPaint={(n, color, ctx) => {
-            const { node, x, y } = n;
+          nodePointerAreaPaint={(fn, color, ctx) => {
+            const { card, x, y } = fn;
             if (x === undefined || y === undefined) return;
-            traceShape(ctx, node, x, y, nodeRadius(node.descendantCount));
+            ctx.beginPath();
+            ctx.rect(x - card.width / 2, y - card.height / 2, card.width, card.height);
             ctx.fillStyle = color;
             ctx.fill();
           }}

@@ -1,6 +1,7 @@
 export interface GraphTopology {
   nodeIds: readonly number[];
   edges: readonly { from: number; to: number; score: number }[];
+  layoutKey?: string;
 }
 
 export interface RetainedGraphData<T> {
@@ -20,12 +21,14 @@ export function retainGraphData<T>(
     topology: {
       nodeIds: [...topology.nodeIds],
       edges: topology.edges.map(({ from, to, score }) => ({ from, to, score })),
+      ...(topology.layoutKey === undefined ? {} : { layoutKey: topology.layoutKey }),
     },
   };
 }
 
 function sameTopology(left: GraphTopology, right: GraphTopology): boolean {
   return (
+    left.layoutKey === right.layoutKey &&
     left.nodeIds.length === right.nodeIds.length &&
     left.nodeIds.every((id, index) => id === right.nodeIds[index]) &&
     left.edges.length === right.edges.length &&

@@ -14,6 +14,7 @@
   "dependencies": {
     "@zakki/core": "workspace:*",
     "@zakki/data": "workspace:*",
+    "d3-force-3d": "^3.0.6",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.9.12",
     "neverthrow": "^8.2.0",
