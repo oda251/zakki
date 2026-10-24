@@ -73,7 +73,7 @@ describe("nodesFromDocs", () => {
 });
 
 describe("chronoEdgesFromNodes", () => {
-  test("links adjacent date roots in chronological order, independently of IDs and input order", () => {
+  test("links adjacent date roots in the given node order", () => {
     const nodes = nodesFromDocs(
       [
         chunk({ id: "900", date: "2026-07-09", content: "2026-07-09" }),
@@ -82,11 +82,11 @@ describe("chronoEdgesFromNodes", () => {
         chunk({ id: "1", parentId: "500", position: 0 }),
       ],
       [],
-    );
+    ).toReversed();
 
     expect(chronoEdgesFromNodes(nodes)).toEqual([
-      { from: 100, to: 500, score: 1, origin: "chrono" },
-      { from: 500, to: 900, score: 1, origin: "chrono" },
+      { from: 900, to: 500, score: 1, origin: "chrono" },
+      { from: 500, to: 100, score: 1, origin: "chrono" },
     ]);
   });
 

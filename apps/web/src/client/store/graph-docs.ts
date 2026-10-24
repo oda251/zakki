@@ -74,11 +74,9 @@ export function nodesFromDocs(
   return recomputeCounts(nodes.toSorted((a, b) => a.id - b.id));
 }
 
-/** 日付ルートを date 順に並べ、隣接する日付を過去から未来へ結ぶ。 */
+/** 入力順の日付ルートを隣接するもの同士で結ぶ。 */
 export function chronoEdgesFromNodes(nodes: readonly GraphNode[]): GraphEdge[] {
-  const roots = nodes
-    .filter((node) => node.parentId === null && node.date !== "")
-    .toSorted((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id));
+  const roots = nodes.filter((node) => node.parentId === null && node.date !== "");
   const edges: GraphEdge[] = [];
   for (let index = 1; index < roots.length; index += 1) {
     const from = roots[index - 1];
